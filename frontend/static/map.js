@@ -1,13 +1,5 @@
 "use strict";
 
-function formatScore(score) {
-  return `${Math.round(score * 100)}%`;
-}
-
-function formatCoordinate(value) {
-  return Number(value).toString();
-}
-
 window.renderScores = function renderScores(scores) {
   const map = document.getElementById("map");
 
@@ -15,23 +7,28 @@ window.renderScores = function renderScores(scores) {
     return;
   }
 
+  map.replaceChildren();
+
   if (!Array.isArray(scores) || scores.length === 0) {
-    map.innerHTML = "<p>No scored locations available.</p>";
+    const emptyState = document.createElement("p");
+    emptyState.textContent = "No scored locations available.";
+    map.append(emptyState);
     return;
   }
 
-  const items = scores
-    .map(
-      ({ lat, lon, score }) => `
-        <li>
-          <strong>${formatScore(score)}</strong>
-          <span>${formatCoordinate(lat)}, ${formatCoordinate(lon)}</span>
-        </li>`,
-    )
-    .join("");
+  const list = document.createElement("ol");
+  list.className = "map-results";
 
-  map.innerHTML = `
-    <ol class="map-results">
-      ${items}
-    </ol>`;
+  for (const { lat, lon, score } of scores) {
+    const item = document.createElement("li");
+    const scoreLabel = document.createElement("strong");
+    const coordinateLabel = document.createElement("span");
+
+    scoreLabel.textContent = `${Math.round(score * 100)}%`;
+    coordinateLabel.textContent = `${lat}, ${lon}`;
+    item.append(scoreLabel, coordinateLabel);
+    list.append(item);
+  }
+
+  map.append(list);
 };
