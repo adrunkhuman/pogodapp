@@ -121,7 +121,7 @@ def test_app_returns_clear_503_when_climate_repository_fails() -> None:
     assert response.json() == {"detail": "Climate database file not found: data/climate.duckdb"}
 
 
-def test_app_scores_with_real_duckdb_repository(tmp_path: Path) -> None:
+def test_app_scores_from_duckdb(tmp_path: Path) -> None:
     database_path = tmp_path / "climate.duckdb"
     with duckdb.connect(str(database_path)) as connection:
         connection.execute(
