@@ -50,5 +50,38 @@
     </main>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <script src="/static/map.js"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        const form = document.getElementById("preferences");
+
+        if (!form) {
+          return;
+        }
+
+        for (const input of form.querySelectorAll("input[type='range']")) {
+          const output = form.querySelector(`output[for='${input.id}']`);
+
+          if (output) {
+            output.value = input.value;
+          }
+
+          input.addEventListener("input", () => {
+            if (output) {
+              output.value = input.value;
+            }
+          });
+        }
+
+        document.body.addEventListener("htmx:afterRequest", (event) => {
+          // Ignore unrelated HTMX requests once the page grows past one form.
+          if (event.detail.elt !== form || event.detail.xhr.status !== 200) {
+            return;
+          }
+
+          const scores = JSON.parse(event.detail.xhr.responseText);
+          window.renderScores(scores);
+        });
+      });
+    </script>
   </body>
 </html>

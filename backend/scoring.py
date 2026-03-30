@@ -47,15 +47,20 @@ def clamp_score(value: float) -> float:
 
 
 def temperature_score(cell: StubClimateCell, preferences: PreferenceInputs) -> float:
-    """Approximate asymmetric temperature fit for stub data."""
+    """Use cold vs. heat tolerance based on which side of the ideal a cell falls."""
     delta = cell.temperature - preferences.ideal_temperature
     tolerance = preferences.heat_tolerance if delta >= 0 else preferences.cold_tolerance
     scale = max(tolerance, 1)
     return clamp_score(1 - abs(delta) / scale)
 
 
-def sensitivity_score(observed: int, preferred: int) -> float:
-    """Approximate fit for 0..100 sensitivity-style controls."""
+def rain_score(observed: int, sensitivity: int) -> float:
+    """Rain is one-sided: higher sensitivity should only penalize wetter cells more."""
+    return clamp_score(1 - (observed / 100) * (sensitivity / 100))
+
+
+def preference_score(observed: int, preferred: int) -> float:
+    """Approximate fit for 0..100 preference-style controls."""
     return clamp_score(1 - abs(observed - preferred) / 100)
 
 
@@ -67,8 +72,8 @@ def score_preferences(preferences: PreferenceInputs) -> list[ScorePoint]:
         score = clamp_score(
             (
                 temperature_score(cell, preferences)
-                + sensitivity_score(cell.rain_index, preferences.rain_sensitivity)
-                + sensitivity_score(cell.sun_index, preferences.sun_preference)
+                + rain_score(cell.rain_index, preferences.rain_sensitivity)
+                + preference_score(cell.sun_index, preferences.sun_preference)
             )
             / 3
         )
