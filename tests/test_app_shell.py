@@ -128,7 +128,7 @@ def test_rain_sensitivity_penalizes_rainier_cells() -> None:
         )
     )
 
-    # These indices pin the fixed stub entries with the lowest and highest rain_index values.
+    # Hard-code stub indices so the test compares driest vs. rainiest fixtures.
     driest_index = 2
     rainiest_index = 4
 

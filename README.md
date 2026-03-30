@@ -24,7 +24,7 @@ Pogodapp is a climate preference search tool, not a weather app. The user descri
 - One FastAPI app serves the initial page, static assets, and the scoring API
 - `GET /` renders the page through Jinja2 with default slider values from backend config
 - `POST /score` accepts form-encoded inputs and returns JSON as `[{lat, lon, score}, ...]`; out-of-range values now fail with `422`
-- Accepted input ranges come from backend preference config: `ideal_temperature -10..35`, `cold_tolerance 0..15`, `heat_tolerance 0..15`, `rain_sensitivity 0..100`, `sun_preference 0..100`
+- `DEFAULT_PREFERENCES` drives the form control ranges, `PreferenceInputs` enforces the same `/score` bounds, and `tests/test_app_shell.py` guards drift between them
 - HTMX submits form changes to `/score`
 - `htmx:afterRequest` bridges the response into the map update path
 - `frontend/static/map.js` stays focused on rendering, not networking

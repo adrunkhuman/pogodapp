@@ -1,5 +1,6 @@
 "use strict";
 
+// Render parsed `/score` payload items and fall back to an empty state for invalid results.
 window.renderScores = function renderScores(scores) {
   const map = document.getElementById("map");
 

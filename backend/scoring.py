@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 
 class PreferenceInputs(BaseModel):
-    """Normalized form inputs passed into the scoring layer."""
+    """Validated `/score` form inputs before FastAPI hands them to scoring."""
 
     ideal_temperature: int = Field(ge=-10, le=35)
     cold_tolerance: int = Field(ge=0, le=15)
@@ -51,6 +51,7 @@ def temperature_score(cell: StubClimateCell, preferences: PreferenceInputs) -> f
     """Use cold vs. heat tolerance based on which side of the ideal a cell falls."""
     delta = cell.temperature - preferences.ideal_temperature
     tolerance = preferences.heat_tolerance if delta >= 0 else preferences.cold_tolerance
+    # Zero tolerance still means an exact-match preference, not a division error.
     scale = max(tolerance, 1)
     return clamp_score(1 - abs(delta) / scale)
 
@@ -61,7 +62,7 @@ def rain_score(observed: int, sensitivity: int) -> float:
 
 
 def preference_score(observed: int, preferred: int) -> float:
-    """Approximate fit for 0..100 preference-style controls."""
+    """Symmetric 0..100 distance score for preference-style controls."""
     return clamp_score(1 - abs(observed - preferred) / 100)
 
 
