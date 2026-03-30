@@ -1,11 +1,13 @@
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from backend.config import DEFAULT_PREFERENCES
+from backend.scoring import PreferenceInputs, ScorePoint, score_preferences
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
@@ -32,6 +34,23 @@ def create_app() -> FastAPI:
             name="index.html",
             context=build_index_context(),
         )
+
+    @app.post("/score")
+    async def score(
+        ideal_temperature: Annotated[int, Form()],
+        cold_tolerance: Annotated[int, Form()],
+        heat_tolerance: Annotated[int, Form()],
+        rain_sensitivity: Annotated[int, Form()],
+        sun_preference: Annotated[int, Form()],
+    ) -> list[ScorePoint]:
+        preferences = PreferenceInputs(
+            ideal_temperature=ideal_temperature,
+            cold_tolerance=cold_tolerance,
+            heat_tolerance=heat_tolerance,
+            rain_sensitivity=rain_sensitivity,
+            sun_preference=sun_preference,
+        )
+        return score_preferences(preferences)
 
     return app
 
