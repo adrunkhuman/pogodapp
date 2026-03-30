@@ -15,8 +15,13 @@ STATIC_DIR = FRONTEND_DIR / "static"
 TEMPLATES_DIR = FRONTEND_DIR / "templates"
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-# Keep FastAPI validation aligned with the slider contract in backend config.
-PREFERENCE_BOUNDS = {field.name: (field.minimum, field.maximum) for field in DEFAULT_PREFERENCES}
+PREFERENCE_FIELDS = {field.name: field for field in DEFAULT_PREFERENCES}
+
+
+def form_bounds(name: str) -> object:
+    """Keep FastAPI validation aligned with the slider contract in backend config."""
+    field = PREFERENCE_FIELDS[name]
+    return Form(ge=field.minimum, le=field.maximum)
 
 
 def build_index_context() -> dict[str, object]:
@@ -41,38 +46,23 @@ def create_app() -> FastAPI:
     async def score(
         ideal_temperature: Annotated[
             int,
-            Form(
-                ge=PREFERENCE_BOUNDS["ideal_temperature"][0],
-                le=PREFERENCE_BOUNDS["ideal_temperature"][1],
-            ),
+            form_bounds("ideal_temperature"),
         ],
         cold_tolerance: Annotated[
             int,
-            Form(
-                ge=PREFERENCE_BOUNDS["cold_tolerance"][0],
-                le=PREFERENCE_BOUNDS["cold_tolerance"][1],
-            ),
+            form_bounds("cold_tolerance"),
         ],
         heat_tolerance: Annotated[
             int,
-            Form(
-                ge=PREFERENCE_BOUNDS["heat_tolerance"][0],
-                le=PREFERENCE_BOUNDS["heat_tolerance"][1],
-            ),
+            form_bounds("heat_tolerance"),
         ],
         rain_sensitivity: Annotated[
             int,
-            Form(
-                ge=PREFERENCE_BOUNDS["rain_sensitivity"][0],
-                le=PREFERENCE_BOUNDS["rain_sensitivity"][1],
-            ),
+            form_bounds("rain_sensitivity"),
         ],
         sun_preference: Annotated[
             int,
-            Form(
-                ge=PREFERENCE_BOUNDS["sun_preference"][0],
-                le=PREFERENCE_BOUNDS["sun_preference"][1],
-            ),
+            form_bounds("sun_preference"),
         ],
     ) -> list[ScorePoint]:
         preferences = PreferenceInputs(
