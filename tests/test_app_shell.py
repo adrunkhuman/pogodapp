@@ -68,4 +68,30 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
-    assert response.json() == []
+    payload = response.json()
+
+    assert isinstance(payload, list)
+    assert payload
+
+    for item in payload:
+        assert set(item) == {"lat", "lon", "score"}
+        assert isinstance(item["lat"], float)
+        assert isinstance(item["lon"], float)
+        assert 0 <= item["score"] <= 1
+
+
+def test_score_endpoint_is_deterministic_for_the_same_preferences() -> None:
+    form_data = {
+        "ideal_temperature": "22",
+        "cold_tolerance": "7",
+        "heat_tolerance": "5",
+        "rain_sensitivity": "55",
+        "sun_preference": "60",
+    }
+
+    first_response = client.post("/score", data=form_data)
+    second_response = client.post("/score", data=form_data)
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert first_response.json() == second_response.json()
