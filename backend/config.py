@@ -22,8 +22,8 @@ class PreferenceField:
 
 
 # Higher sensitivity means a stronger score penalty.
-# `sun_preference` stays user-facing while later scoring maps it onto cloud-cover data.
-# Exact scoring curves stay unresolved until the scoring issue lands.
+# `sun_preference` stays user-facing even though scoring already maps it onto cloud-cover tolerance.
+# These ranges define the UI and `/score` contract; curve tuning can still evolve independently.
 DEFAULT_PREFERENCES: tuple[PreferenceField, ...] = (
     PreferenceField(
         name="ideal_temperature",
