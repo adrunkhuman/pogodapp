@@ -1,7 +1,73 @@
 :root {
+  color: #13222c;
   font-family: "Atkinson Hyperlegible", sans-serif;
+  background: linear-gradient(180deg, #f2efe6 0%, #dfeaf0 100%);
 }
 
 body {
   margin: 0;
+  min-height: 100vh;
+  background: transparent;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+.app-shell {
+  display: grid;
+  gap: 1.5rem;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.intro,
+.panel {
+  border: 1px solid rgba(19, 34, 44, 0.12);
+  border-radius: 1rem;
+  background: rgba(255, 252, 247, 0.8);
+  box-shadow: 0 1rem 2.5rem rgba(19, 34, 44, 0.08);
+}
+
+.intro {
+  display: grid;
+  gap: 0.75rem;
+  padding: 2rem;
+}
+
+.eyebrow {
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #46606d;
+}
+
+.lede {
+  max-width: 42rem;
+  line-height: 1.6;
+}
+
+.panel {
+  display: grid;
+  gap: 0.5rem;
+  padding: 1.5rem;
+}
+
+.map-panel {
+  min-height: 18rem;
+}
+
+@media (min-width: 48rem) {
+  .app-shell {
+    grid-template-columns: minmax(18rem, 22rem) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .intro {
+    grid-column: 1 / -1;
+  }
 }
