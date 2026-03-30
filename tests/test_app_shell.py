@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from backend.config import DEFAULT_PREFERENCES, PREFERENCE_FIELD_NAMES
 from backend.main import app
+from backend.scoring import PreferenceInputs, score_preferences
 
 client = TestClient(app)
 
@@ -44,6 +45,16 @@ def test_preference_contract_matches_issue_scope() -> None:
 
     assert expected_names == PREFERENCE_FIELD_NAMES
     assert tuple(preference.name for preference in DEFAULT_PREFERENCES) == expected_names
+
+
+def test_preference_input_bounds_match_backend_config() -> None:
+    schema = PreferenceInputs.model_json_schema()
+
+    for preference in DEFAULT_PREFERENCES:
+        field_schema = schema["properties"][preference.name]
+
+        assert field_schema["minimum"] == preference.minimum
+        assert field_schema["maximum"] == preference.maximum
 
 
 def test_static_files_are_served() -> None:
@@ -95,3 +106,54 @@ def test_score_endpoint_is_deterministic_for_the_same_preferences() -> None:
     assert first_response.status_code == 200
     assert second_response.status_code == 200
     assert first_response.json() == second_response.json()
+
+
+def test_rain_sensitivity_penalizes_rainier_cells() -> None:
+    dry_tolerant_scores = score_preferences(
+        PreferenceInputs(
+            ideal_temperature=22,
+            cold_tolerance=7,
+            heat_tolerance=5,
+            rain_sensitivity=0,
+            sun_preference=60,
+        )
+    )
+    rain_sensitive_scores = score_preferences(
+        PreferenceInputs(
+            ideal_temperature=22,
+            cold_tolerance=7,
+            heat_tolerance=5,
+            rain_sensitivity=100,
+            sun_preference=60,
+        )
+    )
+
+    # Hard-code stub indices so the test compares driest vs. rainiest fixtures.
+    driest_index = 2
+    rainiest_index = 4
+
+    assert rain_sensitive_scores[driest_index]["score"] > rain_sensitive_scores[rainiest_index]["score"]
+    assert rain_sensitive_scores[rainiest_index]["score"] < dry_tolerant_scores[rainiest_index]["score"]
+
+
+def test_score_endpoint_rejects_out_of_range_preferences() -> None:
+    response = client.post(
+        "/score",
+        data={
+            "ideal_temperature": "99",
+            "cold_tolerance": "7",
+            "heat_tolerance": "5",
+            "rain_sensitivity": "55",
+            "sun_preference": "60",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_home_page_registers_htmx_handoff_script() -> None:
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "htmx:afterRequest" in response.text
+    assert "window.renderScores(scores);" in response.text

@@ -23,7 +23,8 @@ Pogodapp is a climate preference search tool, not a weather app. The user descri
 
 - One FastAPI app serves the initial page, static assets, and the scoring API
 - `GET /` renders the page through Jinja2 with default slider values from backend config
-- `POST /score` accepts form-encoded inputs and returns JSON as `[{lat, lon, score}, ...]`
+- `POST /score` accepts form-encoded inputs and returns JSON as `[{lat, lon, score}, ...]`; out-of-range values now fail with `422`
+- `DEFAULT_PREFERENCES` drives the form control ranges, `PreferenceInputs` enforces the same `/score` bounds, and `tests/test_app_shell.py` guards drift between them
 - HTMX submits form changes to `/score`
 - `htmx:afterRequest` bridges the response into the map update path
 - `frontend/static/map.js` stays focused on rendering, not networking
@@ -43,8 +44,8 @@ Pogodapp is a climate preference search tool, not a weather app. The user descri
 Each grid cell is scored month-by-month, then combined into one annual score.
 
 - Temperature penalty is asymmetric: cold deviations and heat deviations use different slopes, with a comfort band around the ideal temperature
-- Rain penalty scales with precipitation and user sensitivity
-- Cloud penalty uses the agreed misery-style curve, harsher at high cover
+- Rain is one-sided: higher `rain_sensitivity` increases penalties for wetter cells without rewarding rain
+- `sun_preference` currently uses a symmetric preference-fit curve against the stub sun signal
 - The user-facing form contract uses `sun_preference`; later scoring maps that preference onto the cloud-cover signal
 - Final scores are normalized to the `0..1` range for map rendering
 

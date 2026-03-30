@@ -36,20 +36,7 @@ def create_app() -> FastAPI:
         )
 
     @app.post("/score")
-    async def score(
-        ideal_temperature: Annotated[int, Form()],
-        cold_tolerance: Annotated[int, Form()],
-        heat_tolerance: Annotated[int, Form()],
-        rain_sensitivity: Annotated[int, Form()],
-        sun_preference: Annotated[int, Form()],
-    ) -> list[ScorePoint]:
-        preferences = PreferenceInputs(
-            ideal_temperature=ideal_temperature,
-            cold_tolerance=cold_tolerance,
-            heat_tolerance=heat_tolerance,
-            rain_sensitivity=rain_sensitivity,
-            sun_preference=sun_preference,
-        )
+    async def score(preferences: Annotated[PreferenceInputs, Form()]) -> list[ScorePoint]:
         return score_preferences(preferences)
 
     return app
