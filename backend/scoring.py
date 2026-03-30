@@ -145,13 +145,18 @@ def annual_score(cell: ClimateCell, preferences: PreferenceInputs) -> float:
     return clamp_score(score_total / MONTHS_PER_YEAR)
 
 
-def score_preferences(preferences: PreferenceInputs) -> list[ScorePoint]:
-    """Score every stub climate row until the DuckDB adapter lands."""
+def score_climate_cells(climate_cells: tuple[ClimateCell, ...], preferences: PreferenceInputs) -> list[ScorePoint]:
+    """Score the supplied climate rows without caring where they came from."""
     return [
         {
             "lat": cell.lat,
             "lon": cell.lon,
             "score": annual_score(cell, preferences),
         }
-        for cell in STUB_CLIMATE_CELLS
+        for cell in climate_cells
     ]
+
+
+def score_preferences(preferences: PreferenceInputs) -> list[ScorePoint]:
+    """Retain the stub-backed scoring entry point until routing switches repositories."""
+    return score_climate_cells(STUB_CLIMATE_CELLS, preferences)

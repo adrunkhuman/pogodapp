@@ -24,6 +24,7 @@ Pogodapp is a climate preference search tool, not a weather app. The user descri
 - One FastAPI app serves the initial page, static assets, and the scoring API
 - `GET /` renders the page through Jinja2 with default slider values from backend config
 - `POST /score` accepts form-encoded inputs and returns JSON as `[{lat, lon, score}, ...]`; out-of-range values now fail with `422`
+- Climate data access sits behind a small repository boundary so routing code does not know whether rows come from stubs or DuckDB
 - `DEFAULT_PREFERENCES` drives the form control ranges, `PreferenceInputs` enforces the same `/score` bounds, and `tests/test_app_shell.py` guards drift between them
 - HTMX submits form changes to `/score`
 - `htmx:afterRequest` bridges the response into the map update path
@@ -31,6 +32,7 @@ Pogodapp is a climate preference search tool, not a weather app. The user descri
 - The current map uses MapLibre GL with the PMTiles browser protocol and Protomaps basemap layers loaded from public CDN/asset hosts
 - If those external map assets are blocked or unavailable, the map falls back to an in-page failure message while the textual score list still renders
 - DuckDB is the only runtime data store
+- The app uses `data/climate.duckdb` automatically when that file exists; otherwise it falls back to stub climate rows until the dataset lands
 
 ## Data Model Direction
 
