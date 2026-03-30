@@ -16,7 +16,18 @@ def test_home_page_renders() -> None:
     assert 'hx-post="/score"' in response.text
     assert 'hx-trigger="input changed delay:300ms"' in response.text
     assert 'hx-swap="none"' in response.text
-    assert '<div id="map" role="img" aria-label="Map results placeholder"></div>' in response.text
+    assert 'id="map-description"' in response.text
+    assert 'id="map-status"' in response.text
+    assert 'id="map-legend"' in response.text
+    assert (
+        'id="map" role="region" aria-label="Interactive climate score map" aria-describedby="map-description map-legend map-status"'
+        in response.text
+    )
+    assert 'id="score-results-list"' in response.text
+    assert "maplibre-gl.css" in response.text
+    assert "maplibre-gl.js" in response.text
+    assert "pmtiles.js" in response.text
+    assert "basemaps.js" in response.text
 
 
 def test_home_page_uses_backend_default_preferences() -> None:
@@ -62,6 +73,20 @@ def test_static_files_are_served() -> None:
 
     assert response.status_code == 200
     assert "font-family" in response.text
+
+
+def test_map_script_initializes_maplibre_score_layer() -> None:
+    response = client.get("/static/map.js")
+
+    assert response.status_code == 200
+    assert "new window.maplibregl.Map" in response.text
+    assert "map.addSource(SCORE_SOURCE_ID" in response.text
+    assert "map.addLayer({" in response.text
+    assert 'window.maplibregl.addProtocol("pmtiles"' in response.text
+    assert 'window.basemaps.layers("protomaps"' in response.text
+    assert "url: PROTOMAPS_PM_TILES_URL" in response.text
+    assert "renderScoreList(collection);" in response.text
+    assert 'setMapStatus("Map libraries failed to load.");' in response.text
 
 
 def test_score_endpoint_accepts_form_encoded_preferences() -> None:

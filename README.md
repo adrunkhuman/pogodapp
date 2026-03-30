@@ -1,12 +1,12 @@
 # Pogodapp
 
-Pogodapp is a climate preference search tool, not a weather app. The user describes an ideal climate profile and the app scores places around the world against long-term climate normals, then shows the result as an interactive map heatmap.
+Pogodapp is a climate preference search tool, not a weather app. The user describes an ideal climate profile and the app scores places around the world against long-term climate normals, then shows the result as an interactive world map.
 
 ## Goal
 
 - Let the user tune climate preferences with simple controls
 - Score global grid cells against those preferences
-- Render good matches brightly and bad matches dimly on a world map
+- Render scored matches on a world map so stronger results stand out clearly
 
 ## Stack
 
@@ -28,6 +28,8 @@ Pogodapp is a climate preference search tool, not a weather app. The user descri
 - HTMX submits form changes to `/score`
 - `htmx:afterRequest` bridges the response into the map update path
 - `frontend/static/map.js` stays focused on rendering, not networking
+- The current map uses MapLibre GL with the PMTiles browser protocol and Protomaps basemap layers loaded from public CDN/asset hosts
+- If those external map assets are blocked or unavailable, the map falls back to an in-page failure message while the textual score list still renders
 - DuckDB is the only runtime data store
 
 ## Data Model Direction
@@ -48,6 +50,7 @@ Each grid cell is scored month-by-month, then combined into one annual score.
 - `sun_preference` currently uses a symmetric preference-fit curve against the stub sun signal
 - The user-facing form contract uses `sun_preference`; later scoring maps that preference onto the cloud-cover signal
 - Final scores are normalized to the `0..1` range for map rendering
+- The current prototype renders scores as colored circle markers with larger, warmer markers indicating better matches
 
 ## Repository Layout
 

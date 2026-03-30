@@ -4,6 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Pogodapp</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/maplibre-gl@5.6.2/dist/maplibre-gl.css"
+    />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
@@ -45,10 +49,27 @@
 
       <section class="panel map-panel" aria-label="Map container">
         <h2>Map</h2>
-        <div id="map" role="img" aria-label="Map results placeholder"></div>
+        <p id="map-status" class="visually-hidden" role="status" aria-live="polite"></p>
+        <p id="map-description" class="map-description">
+          Interactive world map of scored climate matches. Larger, warmer markers indicate higher scores.
+        </p>
+        <div id="map-legend" class="map-legend" aria-label="Map legend">
+          <span class="map-legend__title">Score</span>
+          <span class="map-legend__swatch map-legend__swatch--low">Low</span>
+          <span class="map-legend__swatch map-legend__swatch--mid">Medium</span>
+          <span class="map-legend__swatch map-legend__swatch--high">High</span>
+        </div>
+        <div id="map" role="region" aria-label="Interactive climate score map" aria-describedby="map-description map-legend map-status"></div>
+        <div class="score-results" aria-labelledby="score-results-title">
+          <h3 id="score-results-title">Scored locations</h3>
+          <ol id="score-results-list"></ol>
+        </div>
       </section>
     </main>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script src="https://unpkg.com/maplibre-gl@5.6.2/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/pmtiles@4.3.0/dist/pmtiles.js"></script>
+    <script src="https://unpkg.com/@protomaps/basemaps@5.0.0/dist/basemaps.js"></script>
     <script src="/static/map.js"></script>
     <script>
       document.addEventListener("DOMContentLoaded", () => {
