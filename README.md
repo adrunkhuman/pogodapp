@@ -45,6 +45,7 @@ Each grid cell is scored month-by-month, then combined into one annual score.
 - Temperature penalty is asymmetric: cold deviations and heat deviations use different slopes, with a comfort band around the ideal temperature
 - Rain penalty scales with precipitation and user sensitivity
 - Cloud penalty uses the agreed misery-style curve, harsher at high cover
+- The user-facing form contract uses `sun_preference`; later scoring maps that preference onto the cloud-cover signal
 - Final scores are normalized to the `0..1` range for map rendering
 
 ## Repository Layout
