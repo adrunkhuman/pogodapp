@@ -57,8 +57,33 @@ p {
   padding: 1.5rem;
 }
 
+#preferences {
+  display: grid;
+  gap: 1rem;
+}
+
+.control {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.control span,
+.control output {
+  font-weight: 700;
+}
+
+.control input {
+  width: 100%;
+}
+
 .map-panel {
   min-height: 18rem;
+}
+
+#map {
+  min-height: 14rem;
+  border-radius: 0.75rem;
+  background: linear-gradient(135deg, rgba(70, 96, 109, 0.12), rgba(19, 34, 44, 0.04));
 }
 
 @media (min-width: 48rem) {
