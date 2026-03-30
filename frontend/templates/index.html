@@ -16,16 +16,33 @@
         </p>
       </section>
 
-      <section class="panel" aria-label="Controls placeholder">
+      <section class="panel" aria-label="Controls area">
         <h2>Controls</h2>
-        <p>Preference controls will land here in the next issue.</p>
+        <form id="preferences" hx-post="/score" hx-trigger="change delay:200ms">
+          {% for preference in preferences %}
+          <label class="control" for="{{ preference.name }}">
+            <span>{{ preference.label }}</span>
+            <input
+              id="{{ preference.name }}"
+              name="{{ preference.name }}"
+              type="range"
+              min="{{ preference.minimum }}"
+              max="{{ preference.maximum }}"
+              step="{{ preference.step }}"
+              value="{{ preference.value }}"
+            />
+            <output for="{{ preference.name }}">{{ preference.value }}</output>
+          </label>
+          {% endfor %}
+        </form>
       </section>
 
-      <section class="panel map-panel" aria-label="Map placeholder">
+      <section class="panel map-panel" aria-label="Map container">
         <h2>Map</h2>
-        <p>Map rendering is wired in as a static asset and ready for later data updates.</p>
+        <div id="map" role="img" aria-label="Map results placeholder"></div>
       </section>
     </main>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <script src="/static/map.js"></script>
   </body>
 </html>
