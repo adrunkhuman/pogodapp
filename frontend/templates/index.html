@@ -18,7 +18,12 @@
 
       <section class="panel" aria-label="Controls area">
         <h2>Controls</h2>
-        <form id="preferences" hx-post="/score" hx-trigger="change delay:200ms">
+        <form
+          id="preferences"
+          hx-post="/score"
+          hx-trigger="input changed delay:300ms"
+          hx-swap="none"
+        >
           {% for preference in preferences %}
           <label class="control" for="{{ preference.name }}">
             <span>{{ preference.label }}</span>

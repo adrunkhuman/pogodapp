@@ -12,7 +12,9 @@ def test_home_page_renders() -> None:
     assert response.status_code == 200
     assert "Pogodapp" in response.text
     assert "Climate preference search" in response.text
-    assert '<form id="preferences" hx-post="/score" hx-trigger="change delay:200ms">' in response.text
+    assert 'hx-post="/score"' in response.text
+    assert 'hx-trigger="input changed delay:300ms"' in response.text
+    assert 'hx-swap="none"' in response.text
     assert '<div id="map" role="img" aria-label="Map results placeholder"></div>' in response.text
 
 
@@ -49,3 +51,21 @@ def test_static_files_are_served() -> None:
 
     assert response.status_code == 200
     assert "font-family" in response.text
+
+
+def test_score_endpoint_accepts_form_encoded_preferences() -> None:
+    response = client.post(
+        "/score",
+        data={
+            "ideal_temperature": "22",
+            "cold_tolerance": "7",
+            "heat_tolerance": "5",
+            "rain_sensitivity": "55",
+            "sun_preference": "60",
+        },
+        headers={"HX-Request": "true"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == []
