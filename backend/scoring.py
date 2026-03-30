@@ -1,16 +1,17 @@
 from dataclasses import dataclass
 from typing import TypedDict
 
+from pydantic import BaseModel, Field
 
-@dataclass(frozen=True, slots=True)
-class PreferenceInputs:
+
+class PreferenceInputs(BaseModel):
     """Normalized form inputs passed into the scoring layer."""
 
-    ideal_temperature: int
-    cold_tolerance: int
-    heat_tolerance: int
-    rain_sensitivity: int
-    sun_preference: int
+    ideal_temperature: int = Field(ge=-10, le=35)
+    cold_tolerance: int = Field(ge=0, le=15)
+    heat_tolerance: int = Field(ge=0, le=15)
+    rain_sensitivity: int = Field(ge=0, le=100)
+    sun_preference: int = Field(ge=0, le=100)
 
 
 @dataclass(frozen=True, slots=True)

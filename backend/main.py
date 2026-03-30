@@ -15,13 +15,6 @@ STATIC_DIR = FRONTEND_DIR / "static"
 TEMPLATES_DIR = FRONTEND_DIR / "templates"
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-PREFERENCE_FIELDS = {field.name: field for field in DEFAULT_PREFERENCES}
-
-
-def form_bounds(name: str) -> object:
-    """Keep FastAPI validation aligned with the slider contract in backend config."""
-    field = PREFERENCE_FIELDS[name]
-    return Form(ge=field.minimum, le=field.maximum)
 
 
 def build_index_context() -> dict[str, object]:
@@ -43,35 +36,7 @@ def create_app() -> FastAPI:
         )
 
     @app.post("/score")
-    async def score(
-        ideal_temperature: Annotated[
-            int,
-            form_bounds("ideal_temperature"),
-        ],
-        cold_tolerance: Annotated[
-            int,
-            form_bounds("cold_tolerance"),
-        ],
-        heat_tolerance: Annotated[
-            int,
-            form_bounds("heat_tolerance"),
-        ],
-        rain_sensitivity: Annotated[
-            int,
-            form_bounds("rain_sensitivity"),
-        ],
-        sun_preference: Annotated[
-            int,
-            form_bounds("sun_preference"),
-        ],
-    ) -> list[ScorePoint]:
-        preferences = PreferenceInputs(
-            ideal_temperature=ideal_temperature,
-            cold_tolerance=cold_tolerance,
-            heat_tolerance=heat_tolerance,
-            rain_sensitivity=rain_sensitivity,
-            sun_preference=sun_preference,
-        )
+    async def score(preferences: Annotated[PreferenceInputs, Form()]) -> list[ScorePoint]:
         return score_preferences(preferences)
 
     return app

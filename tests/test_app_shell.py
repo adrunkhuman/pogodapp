@@ -47,6 +47,16 @@ def test_preference_contract_matches_issue_scope() -> None:
     assert tuple(preference.name for preference in DEFAULT_PREFERENCES) == expected_names
 
 
+def test_preference_input_bounds_match_backend_config() -> None:
+    schema = PreferenceInputs.model_json_schema()
+
+    for preference in DEFAULT_PREFERENCES:
+        field_schema = schema["properties"][preference.name]
+
+        assert field_schema["minimum"] == preference.minimum
+        assert field_schema["maximum"] == preference.maximum
+
+
 def test_static_files_are_served() -> None:
     response = client.get("/static/styles.css")
 
