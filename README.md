@@ -46,9 +46,9 @@ Pogodapp is a climate preference search tool, not a weather app. The user descri
 Each grid cell is scored month-by-month, then combined into one annual score.
 
 - Temperature penalty is asymmetric: cold deviations and heat deviations use different slopes, with a comfort band around the ideal temperature
-- Rain is one-sided: higher `rain_sensitivity` increases penalties for wetter cells without rewarding rain
-- `sun_preference` currently uses a symmetric preference-fit curve against the stub sun signal
-- The user-facing form contract uses `sun_preference`; later scoring maps that preference onto the cloud-cover signal
+- Rain is one-sided: higher `rain_sensitivity` increases penalties for wetter months without rewarding rain
+- `sun_preference` maps onto a cloud-cover tolerance threshold and then applies a one-sided misery-style cloud penalty
+- The stub scorer now uses one grid-cell record with 12 monthly values per climate signal and averages monthly composite scores into one annual score; DuckDB-backed data still lands in later issues
 - Final scores are normalized to the `0..1` range for map rendering
 - The current prototype renders scores as colored circle markers with larger, warmer markers indicating better matches
 
