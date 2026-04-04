@@ -4,10 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Pogodapp</title>
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/maplibre-gl@5.6.2/dist/maplibre-gl.css"
-    />
+    <link rel="stylesheet" href="/static/vendor/maplibre-gl.css" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
@@ -51,7 +48,8 @@
         <h2>Map</h2>
         <p id="map-status" class="visually-hidden" role="status" aria-live="polite"></p>
         <p id="map-description" class="map-description">
-          Interactive world map of scored climate matches. Larger, warmer markers indicate higher scores.
+          Interactive world map of scored climate matches. A simple world backdrop provides context while larger,
+          warmer markers indicate higher scores.
         </p>
         <div id="map-legend" class="map-legend" aria-label="Map legend">
           <span class="map-legend__title">Score</span>
@@ -67,9 +65,7 @@
       </section>
     </main>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-    <script src="https://unpkg.com/maplibre-gl@5.6.2/dist/maplibre-gl.js"></script>
-    <script src="https://unpkg.com/pmtiles@4.3.0/dist/pmtiles.js"></script>
-    <script src="https://unpkg.com/@protomaps/basemaps@5.0.0/dist/basemaps.js"></script>
+    <script src="/static/vendor/maplibre-gl.js"></script>
     <script src="/static/map.js"></script>
     <script>
       document.addEventListener("DOMContentLoaded", () => {

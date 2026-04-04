@@ -24,10 +24,8 @@ def test_home_page_renders() -> None:
         in response.text
     )
     assert 'id="score-results-list"' in response.text
-    assert "maplibre-gl.css" in response.text
-    assert "maplibre-gl.js" in response.text
-    assert "pmtiles.js" in response.text
-    assert "basemaps.js" in response.text
+    assert "/static/vendor/maplibre-gl.css" in response.text
+    assert "/static/vendor/maplibre-gl.js" in response.text
 
 
 def test_home_page_uses_backend_default_preferences() -> None:
@@ -75,18 +73,46 @@ def test_static_files_are_served() -> None:
     assert "font-family" in response.text
 
 
+def test_local_map_assets_are_served() -> None:
+    css_response = client.get("/static/vendor/maplibre-gl.css")
+    js_response = client.get("/static/vendor/maplibre-gl.js")
+    geojson_response = client.get("/static/data/world.geojson")
+
+    assert css_response.status_code == 200
+    assert ".maplibregl-map" in css_response.text
+    assert js_response.status_code == 200
+    assert "maplibregl" in js_response.text
+    assert geojson_response.status_code == 200
+    assert geojson_response.json()["type"] == "FeatureCollection"
+
+
 def test_map_script_initializes_maplibre_score_layer() -> None:
     response = client.get("/static/map.js")
 
     assert response.status_code == 200
     assert "new window.maplibregl.Map" in response.text
+    assert "data: WORLD_BACKDROP_URL" in response.text
+    assert "id: LAND_LAYER_ID" in response.text
+    assert "id: BORDER_LAYER_ID" in response.text
     assert "map.addSource(SCORE_SOURCE_ID" in response.text
     assert "map.addLayer({" in response.text
-    assert 'window.maplibregl.addProtocol("pmtiles"' in response.text
-    assert 'window.basemaps.layers("protomaps"' in response.text
-    assert "url: PROTOMAPS_PM_TILES_URL" in response.text
+    assert 'setMapStatus("Map backdrop ready.");' in response.text
     assert "renderScoreList(collection);" in response.text
-    assert 'setMapStatus("Map libraries failed to load.");' in response.text
+    assert 'setMapStatus("Map library failed to load.");' in response.text
+
+
+def test_map_contract_does_not_depend_on_remote_basemap_assets() -> None:
+    home_response = client.get("/")
+    script_response = client.get("/static/map.js")
+
+    assert home_response.status_code == 200
+    assert script_response.status_code == 200
+    assert "pmtiles" not in home_response.text
+    assert "protomaps" not in home_response.text
+    assert "unpkg.com/maplibre-gl" not in home_response.text
+    assert "pmtiles" not in script_response.text
+    assert "protomaps" not in script_response.text
+    assert "https://" not in script_response.text
 
 
 def test_score_endpoint_accepts_form_encoded_preferences() -> None:
