@@ -1,15 +1,16 @@
 "use strict";
 
-const PROTOMAPS_PM_TILES_URL = "pmtiles://https://build.protomaps.com/20260330.pmtiles";
-const PROTOMAPS_ATTRIBUTION =
-  '<a href="https://protomaps.com">Protomaps</a> © <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>';
+const WORLD_BACKDROP_URL = "/static/data/world.geojson";
+const BACKDROP_SOURCE_ID = "world-backdrop";
+const OCEAN_LAYER_ID = "world-ocean";
+const LAND_LAYER_ID = "world-land";
+const BORDER_LAYER_ID = "world-borders";
 const SCORE_SOURCE_ID = "scores";
 const SCORE_LAYER_ID = "scores-circles";
 const EMPTY_SCORE_COLLECTION = { type: "FeatureCollection", features: [] };
 
 let map;
 let pendingScores = EMPTY_SCORE_COLLECTION;
-let pmtilesProtocol;
 
 function setMapStatus(message) {
   const status = document.getElementById("map-status");
@@ -105,41 +106,69 @@ function initializeMap() {
     return;
   }
 
-  if (!window.maplibregl || !window.pmtiles || !window.basemaps) {
-    mapRoot.textContent = "Map libraries failed to load.";
-    setMapStatus("Map libraries failed to load.");
+  if (!window.maplibregl) {
+    mapRoot.textContent = "Map library failed to load.";
+    setMapStatus("Map library failed to load.");
     return;
-  }
-
-  if (!pmtilesProtocol) {
-    pmtilesProtocol = new window.pmtiles.Protocol();
-    window.maplibregl.addProtocol("pmtiles", pmtilesProtocol.tile);
   }
 
   map = new window.maplibregl.Map({
     container: mapRoot,
     style: {
       version: 8,
-      glyphs: "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf",
-      sprite: "https://protomaps.github.io/basemaps-assets/sprites/v4/light",
-      sources: {
-        protomaps: {
-          type: "vector",
-          url: PROTOMAPS_PM_TILES_URL,
-          attribution: PROTOMAPS_ATTRIBUTION,
+      sources: {},
+      layers: [
+        {
+          id: OCEAN_LAYER_ID,
+          type: "background",
+          paint: {
+            "background-color": "#dfeaf0",
+          },
         },
-      },
-      layers: window.basemaps.layers("protomaps", window.basemaps.namedFlavor("light"), {
-        lang: "en",
-      }),
+      ],
     },
     center: [12, 20],
     zoom: 1.4,
   });
 
   map.addControl(new window.maplibregl.NavigationControl({ showCompass: false }), "top-right");
+  map.on("dataabort", (event) => {
+    if (event.sourceId === BACKDROP_SOURCE_ID) {
+      setMapStatus("Map backdrop failed to load.");
+    }
+  });
+  map.on("error", (event) => {
+    if (event.sourceId === BACKDROP_SOURCE_ID) {
+      setMapStatus("Map backdrop failed to load.");
+    }
+  });
 
   map.on("load", () => {
+    map.addSource(BACKDROP_SOURCE_ID, {
+      type: "geojson",
+      data: WORLD_BACKDROP_URL,
+    });
+
+    map.addLayer({
+      id: LAND_LAYER_ID,
+      type: "fill",
+      source: BACKDROP_SOURCE_ID,
+      paint: {
+        "fill-color": "#f7f0df",
+        "fill-opacity": 0.92,
+      },
+    });
+
+    map.addLayer({
+      id: BORDER_LAYER_ID,
+      type: "line",
+      source: BACKDROP_SOURCE_ID,
+      paint: {
+        "line-color": "rgba(70, 96, 109, 0.38)",
+        "line-width": 0.6,
+      },
+    });
+
     map.addSource(SCORE_SOURCE_ID, {
       type: "geojson",
       data: pendingScores,
@@ -176,6 +205,7 @@ function initializeMap() {
       },
     });
 
+    setMapStatus("Map backdrop ready.");
     applyScores(pendingScores);
   });
 }

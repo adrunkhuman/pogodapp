@@ -15,7 +15,7 @@ Pogodapp is a climate preference search tool, not a weather app. The user descri
 | Backend | FastAPI + DuckDB |
 | Frontend render | Jinja2 |
 | Frontend interaction | HTMX |
-| Map rendering | MapLibre GL + Protomaps PMTiles |
+| Map rendering | MapLibre GL + local world backdrop |
 | Hosting | Railway |
 | Tooling | uv, Ruff, ty, pytest |
 
@@ -29,8 +29,8 @@ Pogodapp is a climate preference search tool, not a weather app. The user descri
 - HTMX submits form changes to `/score`
 - `htmx:afterRequest` bridges the response into the map update path
 - `frontend/static/map.js` stays focused on rendering, not networking
-- The current map uses MapLibre GL with the PMTiles browser protocol and Protomaps basemap layers loaded from public CDN/asset hosts
-- If those external map assets are blocked or unavailable, the map falls back to an in-page failure message while the textual score list still renders
+- The current map uses MapLibre GL with app-served static assets and a lightweight local GeoJSON world backdrop
+- The score overlay still renders as GeoJSON circles on top of that backdrop, and the textual score list remains available alongside the map
 - DuckDB is the only runtime data store
 - The app uses `data/climate.duckdb` automatically when that file exists; otherwise it falls back to stub climate rows until the dataset lands
 
@@ -65,6 +65,11 @@ Each grid cell is scored month-by-month, then combined into one annual score.
 |-- data/
 |-- frontend/
 |   |-- static/
+|   |   |-- data/
+|   |   |   `-- world.geojson
+|   |   |-- vendor/
+|   |   |   |-- maplibre-gl.css
+|   |   |   `-- maplibre-gl.js
 |   |   |-- map.js
 |   |   `-- styles.css
 |   `-- templates/
@@ -83,8 +88,10 @@ uv sync
 ## Run
 
 ```bash
-uv run uvicorn backend.main:app --reload
+uv run pogodapp
 ```
+
+- The app serves its own map assets from `/static`, so local map rendering no longer depends on remote PMTiles, sprite, or glyph hosts
 
 ## Local Testing
 
