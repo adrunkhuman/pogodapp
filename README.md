@@ -95,6 +95,17 @@ uv run ty check
 uv run pytest
 ```
 
+## Build Climate Data
+
+```bash
+uv run python scripts/build_climate_db.py
+```
+
+- The pipeline downloads WorldClim 2.1 `10m` monthly `tavg`, `prec`, and `srad` rasters into `data/worldclim/`
+- It aggregates each `3x3` block into the planned `0.5deg` prototype grid and writes `data/climate.duckdb`
+- `cloud_jan..cloud_dec` currently come from an inverted month-wise solar-radiation proxy so the scoring schema stays usable until a direct cloud-cover source is chosen
+- The build validates the final schema and checks that the row count stays in the expected rough prototype range
+
 ## Status
 
 - The scaffold and tooling are in place

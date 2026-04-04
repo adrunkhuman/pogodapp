@@ -3,12 +3,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import duckdb
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+from backend.climate_pipeline import build_insert_rows, copy_rows_into_climate_table, create_climate_cells_table
 from backend.climate_repository import ClimateDataError, DuckDbClimateRepository, StubClimateRepository
 from backend.main import create_app
 from backend.scoring import ClimateCell
@@ -211,3 +213,38 @@ def test_duckdb_climate_repository_raises_clear_error_for_bad_row_values(tmp_pat
 
     with pytest.raises(ClimateDataError, match="Failed to map climate data"):
         DuckDbClimateRepository(database_path).list_cells()
+
+
+def test_duckdb_climate_repository_loads_rows_built_in_pipeline_shape(tmp_path: Path) -> None:
+    database_path = tmp_path / "climate.duckdb"
+
+    monthly_temperature = tuple(np.full((360, 720), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_precipitation = tuple(np.full((360, 720), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_solar_radiation = tuple(np.full((360, 720), np.nan, dtype=np.float64) for _ in range(12))
+
+    for month_index, month in enumerate(monthly_temperature, start=1):
+        month[0, 0] = float(month_index)
+
+    for month_index, month in enumerate(monthly_precipitation, start=1):
+        month[0, 0] = float(month_index * 10)
+
+    for month_index, month in enumerate(monthly_solar_radiation, start=1):
+        month[0, 0] = float(month_index * 100)
+
+    rows = build_insert_rows(monthly_temperature, monthly_precipitation, monthly_solar_radiation)
+
+    with duckdb.connect(str(database_path)) as connection:
+        create_climate_cells_table(connection)
+        copy_rows_into_climate_table(connection, rows)
+
+    cells = DuckDbClimateRepository(database_path).list_cells()
+
+    assert cells == (
+        ClimateCell(
+            lat=89.75,
+            lon=-179.75,
+            temperature_c=tuple(float(month_index) for month_index in range(1, 13)),
+            precipitation_mm=tuple(float(month_index * 10) for month_index in range(1, 13)),
+            cloud_cover_pct=(50,) * 12,
+        ),
+    )
