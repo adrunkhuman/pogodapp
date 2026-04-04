@@ -86,6 +86,23 @@ uv sync
 uv run uvicorn backend.main:app --reload
 ```
 
+## Local Testing
+
+```bash
+uv run pogodapp
+```
+
+- Starts the FastAPI app on `http://127.0.0.1:8000`
+- Uses live reload by default for local iteration
+- Still runs with stub climate rows when `data/climate.duckdb` is absent
+
+Optional flags:
+
+```bash
+uv run pogodapp --port 9000
+uv run pogodapp --no-reload
+```
+
 ## Quality Checks
 
 ```bash
