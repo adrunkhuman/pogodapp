@@ -21,14 +21,14 @@ _MAX_LAT = 85.051129
 # Mercator y at the maximum latitude — used to normalise y to [0, HEIGHT].
 _Y_MAX = math.log(math.tan(math.pi / 4 + _MAX_LAT * math.pi / 360))
 
-# Matches the client-side color ramp; stop format: (value, (R, G, B, A))
+# Color ramp: stop format (value, (R, G, B, A)). Value 0.0 maps to alpha=0 (transparent).
 _COLOR_STOPS: list[tuple[float, tuple[int, int, int, int]]] = [
-    (0.00, (53,   92,  125,   0)),
-    (0.20, (53,   92,  125,  89)),
-    (0.45, (127, 179,  213, 140)),
-    (0.65, (248, 182,   90, 199)),
-    (0.82, (234,  95,  137, 224)),
-    (1.00, (121,  40,  202, 235)),
+    (0.00, (53, 92, 125, 0)),
+    (0.20, (53, 92, 125, 89)),
+    (0.45, (127, 179, 213, 140)),
+    (0.65, (248, 182, 90, 199)),
+    (0.82, (234, 95, 137, 224)),
+    (1.00, (121, 40, 202, 235)),
 ]
 
 
@@ -39,7 +39,7 @@ def _apply_color_ramp(values: np.ndarray) -> np.ndarray:
     for i in range(len(_COLOR_STOPS) - 1):
         t0, c0 = _COLOR_STOPS[i]
         t1, c1 = _COLOR_STOPS[i + 1]
-        in_band = (values > t0) & (values <= t1)
+        in_band = (values >= t0) & (values <= t1) if i == 0 else (values > t0) & (values <= t1)
         f = np.where(in_band, (values - t0) / (t1 - t0), 0.0)
         for ch in range(4):
             rgba[..., ch] += np.where(in_band, c0[ch] + f * (c1[ch] - c0[ch]), 0.0)

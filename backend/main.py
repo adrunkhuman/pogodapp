@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import heapq
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -69,11 +70,10 @@ def create_app(climate_repository: ClimateRepository | None = None) -> FastAPI:
             return {"scores": [], "heatmap": ""}
 
         normalized: list[ScorePoint] = [
-            {"lat": p["lat"], "lon": p["lon"], "score": round(p["score"] / max_score, 4)}
-            for p in raw
+            {"lat": p["lat"], "lon": p["lon"], "score": round(p["score"] / max_score, 4)} for p in raw
         ]
 
-        top20 = sorted(normalized, key=lambda p: p["score"], reverse=True)[:20]
+        top20 = heapq.nlargest(20, normalized, key=lambda p: p["score"])
         png = render_heatmap_png(normalized)
         heatmap_data_url = "data:image/png;base64," + base64.b64encode(png).decode()
 

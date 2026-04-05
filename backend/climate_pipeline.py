@@ -45,7 +45,8 @@ GRID_DEGREES: Final[float] = 10 / 60
 NODATA_CUTOFF: Final[float] = -1e20
 RASTER_SHAPE: Final[tuple[int, int]] = (1080, 2160)
 MONTHS_PER_YEAR: Final[int] = 12
-# ~29% of Earth's surface is land; 1080x2160 total cells x 0.29 ~= 675k land cells at 10'.
+# WorldClim 10' land coverage (including coastal pixels) is ~808k cells — more than the
+# ~29% dry-land-area fraction because small islands and coastal strips are included.
 ROUGH_ROW_COUNT_RANGE: Final[tuple[int, int]] = (780_000, 840_000)
 TEMPERATURE_COLUMNS: Final[tuple[str, ...]] = tuple(f"t_{month_name}" for month_name in MONTH_NAMES)
 PRECIPITATION_COLUMNS: Final[tuple[str, ...]] = tuple(f"prec_{month_name}" for month_name in MONTH_NAMES)

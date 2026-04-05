@@ -13,6 +13,10 @@ const HEATMAP_LAYER_ID = "score-heatmap";
 // in the Mercator y formula, causing WebGL to discard the image triangles.
 const WORLD_CORNERS = [[-180, 85.051129], [180, 85.051129], [180, -85.051129], [-180, -85.051129]];
 
+// 1×1 transparent PNG — used to clear the heatmap when a response has no results.
+const EMPTY_IMAGE =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
 let map;
 // Set to true once map.on("load") has fired and all layers are registered.
 // isStyleLoaded() is unreliable after addSource() — it stays false while the
@@ -155,8 +159,9 @@ function initializeMap() {
     setMapStatus("Map backdrop ready.");
 
     if (pendingResponse) {
-      applyHeatmap(pendingResponse.heatmap);
-      setMapStatus(`${pendingResponse.scores.length} top matches shown.`);
+      const { scores, heatmap } = pendingResponse;
+      applyHeatmap(heatmap);
+      setMapStatus(heatmap !== EMPTY_IMAGE ? `${scores.length} top matches shown.` : "No matches found.");
       pendingResponse = null;
     }
   });
@@ -167,16 +172,19 @@ window.renderScores = function renderScores(response) {
 
   renderScoreList(scores ?? []);
 
-  if (!heatmap || !map) {
+  if (!map) {
     return;
   }
 
+  // Clear the previous heatmap when results are empty so the layers stay in sync.
+  const imageUrl = heatmap || EMPTY_IMAGE;
+
   if (mapLoaded) {
-    applyHeatmap(heatmap);
-    setMapStatus(`${scores.length} top matches shown.`);
+    applyHeatmap(imageUrl);
+    setMapStatus(heatmap ? `${scores.length} top matches shown.` : "No matches found.");
   } else {
     // Response arrived before map.on("load") fired — defer until layers exist.
-    pendingResponse = response;
+    pendingResponse = { ...response, heatmap: imageUrl };
   }
 };
 
