@@ -166,17 +166,7 @@ def _deduplicate_city_points(cities: list[CityScorePoint]) -> list[CityScorePoin
 
 
 def _with_city_score(city: CityScorePoint, score: float) -> CityScorePoint:
-    return {
-        "name": city["name"],
-        "continent": city["continent"],
-        "country_code": city["country_code"],
-        "flag": city["flag"],
-        "score": score,
-        "lat": city["lat"],
-        "lon": city["lon"],
-        "probe_lat": city["probe_lat"],
-        "probe_lon": city["probe_lon"],
-    }
+    return {**city, "score": score}
 
 
 def _rescore_city_points_from_cache(

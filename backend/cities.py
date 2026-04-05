@@ -288,6 +288,21 @@ class RegionalPenaltyCenter:
     strength: float = 1.0
 
 
+def city_score_point(city: CityCandidate, score: float, *, flag: str | None = None) -> CityScorePoint:
+    """Build the API score shape for one ranked city."""
+    return {
+        "name": city.name,
+        "continent": continent_of(city.country_code, city.lon),
+        "country_code": city.country_code,
+        "flag": flag or country_flag(city.country_code),
+        "score": round(score, 4),
+        "lat": city.lat,
+        "lon": city.lon,
+        "probe_lat": city.cell_lat,
+        "probe_lon": city.cell_lon,
+    }
+
+
 def _candidate_population(city: CityCandidate) -> int:
     return max(city.population, 0)
 
@@ -410,19 +425,7 @@ def rank_city_scores(
     while remaining and len(ranked) < limit:
         winner = _select_population_biased_winner(remaining)
         penalty_center = RegionalPenaltyCenter(winner.city, winner.score, _diversity_strength_for_rank(len(ranked)))
-        ranked.append(
-            {
-                "name": winner.city.name,
-                "continent": continent_of(winner.city.country_code, winner.city.lon),
-                "country_code": winner.city.country_code,
-                "flag": country_flag(winner.city.country_code),
-                "score": round(winner.score, 4),
-                "lat": winner.city.lat,
-                "lon": winner.city.lon,
-                "probe_lat": winner.city.cell_lat,
-                "probe_lon": winner.city.cell_lon,
-            }
-        )
+        ranked.append(city_score_point(winner.city, winner.score))
         remaining = [
             RankedCityCandidate(
                 city=candidate.city,
@@ -460,19 +463,7 @@ def rank_indexed_city_scores(
         winner_city = city_catalog.cities[winner_index]
         winner_score = float(scores[winner_index])
         diversity_strength = _diversity_strength_for_rank(len(ranked))
-        ranked.append(
-            {
-                "name": winner_city.name,
-                "continent": continent_of(winner_city.country_code, winner_city.lon),
-                "country_code": winner_city.country_code,
-                "flag": city_catalog.flags[winner_index],
-                "score": round(winner_score, 4),
-                "lat": winner_city.lat,
-                "lon": winner_city.lon,
-                "probe_lat": winner_city.cell_lat,
-                "probe_lon": winner_city.cell_lon,
-            }
-        )
+        ranked.append(city_score_point(winner_city, winner_score, flag=city_catalog.flags[winner_index]))
 
         distance_km = _haversine_distance_vector_km(city_catalog, winner_index)
         penalty = winner_score * diversity_strength * np.exp(-distance_km / diversity_decay_km)
