@@ -80,6 +80,7 @@ def test_home_page_renders() -> None:
     assert "/static/map-probe.js" in response.text
     assert "/static/map-layers.js" in response.text
     assert "/static/map.js" in response.text
+    assert "/static/app.js" in response.text
     assert "window.POGODAPP_MAP_CONFIG" in response.text
     assert MAP_PROJECTION.name in response.text
 
@@ -458,10 +459,13 @@ def test_probe_endpoint_returns_503_for_repository_failures() -> None:
 
 def test_home_page_registers_htmx_handoff_script() -> None:
     response = client.get("/")
+    app_script = client.get("/static/app.js")
 
     assert response.status_code == 200
-    assert "htmx:afterRequest" in response.text
-    assert "window.renderScores(scores);" in response.text
+    assert app_script.status_code == 200
+    assert "/static/app.js" in response.text
+    assert "htmx:afterRequest" in app_script.text
+    assert "window.renderScores(JSON.parse(event.detail.xhr.responseText));" in app_script.text
 
 
 def test_map_script_renders_city_labels_instead_of_coordinates() -> None:

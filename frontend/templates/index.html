@@ -74,44 +74,6 @@
     <script src="/static/map-probe.js"></script>
     <script src="/static/map-layers.js"></script>
     <script src="/static/map.js"></script>
-    <script>
-      document.addEventListener("DOMContentLoaded", () => {
-        const form = document.getElementById("preferences");
-
-        if (!form) {
-          return;
-        }
-
-        for (const input of form.querySelectorAll("input[type='range']")) {
-          const output = form.querySelector(`output[for='${input.id}']`);
-
-          const syncControl = () => {
-            const minimum = Number(input.min);
-            const maximum = Number(input.max);
-            const value = Number(input.value);
-            const progress = ((value - minimum) / (maximum - minimum)) * 100;
-
-            input.style.setProperty("--range-progress", `${progress}%`);
-
-            if (output) {
-              output.value = input.value;
-            }
-          };
-
-          syncControl();
-          input.addEventListener("input", syncControl);
-        }
-
-        document.body.addEventListener("htmx:afterRequest", (event) => {
-          // Ignore unrelated HTMX requests once the page grows past one form.
-          if (event.detail.elt !== form || event.detail.xhr.status !== 200) {
-            return;
-          }
-
-          const scores = JSON.parse(event.detail.xhr.responseText);
-          window.renderScores(scores);
-        });
-      });
-    </script>
+    <script src="/static/app.js"></script>
   </body>
 </html>
