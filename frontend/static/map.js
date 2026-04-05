@@ -5,16 +5,12 @@ const BACKDROP_SOURCE_ID = "world-backdrop";
 const OCEAN_LAYER_ID = "world-ocean";
 const LAND_LAYER_ID = "world-land";
 const BORDER_LAYER_ID = "world-borders";
-const SCORE_POINT_SOURCE_ID = "score-points";
-const SCORE_SURFACE_SOURCE_ID = "score-surface";
-const SCORE_SURFACE_LAYER_ID = "score-surface";
-const CLIMATE_CELL_DEGREES = 10 / 60;
-const CLIMATE_CELL_HALF_DEGREES = CLIMATE_CELL_DEGREES / 2;
+const SCORE_SOURCE_ID = "scores";
+const SCORE_HEATMAP_LAYER_ID = "scores-heatmap";
 const EMPTY_FEATURE_COLLECTION = { type: "FeatureCollection", features: [] };
 
 let map;
-let pendingPointScores = EMPTY_FEATURE_COLLECTION;
-let pendingSurfaceScores = EMPTY_FEATURE_COLLECTION;
+let pendingScores = EMPTY_FEATURE_COLLECTION;
 
 function setMapStatus(message) {
   const status = document.getElementById("map-status");
@@ -55,7 +51,7 @@ function renderScoreList(collection) {
   }
 }
 
-function toScorePointCollection(scores) {
+function toScoreCollection(scores) {
   if (!Array.isArray(scores)) {
     return EMPTY_FEATURE_COLLECTION;
   }
@@ -87,33 +83,8 @@ function toScorePointCollection(scores) {
   return { type: "FeatureCollection", features };
 }
 
-function toScoreSurfaceCollection(pointCollection) {
-  return {
-    type: "FeatureCollection",
-    features: pointCollection.features.map((feature) => {
-      const [lon, lat] = feature.geometry.coordinates;
-
-      return {
-        type: "Feature",
-        geometry: {
-          type: "Polygon",
-          coordinates: [[
-            [lon - CLIMATE_CELL_HALF_DEGREES, lat - CLIMATE_CELL_HALF_DEGREES],
-            [lon + CLIMATE_CELL_HALF_DEGREES, lat - CLIMATE_CELL_HALF_DEGREES],
-            [lon + CLIMATE_CELL_HALF_DEGREES, lat + CLIMATE_CELL_HALF_DEGREES],
-            [lon - CLIMATE_CELL_HALF_DEGREES, lat + CLIMATE_CELL_HALF_DEGREES],
-            [lon - CLIMATE_CELL_HALF_DEGREES, lat - CLIMATE_CELL_HALF_DEGREES],
-          ]],
-        },
-        properties: feature.properties,
-      };
-    }),
-  };
-}
-
 function applyScores(collection) {
-  pendingPointScores = collection;
-  pendingSurfaceScores = toScoreSurfaceCollection(collection);
+  pendingScores = collection;
   renderScoreList(collection);
 
   if (collection.features.length === 0) {
@@ -126,15 +97,10 @@ function applyScores(collection) {
     return;
   }
 
-  const pointSource = map.getSource(SCORE_POINT_SOURCE_ID);
-  const surfaceSource = map.getSource(SCORE_SURFACE_SOURCE_ID);
+  const source = map.getSource(SCORE_SOURCE_ID);
 
-  if (pointSource) {
-    pointSource.setData(pendingPointScores);
-  }
-
-  if (surfaceSource) {
-    surfaceSource.setData(pendingSurfaceScores);
+  if (source) {
+    source.setData(collection);
   }
 }
 
@@ -208,62 +174,69 @@ function initializeMap() {
       },
     });
 
-    map.addSource(SCORE_POINT_SOURCE_ID, {
+    map.addSource(SCORE_SOURCE_ID, {
       type: "geojson",
-      data: pendingPointScores,
-    });
-
-    map.addSource(SCORE_SURFACE_SOURCE_ID, {
-      type: "geojson",
-      data: pendingSurfaceScores,
+      data: pendingScores,
     });
 
     map.addLayer({
-      id: SCORE_SURFACE_LAYER_ID,
-      type: "fill",
-      source: SCORE_SURFACE_SOURCE_ID,
+      id: SCORE_HEATMAP_LAYER_ID,
+      type: "heatmap",
+      source: SCORE_SOURCE_ID,
       paint: {
-        "fill-color": [
+        "heatmap-weight": [
           "interpolate",
           ["linear"],
           ["get", "score"],
-          0,
-          "rgba(53, 92, 125, 0.16)",
-          0.45,
-          "rgba(127, 179, 213, 0.35)",
-          0.65,
-          "rgba(248, 182, 90, 0.58)",
-          0.82,
-          "rgba(234, 95, 137, 0.8)",
-          1,
-          "rgba(121, 40, 202, 0.9)",
+          0, 0,
+          1, 1,
         ],
-        "fill-opacity": [
+        "heatmap-intensity": [
           "interpolate",
           ["linear"],
           ["zoom"],
-          0,
-          0.28,
-          1,
-          0.34,
-          2,
-          0.42,
-          4,
-          0.56,
-          6,
-          0.74,
+          0, 0.6,
+          3, 1.0,
+          6, 1.4,
         ],
-        "fill-outline-color": "rgba(255, 250, 243, 0.06)",
+        "heatmap-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          0, 10,
+          2, 16,
+          4, 22,
+          6, 32,
+        ],
+        "heatmap-color": [
+          "interpolate",
+          ["linear"],
+          ["heatmap-density"],
+          0,    "rgba(53, 92, 125, 0)",
+          0.2,  "rgba(53, 92, 125, 0.35)",
+          0.45, "rgba(127, 179, 213, 0.55)",
+          0.65, "rgba(248, 182, 90, 0.78)",
+          0.82, "rgba(234, 95, 137, 0.88)",
+          1,    "rgba(121, 40, 202, 0.92)",
+        ],
+        "heatmap-opacity": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          0, 0.85,
+          4, 0.78,
+          6, 0.70,
+        ],
       },
     });
 
     setMapStatus("Map backdrop ready.");
-    applyScores(pendingPointScores);
+    applyScores(pendingScores);
   });
 }
 
 window.renderScores = function renderScores(scores) {
-  applyScores(toScorePointCollection(scores));
+  applyScores(toScoreCollection(scores));
 };
 
 if (document.readyState === "loading") {

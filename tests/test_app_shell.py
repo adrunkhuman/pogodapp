@@ -92,16 +92,13 @@ def test_map_script_initializes_maplibre_score_layer() -> None:
     assert response.status_code == 200
     assert "new window.maplibregl.Map" in response.text
     assert "data: WORLD_BACKDROP_URL" in response.text
-    assert "CLIMATE_CELL_DEGREES = 10 / 60" in response.text
     assert "id: LAND_LAYER_ID" in response.text
     assert "id: BORDER_LAYER_ID" in response.text
-    assert "map.addSource(SCORE_POINT_SOURCE_ID" in response.text
-    assert "map.addSource(SCORE_SURFACE_SOURCE_ID" in response.text
+    assert "map.addSource(SCORE_SOURCE_ID" in response.text
     assert "map.addLayer({" in response.text
-    assert "id: SCORE_SURFACE_LAYER_ID" in response.text
-    assert 'type: "fill"' in response.text
-    assert '"fill-color"' in response.text
-    assert "toScoreSurfaceCollection" in response.text
+    assert "id: SCORE_HEATMAP_LAYER_ID" in response.text
+    assert 'type: "heatmap"' in response.text
+    assert '"heatmap-density"' in response.text
     assert 'setMapStatus("Map backdrop ready.");' in response.text
     assert "renderScoreList(collection);" in response.text
     assert 'setMapStatus("Map library failed to load.");' in response.text
