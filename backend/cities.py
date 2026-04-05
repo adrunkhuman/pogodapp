@@ -51,7 +51,7 @@ class RankedCityCandidate:
 
 @dataclass(frozen=True, slots=True)
 class CityRankingCache:
-    """Compact city ranking inputs for the optimized scoring path."""
+    """Compact city ranking inputs, all positionally aligned with climate-matrix rows."""
 
     cities: tuple[CityCandidate, ...]
     climate_indexes: NDArray[np.int32]
@@ -176,7 +176,7 @@ def rank_indexed_city_scores(
     limit: int,
     diversity_decay_km: float = CITY_DIVERSITY_DECAY_KM,
 ) -> list[CityScorePoint]:
-    """Rank cities by direct climate-matrix lookup instead of lat/lon joins."""
+    """Rank cities from climate-matrix-aligned scores while keeping regional diversity suppression."""
     if not city_catalog.cities:
         return []
 
@@ -235,7 +235,7 @@ def _haversine_distance_vector_km(
     city_catalog: CityRankingCache,
     winner_index: int,
 ) -> NDArray[np.float32]:
-    """Vectorized great-circle distance for one regional-center update."""
+    """Vectorized winner-to-all distances for one diversity-penalty update."""
     latitude_radians = city_catalog.latitude_radians[winner_index]
     longitude_radians = city_catalog.longitude_radians[winner_index]
     cosine_latitude = city_catalog.cosine_latitudes[winner_index]

@@ -56,10 +56,10 @@ class ClimateRepository(Protocol):
         """Return compact climate arrays ready for vectorized scoring."""
 
     def get_indexed_cities(self) -> CityRankingCache:
-        """Return cities already resolved to climate-matrix row indexes."""
+        """Return ranking-ready cities aligned with the current climate-matrix row order."""
 
     def get_heatmap_projection(self) -> HeatmapProjection:
-        """Return cached heatmap pixel coordinates for the climate matrix."""
+        """Return cached heatmap pixel coordinates aligned with the current climate matrix."""
 
 
 class StubClimateRepository:
@@ -206,6 +206,7 @@ class DuckDbClimateRepository:
             tuple(resolved_cities),
             np.array(climate_indexes, dtype=np.int32),
         )
+        # These arrays only help build the persistent ranking cache once.
         self._sorted_climate_keys = None
         self._sorted_climate_indexes = None
         return self._indexed_cities

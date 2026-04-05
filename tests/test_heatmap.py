@@ -15,3 +15,14 @@ def test_cached_heatmap_projection_matches_array_renderer() -> None:
         longitudes,
         scores,
     )
+
+
+def test_heatmap_projection_filters_invalid_latitudes_and_keeps_duplicate_pixels() -> None:
+    projection = HeatmapProjection.from_coordinates(
+        np.array([0.0, 0.0, 90.0], dtype=np.float32),
+        np.array([0.0, 0.0, 0.0], dtype=np.float32),
+    )
+
+    assert projection.score_indexes.tolist() == [0, 1]
+    assert projection.xs.tolist() == [720, 720]
+    assert projection.ys.tolist() == [360, 360]

@@ -98,7 +98,7 @@ _COLOR_RAMP_LOOKUP = _build_color_ramp_lookup()
 
 
 def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np.ndarray) -> bytes:
-    """Rasterize one score vector using cached pixel coordinates."""
+    """Rasterize one score vector aligned with the projection's source climate-matrix rows."""
     grid = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
     np.maximum.at(grid, (projection.ys, projection.xs), scores[projection.score_indexes])
 
@@ -117,7 +117,7 @@ def render_heatmap_png_from_arrays(
     longitudes: np.ndarray,
     scores: np.ndarray,
 ) -> bytes:
-    """Rasterize score arrays without materializing per-cell dictionaries."""
+    """Rasterize score arrays through the non-cached convenience path."""
     return render_heatmap_png_from_projection(HeatmapProjection.from_coordinates(latitudes, longitudes), scores)
 
 

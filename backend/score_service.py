@@ -137,6 +137,7 @@ def _build_score_response_from_matrix(
     timings.ranking_ms = _elapsed_ms(ranking_started)
 
     heatmap_started = perf_counter()
+    # Some injected repositories only support the cached matrix/ranking fast path.
     if hasattr(repository, "get_heatmap_projection"):
         heatmap_png = render_heatmap_png_from_projection(repository.get_heatmap_projection(), normalized_scores)
     else:
