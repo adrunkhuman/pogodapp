@@ -110,7 +110,7 @@ def _build_score_response_from_matrix(
         _log_score_timings(
             timings,
             climate_cell_count=len(climate_matrix.latitudes),
-            city_count=len(indexed_cities),
+            city_count=len(indexed_cities.cities),
             ranked_city_count=0,
             outcome="empty",
         )
@@ -122,7 +122,7 @@ def _build_score_response_from_matrix(
         _log_score_timings(
             timings,
             climate_cell_count=len(climate_matrix.latitudes),
-            city_count=len(indexed_cities),
+            city_count=len(indexed_cities.cities),
             ranked_city_count=0,
             outcome="all_zero",
         )
@@ -148,7 +148,7 @@ def _build_score_response_from_matrix(
     _log_score_timings(
         timings,
         climate_cell_count=len(climate_matrix.latitudes),
-        city_count=len(indexed_cities),
+        city_count=len(indexed_cities.cities),
         ranked_city_count=len(top_cities),
         outcome="ok",
     )

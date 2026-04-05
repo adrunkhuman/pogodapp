@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Protocol, cast
 
 import duckdb
 import numpy as np
 
-from backend.cities import STUB_CITY_CANDIDATES, CityCandidate, IndexedCityCandidate, coordinate_key
+from backend.cities import (
+    STUB_CITY_CANDIDATES,
+    CityCandidate,
+    CityRankingCache,
+    coordinate_key,
+    country_flag,
+)
 from backend.scoring import MONTHS_PER_YEAR, STUB_CLIMATE_CELLS, ClimateCell, ClimateMatrix
 
 if TYPE_CHECKING:
@@ -49,7 +56,7 @@ class ClimateRepository(Protocol):
     def get_climate_matrix(self) -> ClimateMatrix:
         """Return compact climate arrays ready for vectorized scoring."""
 
-    def get_indexed_cities(self) -> tuple[IndexedCityCandidate, ...]:
+    def get_indexed_cities(self) -> CityRankingCache:
         """Return cities already resolved to climate-matrix row indexes."""
 
 
@@ -79,10 +86,18 @@ class StubClimateRepository:
             cloud_cover_pct=cloud_cover_pct,
         )
 
-    def get_indexed_cities(self) -> tuple[IndexedCityCandidate, ...]:
+    def get_indexed_cities(self) -> CityRankingCache:
         """Return stub cities aligned to the stub matrix rows."""
-        return tuple(
-            IndexedCityCandidate(city=city, climate_index=index) for index, city in enumerate(STUB_CITY_CANDIDATES)
+        cities = STUB_CITY_CANDIDATES
+        latitudes = np.array([math.radians(city.lat) for city in cities], dtype=np.float32)
+        longitudes = np.array([math.radians(city.lon) for city in cities], dtype=np.float32)
+        return CityRankingCache(
+            cities=cities,
+            climate_indexes=np.arange(len(cities), dtype=np.int32),
+            latitude_radians=latitudes,
+            longitude_radians=longitudes,
+            cosine_latitudes=np.cos(latitudes).astype(np.float32, copy=False),
+            flags=tuple(country_flag(city.country_code) for city in cities),
         )
 
 
@@ -102,7 +117,7 @@ class DuckDbClimateRepository:
         self.database_path = database_path
         self._climate_matrix: ClimateMatrix | None = None
         self._cities: tuple[CityCandidate, ...] | None = None
-        self._indexed_cities: tuple[IndexedCityCandidate, ...] | None = None
+        self._indexed_cities: CityRankingCache | None = None
         self._sorted_climate_keys: np.ndarray[tuple[int], np.dtype[np.int64]] | None = None
         self._sorted_climate_indexes: np.ndarray[tuple[int], np.dtype[np.int32]] | None = None
 
@@ -182,23 +197,35 @@ class DuckDbClimateRepository:
         )
         return self._climate_matrix
 
-    def get_indexed_cities(self) -> tuple[IndexedCityCandidate, ...]:
+    def get_indexed_cities(self) -> CityRankingCache:
         """Resolve every city to its climate-matrix row once and cache the result."""
         if self._indexed_cities is not None:
             return self._indexed_cities
 
         cities = self.list_cities()
         sorted_climate_keys, sorted_climate_indexes = self._get_sorted_climate_keys()
-        indexed_cities: list[IndexedCityCandidate] = []
+        resolved_cities: list[CityCandidate] = []
+        climate_indexes: list[int] = []
 
         for city in cities:
             climate_key = coordinate_key(city.cell_lat, city.cell_lon)
             position = int(np.searchsorted(sorted_climate_keys, climate_key))
             if position >= len(sorted_climate_keys) or int(sorted_climate_keys[position]) != climate_key:
                 continue
-            indexed_cities.append(IndexedCityCandidate(city=city, climate_index=int(sorted_climate_indexes[position])))
+            resolved_cities.append(city)
+            climate_indexes.append(int(sorted_climate_indexes[position]))
 
-        self._indexed_cities = tuple(indexed_cities)
+        resolved_city_tuple = tuple(resolved_cities)
+        latitude_radians = np.array([math.radians(city.lat) for city in resolved_city_tuple], dtype=np.float32)
+        longitude_radians = np.array([math.radians(city.lon) for city in resolved_city_tuple], dtype=np.float32)
+        self._indexed_cities = CityRankingCache(
+            cities=resolved_city_tuple,
+            climate_indexes=np.array(climate_indexes, dtype=np.int32),
+            latitude_radians=latitude_radians,
+            longitude_radians=longitude_radians,
+            cosine_latitudes=np.cos(latitude_radians).astype(np.float32, copy=False),
+            flags=tuple(country_flag(city.country_code) for city in resolved_city_tuple),
+        )
         self._sorted_climate_keys = None
         self._sorted_climate_indexes = None
         return self._indexed_cities
