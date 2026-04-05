@@ -133,10 +133,12 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
     grid = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
     np.maximum.at(grid, (projection.ys, projection.xs), scores[projection.score_indexes])
 
-    # Land mask built from the projection itself — every pixel that has a valid
-    # climate cell is land; everything else is ocean and should stay transparent.
-    land_mask = np.zeros((HEIGHT, WIDTH), dtype=bool)
-    land_mask[projection.ys, projection.xs] = True
+    # Land mask built from the projection itself.
+    # Dilated by MaxFilter so gaps between cell centers at high Mercator latitudes
+    # (where adjacent cells land 2-3 pixels apart) don't create scan-line stripes.
+    land_mask_raw = np.zeros((HEIGHT, WIDTH), dtype=np.uint8)
+    land_mask_raw[projection.ys, projection.xs] = 255
+    land_mask = np.asarray(Image.fromarray(land_mask_raw, mode="L").filter(ImageFilter.MaxFilter(7))) > 0
 
     base_gray = (grid * 255).astype(np.uint8)
     pil_gray = Image.fromarray(base_gray, mode="L")
