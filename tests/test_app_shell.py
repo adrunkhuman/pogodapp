@@ -420,16 +420,12 @@ def test_probe_endpoint_returns_scored_breakdown_for_a_valid_cell() -> None:
     payload = response.json()
     assert payload["found"] is True
     assert 0 <= payload["overall_score"] <= 1
-    assert set(payload) == {
-        "found",
-        "avg_temp_c",
-        "avg_precip_mm",
-        "avg_cloud_pct",
-        "temp_score",
-        "rain_score",
-        "cloud_score",
-        "overall_score",
-    }
+    assert set(payload) == {"found", "overall_score", "metrics"}
+    assert len(payload["metrics"]) == 3
+    assert payload["metrics"][0]["key"] == "temp"
+    assert payload["metrics"][1]["key"] == "rain"
+    assert payload["metrics"][2]["key"] == "sun"
+    assert all(set(metric) == {"key", "label", "value", "display_value", "score"} for metric in payload["metrics"])
 
 
 def test_probe_endpoint_returns_503_for_repository_failures() -> None:
@@ -481,4 +477,5 @@ def test_map_script_renders_city_labels_instead_of_coordinates() -> None:
     assert "point.flag" in sidebar_response.text
     assert "score-results__item" in sidebar_response.text
     assert "if (!response.ok) throw new Error" in probe_response.text
+    assert "metric.display_value" in probe_response.text
     assert "probe_lat" in layers_response.text

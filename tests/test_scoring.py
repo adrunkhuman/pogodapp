@@ -6,11 +6,13 @@ from backend.scoring import (
     ClimateCell,
     ClimateMatrix,
     PreferenceInputs,
+    ProbeBreakdown,
     annual_score,
     cloud_score,
     normalize_score_array,
     rain_score,
     score_climate_matrix,
+    score_matrix_row_breakdown,
     temperature_score,
 )
 
@@ -173,3 +175,23 @@ def test_normalize_score_array_scales_best_match_to_one() -> None:
     normalized = normalize_score_array(np.array([0.25, 0.5, 0.125], dtype=np.float32))
 
     assert normalized.tolist() == [0.5, 1.0, 0.25]
+
+
+def test_score_matrix_row_breakdown_returns_structured_probe_metrics() -> None:
+    climate_matrix = ClimateMatrix.from_cells((STUB_CLIMATE_CELLS[0],))
+    breakdown = score_matrix_row_breakdown(
+        climate_matrix,
+        0,
+        PreferenceInputs(
+            ideal_temperature=22,
+            cold_tolerance=7,
+            heat_tolerance=5,
+            rain_sensitivity=55,
+            sun_preference=60,
+        ),
+    )
+
+    assert isinstance(breakdown, ProbeBreakdown)
+    assert 0 <= breakdown.overall_score <= 1
+    assert [metric.key for metric in breakdown.metrics] == ["temp", "rain", "sun"]
+    assert all(metric.display_value for metric in breakdown.metrics)

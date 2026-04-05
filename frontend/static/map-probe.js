@@ -112,16 +112,9 @@ function showTooltip(data, x, y, cityHeader = null, { hideDelayMs = null } = {})
     return;
   }
 
-  const overall = data.overall_score ?? ((data.temp_score + data.rain_score + data.cloud_score) / 3);
-  const temp = `${data.avg_temp_c > 0 ? "+" : ""}${data.avg_temp_c.toFixed(1)}°C`.padStart(8);
-  const rain = `${Math.round(data.avg_precip_mm)}mm/mo`.padStart(8);
-  const sun = `${Math.round(100 - data.avg_cloud_pct)}% sun`.padStart(8);
-
-  tooltip.innerHTML =
-    probeTooltipHeader(cityHeader, overall) +
-    probeTooltipRow("temp", temp, data.temp_score) +
-    probeTooltipRow("rain", rain, data.rain_score) +
-    probeTooltipRow("sun", sun, data.cloud_score);
+  tooltip.innerHTML = probeTooltipHeader(cityHeader, data.overall_score) + data.metrics
+    .map((metric) => probeTooltipRow(metric.label, metric.display_value, metric.score))
+    .join("");
 
   tooltip.hidden = false;
   positionTooltip(x, y);

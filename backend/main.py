@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Protocol, cast
 
@@ -9,7 +10,7 @@ from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.climate_repository import (
     ClimateDataError,
@@ -44,17 +45,22 @@ class _SupportsProbeRepository(Protocol):
     def get_climate_matrix(self) -> ClimateMatrix: ...
 
 
+class ProbeMetricResponse(BaseModel):
+    """One rendered metric row in the `/probe` payload."""
+
+    key: str
+    label: str
+    value: float
+    display_value: str
+    score: float
+
+
 class ProbeResponse(BaseModel):
     """Per-attribute climate breakdown for one hovered map point."""
 
     found: bool = False
-    avg_temp_c: float = 0.0
-    avg_precip_mm: float = 0.0
-    avg_cloud_pct: float = 0.0
-    temp_score: float = 0.0
-    rain_score: float = 0.0
-    cloud_score: float = 0.0
     overall_score: float = 0.0
+    metrics: list[ProbeMetricResponse] = Field(default_factory=list)
 
 
 def build_index_context() -> dict[str, object]:
@@ -144,7 +150,11 @@ def create_app(
             sun_preference=sun_preference,
         )
         breakdown = score_matrix_row_breakdown(climate_matrix, row_index, preferences)
-        return ProbeResponse(found=True, **breakdown)
+        return ProbeResponse(
+            found=True,
+            overall_score=breakdown.overall_score,
+            metrics=[ProbeMetricResponse(**asdict(metric)) for metric in breakdown.metrics],
+        )
 
     return app
 
