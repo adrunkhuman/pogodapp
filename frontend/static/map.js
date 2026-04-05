@@ -8,8 +8,10 @@ const BORDER_LAYER_ID = "world-borders";
 const HEATMAP_SOURCE_ID = "score-heatmap";
 const HEATMAP_LAYER_ID = "score-heatmap";
 
-// World extent corners for the image source: [lon, lat] for TL, TR, BR, BL
-const WORLD_CORNERS = [[-180, 90], [180, 90], [180, -90], [-180, -90]];
+// World extent corners for the image source: [lon, lat] for TL, TR, BR, BL.
+// Must use ±85.051129 (Web Mercator max latitude) — lat ±90 maps to ±Infinity
+// in the Mercator y formula, causing WebGL to discard the image triangles.
+const WORLD_CORNERS = [[-180, 85.051129], [180, 85.051129], [180, -85.051129], [-180, -85.051129]];
 
 let map;
 // Set to true once map.on("load") has fired and all layers are registered.
