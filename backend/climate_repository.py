@@ -11,6 +11,7 @@ from backend.cities import (
     CityRankingCache,
     coordinate_key,
 )
+from backend.heatmap import HeatmapProjection
 from backend.scoring import MONTHS_PER_YEAR, STUB_CLIMATE_CELLS, ClimateCell, ClimateMatrix
 
 if TYPE_CHECKING:
@@ -57,6 +58,9 @@ class ClimateRepository(Protocol):
     def get_indexed_cities(self) -> CityRankingCache:
         """Return cities already resolved to climate-matrix row indexes."""
 
+    def get_heatmap_projection(self) -> HeatmapProjection:
+        """Return cached heatmap pixel coordinates for the climate matrix."""
+
 
 class StubClimateRepository:
     """Fallback repository used when the local DuckDB artifact is absent."""
@@ -77,6 +81,11 @@ class StubClimateRepository:
         """Return stub cities aligned to the stub matrix rows."""
         return CityRankingCache.from_cities(STUB_CITY_CANDIDATES, np.arange(len(STUB_CITY_CANDIDATES), dtype=np.int32))
 
+    def get_heatmap_projection(self) -> HeatmapProjection:
+        """Return cached heatmap projection for the stub dataset."""
+        climate_matrix = self.get_climate_matrix()
+        return HeatmapProjection.from_coordinates(climate_matrix.latitudes, climate_matrix.longitudes)
+
 
 def build_default_climate_repository(database_path: Path) -> ClimateRepository:
     """Return the local DuckDB repository when available, otherwise use stubs."""
@@ -95,6 +104,7 @@ class DuckDbClimateRepository:
         self._climate_matrix: ClimateMatrix | None = None
         self._cities: tuple[CityCandidate, ...] | None = None
         self._indexed_cities: CityRankingCache | None = None
+        self._heatmap_projection: HeatmapProjection | None = None
         self._sorted_climate_keys: np.ndarray[tuple[int], np.dtype[np.int64]] | None = None
         self._sorted_climate_indexes: np.ndarray[tuple[int], np.dtype[np.int32]] | None = None
 
@@ -199,6 +209,17 @@ class DuckDbClimateRepository:
         self._sorted_climate_keys = None
         self._sorted_climate_indexes = None
         return self._indexed_cities
+
+    def get_heatmap_projection(self) -> HeatmapProjection:
+        """Project the fixed climate grid into heatmap pixels once."""
+        if self._heatmap_projection is not None:
+            return self._heatmap_projection
+
+        climate_matrix = self.get_climate_matrix()
+        self._heatmap_projection = HeatmapProjection.from_coordinates(
+            climate_matrix.latitudes, climate_matrix.longitudes
+        )
+        return self._heatmap_projection
 
     def _fetch_rows(self, query: str, *, table_name: str = "climate_cells") -> list[tuple[object, ...]]:
         if not self.database_path.exists():

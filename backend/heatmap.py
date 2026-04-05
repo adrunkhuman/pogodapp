@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from io import BytesIO
 from typing import TYPE_CHECKING
 
@@ -12,6 +13,8 @@ from PIL import Image, ImageFilter
 from backend.config import MAP_PROJECTION
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
     from .scoring import CellScorePoint
 
 WIDTH = 1440
@@ -37,6 +40,34 @@ _COLOR_STOPS: list[tuple[float, tuple[int, int, int, int]]] = [
 ]
 
 
+@dataclass(frozen=True, slots=True)
+class HeatmapProjection:
+    """Cached raster coordinates for one fixed climate grid."""
+
+    score_indexes: NDArray[np.int32]
+    xs: NDArray[np.int32]
+    ys: NDArray[np.int32]
+
+    @classmethod
+    def from_coordinates(cls, latitudes: np.ndarray, longitudes: np.ndarray) -> HeatmapProjection:
+        """Project one fixed set of lat/lon coordinates into heatmap pixels once."""
+        valid = np.abs(latitudes) < _MERCATOR_MAX_RENDER_LATITUDE
+        valid_indexes = np.flatnonzero(valid).astype(np.int32, copy=False)
+        valid_latitudes = latitudes[valid]
+        valid_longitudes = longitudes[valid]
+
+        xs = ((valid_longitudes + 180.0) / 360.0 * WIDTH).astype(np.int32)
+        y_merc = np.log(np.tan(np.pi / 4 + np.radians(valid_latitudes) / 2))
+        ys = ((_Y_MAX - y_merc) / (2 * _Y_MAX) * HEIGHT).astype(np.int32)
+
+        in_bounds = (xs >= 0) & (xs < WIDTH) & (ys >= 0) & (ys < HEIGHT)
+        return cls(
+            score_indexes=valid_indexes[in_bounds],
+            xs=xs[in_bounds],
+            ys=ys[in_bounds],
+        )
+
+
 def _apply_color_ramp(values: np.ndarray) -> np.ndarray:
     """Map a 0-1 float grid to RGBA via piecewise linear interpolation."""
     rgba = np.zeros((*values.shape, 4), dtype=np.float32)
@@ -57,36 +88,37 @@ def _apply_color_ramp(values: np.ndarray) -> np.ndarray:
     return np.clip(rgba, 0, 255).astype(np.uint8)
 
 
+def _build_color_ramp_lookup() -> np.ndarray:
+    """Precompute RGBA output for every blurred 8-bit grayscale value."""
+    grayscale_values = np.arange(256, dtype=np.float32) / 255.0
+    return _apply_color_ramp(grayscale_values[:, None])[:, 0, :]
+
+
+_COLOR_RAMP_LOOKUP = _build_color_ramp_lookup()
+
+
+def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np.ndarray) -> bytes:
+    """Rasterize one score vector using cached pixel coordinates."""
+    grid = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
+    np.maximum.at(grid, (projection.ys, projection.xs), scores[projection.score_indexes])
+
+    pil_gray = Image.fromarray((grid * 255).astype(np.uint8), mode="L")
+    pil_gray = pil_gray.filter(ImageFilter.GaussianBlur(radius=BLUR_RADIUS))
+    blurred = np.asarray(pil_gray, dtype=np.uint8)
+    rgba = _COLOR_RAMP_LOOKUP[blurred]
+
+    buf = BytesIO()
+    Image.fromarray(rgba, mode="RGBA").save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def render_heatmap_png_from_arrays(
     latitudes: np.ndarray,
     longitudes: np.ndarray,
     scores: np.ndarray,
 ) -> bytes:
     """Rasterize score arrays without materializing per-cell dictionaries."""
-    grid = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
-
-    # Drop cells outside the Mercator-displayable latitude range.
-    valid = np.abs(latitudes) < _MERCATOR_MAX_RENDER_LATITUDE
-    latitudes = latitudes[valid]
-    longitudes = longitudes[valid]
-    scores = scores[valid]
-
-    xs = ((longitudes + 180.0) / 360.0 * WIDTH).astype(np.int32)
-    y_merc = np.log(np.tan(np.pi / 4 + np.radians(latitudes) / 2))
-    ys = ((_Y_MAX - y_merc) / (2 * _Y_MAX) * HEIGHT).astype(np.int32)
-
-    in_bounds = (xs >= 0) & (xs < WIDTH) & (ys >= 0) & (ys < HEIGHT)
-    np.maximum.at(grid, (ys[in_bounds], xs[in_bounds]), scores[in_bounds])
-
-    pil_gray = Image.fromarray((grid * 255).astype(np.uint8), mode="L")
-    pil_gray = pil_gray.filter(ImageFilter.GaussianBlur(radius=BLUR_RADIUS))
-    blurred = np.array(pil_gray, dtype=np.float32) / 255.0
-
-    rgba = _apply_color_ramp(blurred)
-
-    buf = BytesIO()
-    Image.fromarray(rgba, mode="RGBA").save(buf, format="PNG")
-    return buf.getvalue()
+    return render_heatmap_png_from_projection(HeatmapProjection.from_coordinates(latitudes, longitudes), scores)
 
 
 def render_heatmap_png(scores: list[CellScorePoint]) -> bytes:

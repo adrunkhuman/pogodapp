@@ -39,6 +39,8 @@ def preload_repository(repository: ClimateRepository) -> None:
 
     repository.get_climate_matrix()
     repository.get_indexed_cities()
+    if hasattr(repository, "get_heatmap_projection"):
+        repository.get_heatmap_projection()
 
 
 def create_app(

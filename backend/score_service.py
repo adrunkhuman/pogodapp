@@ -7,7 +7,7 @@ from time import perf_counter
 from typing import TYPE_CHECKING, TypedDict
 
 from backend.cities import CityScorePoint, rank_city_scores, rank_indexed_city_scores
-from backend.heatmap import render_heatmap_png, render_heatmap_png_from_arrays
+from backend.heatmap import render_heatmap_png, render_heatmap_png_from_arrays, render_heatmap_png_from_projection
 from backend.scoring import (
     CellScorePoint,
     PreferenceInputs,
@@ -137,11 +137,14 @@ def _build_score_response_from_matrix(
     timings.ranking_ms = _elapsed_ms(ranking_started)
 
     heatmap_started = perf_counter()
-    heatmap_png = render_heatmap_png_from_arrays(
-        climate_matrix.latitudes,
-        climate_matrix.longitudes,
-        normalized_scores,
-    )
+    if hasattr(repository, "get_heatmap_projection"):
+        heatmap_png = render_heatmap_png_from_projection(repository.get_heatmap_projection(), normalized_scores)
+    else:
+        heatmap_png = render_heatmap_png_from_arrays(
+            climate_matrix.latitudes,
+            climate_matrix.longitudes,
+            normalized_scores,
+        )
     timings.heatmap_ms = _elapsed_ms(heatmap_started)
     timings.total_ms = _elapsed_ms(request_started)
 
