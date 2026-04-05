@@ -17,9 +17,13 @@ if TYPE_CHECKING:
 
     from .scoring import CellScorePoint
 
-WIDTH = 1440
-HEIGHT = 720
-BLUR_RADIUS = 14  # px — ~3.5 degrees at this resolution
+WIDTH = 4096
+HEIGHT = 2048
+BLUR_RADIUS = 9  # px — keeps broad transitions but avoids mushy zoomed-in edges
+PEAK_BOOST_THRESHOLD = 0.72
+PEAK_BOOST_STRENGTH = 0.8
+SCORE_CURVE_GAMMA = 1.35
+FINAL_SMOOTH_BLUR_RADIUS = 1.2
 _MERCATOR_MAX_RENDER_LATITUDE = MAP_PROJECTION.max_render_latitude
 
 if MAP_PROJECTION.name != "mercator" or _MERCATOR_MAX_RENDER_LATITUDE is None:
@@ -97,18 +101,49 @@ def _build_color_ramp_lookup() -> np.ndarray:
 _COLOR_RAMP_LOOKUP = _build_color_ramp_lookup()
 
 
+def _preserve_local_maxima(base_gray: NDArray[np.uint8], blurred_gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
+    """Keep isolated strong cells visible after the soft blur pass.
+
+    The blur gives the surface a continuous look, but it can also flatten a real
+    local best match into its weaker surroundings. Only genuinely strong source
+    cells get a direct boost so the broader surface stays soft and low-value
+    single-cell noise does not leak back into the final image.
+    """
+    base_float = base_gray.astype(np.float32)
+    blurred_float = blurred_gray.astype(np.float32)
+    peak_mask = base_float >= PEAK_BOOST_THRESHOLD * 255.0
+    peak_floor = np.where(peak_mask, base_float * PEAK_BOOST_STRENGTH, 0.0)
+    preserved = np.maximum(blurred_float, peak_floor)
+    return np.clip(preserved, 0, 255).astype(np.uint8)
+
+
+def _stylize_heatmap_gray(gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
+    """Compress the low end while keeping a continuous gradient surface."""
+    curved = np.power(gray.astype(np.float32) / 255.0, SCORE_CURVE_GAMMA)
+    return np.rint(curved * 255).astype(np.uint8)
+
+
+def _smooth_styled_heatmap_gray(gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
+    """Calm coastal chatter in the styled output without smearing the whole field."""
+    return np.asarray(Image.fromarray(gray, mode="L").filter(ImageFilter.GaussianBlur(radius=FINAL_SMOOTH_BLUR_RADIUS)))
+
+
 def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np.ndarray) -> bytes:
     """Rasterize one score vector aligned with the projection's source climate-matrix rows."""
     grid = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
     np.maximum.at(grid, (projection.ys, projection.xs), scores[projection.score_indexes])
 
-    pil_gray = Image.fromarray((grid * 255).astype(np.uint8), mode="L")
+    base_gray = (grid * 255).astype(np.uint8)
+    pil_gray = Image.fromarray(base_gray, mode="L")
     pil_gray = pil_gray.filter(ImageFilter.GaussianBlur(radius=BLUR_RADIUS))
-    blurred = np.asarray(pil_gray, dtype=np.uint8)
-    rgba = _COLOR_RAMP_LOOKUP[blurred]
+    blurred_gray = np.asarray(pil_gray, dtype=np.uint8)
+    styled_gray = _stylize_heatmap_gray(_preserve_local_maxima(base_gray, blurred_gray))
+    peak_floor = np.where(base_gray >= PEAK_BOOST_THRESHOLD * 255.0, styled_gray, 0)
+    styled_gray = np.maximum(_smooth_styled_heatmap_gray(styled_gray), peak_floor).astype(np.uint8)
+    rgba = _COLOR_RAMP_LOOKUP[styled_gray]
 
     buf = BytesIO()
-    Image.fromarray(rgba, mode="RGBA").save(buf, format="PNG")
+    Image.fromarray(rgba, mode="RGBA").save(buf, format="PNG", compress_level=1)
     return buf.getvalue()
 
 

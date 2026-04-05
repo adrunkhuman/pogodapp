@@ -35,7 +35,7 @@ It is not a weather app. It scores long-term climate normals against a few user 
 ## Data
 
 - Source: WorldClim 2.1 monthly normals.
-- Current baseline: native `10m` WorldClim grids, meaning 10 arc-minutes per cell.
+- Current baseline: native `5m` WorldClim grids, meaning 5 arc-minutes per cell.
 - Runtime tables: `climate_cells(...)` and `cities(...)` inside `data/climate.duckdb`.
 - If the database is missing, the app falls back to a small in-repo stub dataset.
 - Cloud cover is currently approximated from solar radiation.
@@ -52,6 +52,13 @@ It is not a weather app. It scores long-term climate normals against a few user 
 
 ```bash
 uv sync
+uv run pogodapp
+```
+
+Run against a non-default database file:
+
+```bash
+$env:POGODAPP_CLIMATE_DB = "data/climate-5m.duckdb"
 uv run pogodapp
 ```
 
@@ -77,6 +84,14 @@ uv run python scripts/build_climate_db.py
 ```
 
 This builds `data/climate.duckdb`, downloads the required WorldClim rasters and GeoNames city source, keeps only valid land cells, and populates `climate_cells` plus `cities`.
+
+Optional flag:
+
+```bash
+uv run python scripts/build_climate_db.py --resolution 10m
+```
+
+Supported resolutions are `10m`, `5m`, `2.5m`, and `30s`. The default is now `5m`.
 
 ## Quality Checks
 

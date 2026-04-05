@@ -205,32 +205,41 @@ def score_climate_cells(climate_cells: tuple[ClimateCell, ...], preferences: Pre
 
 def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceInputs) -> NDArray[np.float32]:
     """Score the compact climate matrix with vectorized NumPy operations."""
-    temperature_delta = climate_matrix.temperature_c - preferences.ideal_temperature
-    distance_from_band = np.maximum(np.abs(temperature_delta) - TEMPERATURE_COMFORT_BAND_C, 0.0).astype(np.float32)
-    slope_span = np.where(
-        temperature_delta >= 0,
-        TEMPERATURE_SLOPE_BASE_C + preferences.heat_tolerance,
-        TEMPERATURE_SLOPE_BASE_C + preferences.cold_tolerance,
-    ).astype(np.float32)
-    temperature_scores = np.clip(1.0 - (distance_from_band / slope_span), 0.0, 1.0)
-
-    rain_scores = np.clip(
-        1.0 - (climate_matrix.precipitation_mm / SATURATING_MONTHLY_RAIN_MM) * (preferences.rain_sensitivity / 100.0),
-        0.0,
-        1.0,
-    )
-
     tolerated_cloud_cover = MAX_TOLERATED_CLOUD_COVER - (
         (MAX_TOLERATED_CLOUD_COVER - MIN_TOLERATED_CLOUD_COVER) * (preferences.sun_preference / 100.0)
     )
-    excess_ratio = (climate_matrix.cloud_cover_pct - tolerated_cloud_cover) / (100.0 - tolerated_cloud_cover)
-    cloud_scores = np.where(
-        climate_matrix.cloud_cover_pct <= tolerated_cloud_cover,
-        1.0,
-        np.clip(1.0 - excess_ratio**2, 0.0, 1.0),
-    )
+    heat_slope_span = np.float32(TEMPERATURE_SLOPE_BASE_C + preferences.heat_tolerance)
+    cold_slope_span = np.float32(TEMPERATURE_SLOPE_BASE_C + preferences.cold_tolerance)
+    rain_sensitivity_ratio = np.float32(preferences.rain_sensitivity / 100.0)
+    cloud_denominator = np.float32(100.0 - tolerated_cloud_cover)
+    annual_scores = np.zeros(climate_matrix.latitudes.shape[0], dtype=np.float32)
 
-    annual_scores = ((temperature_scores + rain_scores + cloud_scores) / 3.0).mean(axis=1, dtype=np.float32)
+    for month_index in range(MONTHS_PER_YEAR):
+        monthly_temperature = climate_matrix.temperature_c[:, month_index]
+        monthly_precipitation = climate_matrix.precipitation_mm[:, month_index]
+        monthly_cloud_cover = climate_matrix.cloud_cover_pct[:, month_index].astype(np.float32, copy=False)
+
+        temperature_delta = monthly_temperature - preferences.ideal_temperature
+        distance_from_band = np.maximum(np.abs(temperature_delta) - TEMPERATURE_COMFORT_BAND_C, 0.0, dtype=np.float32)
+        slope_span = np.where(temperature_delta >= 0, heat_slope_span, cold_slope_span)
+        temperature_scores = np.clip(1.0 - (distance_from_band / slope_span), 0.0, 1.0)
+
+        rain_scores = np.clip(
+            1.0 - (monthly_precipitation / SATURATING_MONTHLY_RAIN_MM) * rain_sensitivity_ratio,
+            0.0,
+            1.0,
+        )
+
+        excess_ratio = (monthly_cloud_cover - tolerated_cloud_cover) / cloud_denominator
+        cloud_scores = np.where(
+            monthly_cloud_cover <= tolerated_cloud_cover,
+            1.0,
+            np.clip(1.0 - excess_ratio**2, 0.0, 1.0),
+        )
+
+        annual_scores += (temperature_scores + rain_scores + cloud_scores) / 3.0
+
+    annual_scores /= MONTHS_PER_YEAR
     return np.clip(annual_scores, 0.0, 1.0).astype(np.float32, copy=False)
 
 

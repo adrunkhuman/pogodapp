@@ -36,21 +36,11 @@ MONTH_NAMES: Final[tuple[str, ...]] = (
     "nov",
     "dec",
 )
-WORLDCLIM_ARCHIVES: Final[dict[str, str]] = {
-    "tavg": "https://geodata.ucdavis.edu/climate/worldclim/2_1/base/wc2.1_10m_tavg.zip",
-    "prec": "https://geodata.ucdavis.edu/climate/worldclim/2_1/base/wc2.1_10m_prec.zip",
-    "srad": "https://geodata.ucdavis.edu/climate/worldclim/2_1/base/wc2.1_10m_srad.zip",
-}
 GEONAMES_CITIES_URL: Final[str] = "https://download.geonames.org/export/dump/cities15000.zip"
-GRID_DEGREES: Final[float] = 10 / 60
 # WorldClim stores ocean pixels as ≈ -3.4e38 (np.finfo(np.float32).min).
 # Any value below this cutoff is nodata; no real climate measurement comes close to -1e20.
 NODATA_CUTOFF: Final[float] = -1e20
-RASTER_SHAPE: Final[tuple[int, int]] = (1080, 2160)
 MONTHS_PER_YEAR: Final[int] = 12
-# WorldClim 10' land coverage (including coastal pixels) is ~808k cells — more than the
-# ~29% dry-land-area fraction because small islands and coastal strips are included.
-ROUGH_ROW_COUNT_RANGE: Final[tuple[int, int]] = (780_000, 840_000)
 TEMPERATURE_COLUMNS: Final[tuple[str, ...]] = tuple(f"t_{month_name}" for month_name in MONTH_NAMES)
 PRECIPITATION_COLUMNS: Final[tuple[str, ...]] = tuple(f"prec_{month_name}" for month_name in MONTH_NAMES)
 CLOUD_COLUMNS: Final[tuple[str, ...]] = tuple(f"cloud_{month_name}" for month_name in MONTH_NAMES)
@@ -66,6 +56,53 @@ INSERT_CLIMATE_CELL_QUERY: Final[str] = (
     "INSERT INTO climate_cells VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 INSERT_CITY_QUERY: Final[str] = "INSERT INTO cities VALUES (?, ?, ?, ?, ?, ?)"
+
+
+@dataclass(frozen=True, slots=True)
+class WorldClimResolution:
+    """One supported WorldClim grid resolution and its build-time assumptions."""
+
+    name: str
+    grid_degrees: float
+    raster_shape: tuple[int, int]
+    rough_row_count_range: tuple[int, int]
+
+    @property
+    def archive_urls(self) -> dict[str, str]:
+        """Return the three source archives needed for this WorldClim resolution."""
+        return {
+            variable_name: f"https://geodata.ucdavis.edu/climate/worldclim/2_1/base/wc2.1_{self.name}_{variable_name}.zip"
+            for variable_name in ("tavg", "prec", "srad")
+        }
+
+
+WORLDCLIM_RESOLUTIONS: Final[dict[str, WorldClimResolution]] = {
+    "10m": WorldClimResolution(
+        name="10m",
+        grid_degrees=10 / 60,
+        raster_shape=(1080, 2160),
+        rough_row_count_range=(780_000, 840_000),
+    ),
+    "5m": WorldClimResolution(
+        name="5m",
+        grid_degrees=5 / 60,
+        raster_shape=(2160, 4320),
+        rough_row_count_range=(3_100_000, 3_350_000),
+    ),
+    "2.5m": WorldClimResolution(
+        name="2.5m",
+        grid_degrees=2.5 / 60,
+        raster_shape=(4320, 8640),
+        rough_row_count_range=(12_500_000, 13_400_000),
+    ),
+    "30s": WorldClimResolution(
+        name="30s",
+        grid_degrees=30 / 3600,
+        raster_shape=(21600, 43200),
+        rough_row_count_range=(315_000_000, 332_000_000),
+    ),
+}
+DEFAULT_WORLDCLIM_RESOLUTION: Final[WorldClimResolution] = WORLDCLIM_RESOLUTIONS["5m"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,20 +168,20 @@ def solar_radiation_to_cloud_proxy(monthly_solar_radiation: NDArray[np.float64])
     return np.rint((1.0 - scaled) * 100).astype(np.int16)
 
 
-def build_coordinate_grids() -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Return lat/lon center coordinates for the native 10-arcminute grid."""
-    half = GRID_DEGREES / 2
-    latitudes = np.linspace(90 - half, -90 + half, num=RASTER_SHAPE[0], dtype=np.float64)
-    longitudes = np.linspace(-180 + half, 180 - half, num=RASTER_SHAPE[1], dtype=np.float64)
+def build_coordinate_grids(resolution: WorldClimResolution) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Return lat/lon center coordinates for one native WorldClim grid."""
+    half = resolution.grid_degrees / 2
+    latitudes = np.linspace(90 - half, -90 + half, num=resolution.raster_shape[0], dtype=np.float64)
+    longitudes = np.linspace(-180 + half, 180 - half, num=resolution.raster_shape[1], dtype=np.float64)
     return np.meshgrid(latitudes, longitudes, indexing="ij")
 
 
-def ensure_worldclim_archives(cache_dir: Path) -> dict[str, Path]:
+def ensure_worldclim_archives(cache_dir: Path, resolution: WorldClimResolution) -> dict[str, Path]:
     """Download the three source archives once into the local cache."""
     cache_dir.mkdir(parents=True, exist_ok=True)
-    with ThreadPoolExecutor(max_workers=len(WORLDCLIM_ARCHIVES)) as executor:
+    with ThreadPoolExecutor(max_workers=len(resolution.archive_urls)) as executor:
         archive_paths = executor.map(
-            lambda item: ensure_worldclim_archive(cache_dir, *item), WORLDCLIM_ARCHIVES.items()
+            lambda item: ensure_worldclim_archive(cache_dir, *item), resolution.archive_urls.items()
         )
 
     return dict(archive_paths)
@@ -196,7 +233,7 @@ def load_raster(path: Path) -> NDArray[np.float64]:
 def load_monthly_rasters(
     extracted_paths: dict[str, tuple[Path, ...]],
 ) -> dict[str, tuple[NDArray[np.float64], ...]]:
-    """Read source GeoTIFFs at native 10-arcminute resolution."""
+    """Read source GeoTIFFs at the selected native WorldClim resolution."""
     monthly: dict[str, tuple[NDArray[np.float64], ...]] = {}
     for variable_name, tif_paths in extracted_paths.items():
         with ThreadPoolExecutor(max_workers=4) as executor:
@@ -208,6 +245,7 @@ def build_insert_rows(
     monthly_temperature: tuple[NDArray[np.float64], ...],
     monthly_precipitation: tuple[NDArray[np.float64], ...],
     monthly_solar_radiation: tuple[NDArray[np.float64], ...],
+    resolution: WorldClimResolution,
 ) -> list[tuple[float | int, ...]]:
     """Flatten monthly rasters into the DuckDB row shape.
 
@@ -222,7 +260,7 @@ def build_insert_rows(
             *[np.isfinite(month) for month in monthly_solar_radiation],
         ]
     )
-    latitudes, longitudes = build_coordinate_grids()
+    latitudes, longitudes = build_coordinate_grids(resolution)
     flat_mask = finite_mask.ravel()
     column_vectors: list[list[float | int]] = [
         latitudes.ravel()[flat_mask].round(4).tolist(),
@@ -302,14 +340,14 @@ def copy_rows_into_climate_table(connection: duckdb.DuckDBPyConnection, rows: li
 
 
 def build_city_rows(
-    cities_txt_path: Path, climate_rows: list[tuple[float | int, ...]]
+    cities_txt_path: Path, climate_rows: list[tuple[float | int, ...]], resolution: WorldClimResolution
 ) -> list[tuple[str | float, ...]]:
     """Keep only cities that snap onto valid land climate cells."""
     valid_cells = {(float(row[0]), float(row[1])) for row in climate_rows}
     city_rows: list[tuple[str | float, ...]] = []
 
     for city in load_city_catalog(cities_txt_path):
-        cell_lat, cell_lon = snap_city_to_cell_key(city)
+        cell_lat, cell_lon = snap_city_to_cell_key(city, grid_degrees=resolution.grid_degrees)
         if (cell_lat, cell_lon) not in valid_cells:
             continue
 
@@ -348,18 +386,21 @@ def copy_rows_into_cities_table(connection: duckdb.DuckDBPyConnection, rows: lis
         csv_path.unlink(missing_ok=True)
 
 
-def build_worldclim_database(output_path: Path, cache_dir: Path) -> BuildSummary:
+def build_worldclim_database(
+    output_path: Path, cache_dir: Path, *, resolution: WorldClimResolution = DEFAULT_WORLDCLIM_RESOLUTION
+) -> BuildSummary:
     """Download, build, and overwrite the runtime DuckDB climate artifact.
 
     This performs network I/O, writes cache files under `cache_dir`, and
     replaces `output_path` if it already exists.
     """
-    archive_paths = ensure_worldclim_archives(cache_dir)
+    resolution_cache_dir = cache_dir / resolution.name
+    archive_paths = ensure_worldclim_archives(resolution_cache_dir, resolution)
     cities_txt_path = ensure_geonames_cities(cache_dir)
-    extracted_paths = extract_worldclim_archives(archive_paths, cache_dir / "extracted")
+    extracted_paths = extract_worldclim_archives(archive_paths, resolution_cache_dir / "extracted")
     monthly = load_monthly_rasters(extracted_paths)
-    rows = build_insert_rows(monthly["tavg"], monthly["prec"], monthly["srad"])
-    city_rows = build_city_rows(cities_txt_path, rows)
+    rows = build_insert_rows(monthly["tavg"], monthly["prec"], monthly["srad"], resolution)
+    city_rows = build_city_rows(cities_txt_path, rows, resolution)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.exists():
         output_path.unlink()
@@ -373,9 +414,11 @@ def build_worldclim_database(output_path: Path, cache_dir: Path) -> BuildSummary
     return BuildSummary(output_path=output_path, row_count=len(rows))
 
 
-def validate_climate_database(database_path: Path) -> ValidationSummary:
+def validate_climate_database(
+    database_path: Path, *, resolution: WorldClimResolution = DEFAULT_WORLDCLIM_RESOLUTION
+) -> ValidationSummary:
     """Check that the built artifact matches the expected runtime contract."""
-    return validate_climate_database_with_row_range(database_path, ROUGH_ROW_COUNT_RANGE)
+    return validate_climate_database_with_row_range(database_path, resolution.rough_row_count_range)
 
 
 def validate_climate_database_with_row_range(
@@ -448,14 +491,21 @@ def parse_args() -> argparse.Namespace:
         default=Path("data") / "worldclim",
         help="Cache directory for downloaded WorldClim source archives.",
     )
+    parser.add_argument(
+        "--resolution",
+        choices=tuple(WORLDCLIM_RESOLUTIONS),
+        default=DEFAULT_WORLDCLIM_RESOLUTION.name,
+        help="Native WorldClim grid resolution to build.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     """Run the full build and validation flow from the command line."""
     args = parse_args()
-    summary = build_worldclim_database(output_path=args.output, cache_dir=args.cache_dir)
-    validation = validate_climate_database(summary.output_path)
+    resolution = WORLDCLIM_RESOLUTIONS[args.resolution]
+    summary = build_worldclim_database(output_path=args.output, cache_dir=args.cache_dir, resolution=resolution)
+    validation = validate_climate_database(summary.output_path, resolution=resolution)
     print(f"Built {summary.output_path} with {validation.row_count} rows.")
 
 

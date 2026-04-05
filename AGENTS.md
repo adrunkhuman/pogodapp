@@ -33,7 +33,7 @@
 
 ## Data Direction
 
-- Current baseline is the native WorldClim `10m` dataset, not the old `0.5deg` placeholder path.
+- Current baseline is the native WorldClim `5m` dataset, not the old `0.5deg` placeholder path.
 - Preserve compatibility with possible later moves to finer native resolutions if the product chooses that direction.
 - Keep the climate row schema stable unless there is a deliberate migration.
 - Treat `climate.duckdb` distribution strategy as unresolved until explicitly decided.

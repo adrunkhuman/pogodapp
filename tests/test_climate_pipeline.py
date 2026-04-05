@@ -11,12 +11,15 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from backend.climate_pipeline import (
+    DEFAULT_WORLDCLIM_RESOLUTION,
     EXPECTED_CITY_COLUMNS,
     EXPECTED_CLIMATE_COLUMNS,
     INSERT_CITY_QUERY,
     INSERT_CLIMATE_CELL_QUERY,
     NODATA_CUTOFF,
+    WORLDCLIM_RESOLUTIONS,
     build_city_rows,
+    build_coordinate_grids,
     create_cities_table,
     ensure_geonames_cities,
     load_raster,
@@ -112,9 +115,9 @@ def test_build_city_rows_filters_out_cities_that_snap_to_ocean_cells(tmp_path: P
         encoding="utf-8",
     )
 
-    rows = build_city_rows(city_catalog_path, [(4.75, -74.0833, *([0.0] * 36))])
+    rows = build_city_rows(city_catalog_path, [(4.7083, -74.0417, *([0.0] * 36))], DEFAULT_WORLDCLIM_RESOLUTION)
 
-    assert rows == [("Bogota", "CO", 4.711, -74.0721, 4.75, -74.0833)]
+    assert rows == [("Bogota", "CO", 4.711, -74.0721, 4.7083, -74.0417)]
 
 
 def test_ensure_geonames_cities_uses_cached_extract(tmp_path: Path) -> None:
@@ -122,3 +125,26 @@ def test_ensure_geonames_cities_uses_cached_extract(tmp_path: Path) -> None:
     extracted_path.write_text("cached", encoding="utf-8")
 
     assert ensure_geonames_cities(tmp_path) == extracted_path
+
+
+def test_build_coordinate_grids_matches_requested_resolution() -> None:
+    latitudes, longitudes = build_coordinate_grids(WORLDCLIM_RESOLUTIONS["5m"])
+
+    assert latitudes.shape == (2160, 4320)
+    assert longitudes.shape == (2160, 4320)
+    assert latitudes[0, 0] == pytest.approx(89.9583, abs=1e-4)
+    assert longitudes[0, 0] == pytest.approx(-179.9583, abs=1e-4)
+
+
+def test_validate_climate_database_uses_resolution_specific_row_range(tmp_path: Path) -> None:
+    database_path = tmp_path / "climate.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        columns = ", ".join(f"{column} DOUBLE" for column in EXPECTED_CLIMATE_COLUMNS[:26])
+        cloud_columns = ", ".join(f"{column} INTEGER" for column in EXPECTED_CLIMATE_COLUMNS[26:])
+        connection.execute(f"CREATE TABLE climate_cells ({columns}, {cloud_columns})")
+        connection.executemany(INSERT_CLIMATE_CELL_QUERY, [tuple(0 for _ in EXPECTED_CLIMATE_COLUMNS)] * 2)
+        create_cities_table(connection)
+        connection.executemany(INSERT_CITY_QUERY, [("Bogota", "CO", 4.711, -74.0721, 4.75, -74.0833)])
+
+    with pytest.raises(ValueError, match="outside expected rough range"):
+        validate_climate_database(database_path, resolution=WORLDCLIM_RESOLUTIONS["5m"])
