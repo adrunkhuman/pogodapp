@@ -22,6 +22,7 @@ from backend.logging_config import configure_backend_logging
 from backend.score_service import ScoreResponse, build_score_response
 from backend.scoring import (
     PreferenceInputs,
+    ProbeBreakdown,
     score_matrix_row_breakdown,
 )
 
@@ -61,6 +62,15 @@ class ProbeResponse(BaseModel):
     found: bool = False
     overall_score: float = 0.0
     metrics: list[ProbeMetricResponse] = Field(default_factory=list)
+
+
+def build_probe_response(breakdown: ProbeBreakdown) -> ProbeResponse:
+    """Map scoring breakdown data into the stable `/probe` response model."""
+    return ProbeResponse(
+        found=True,
+        overall_score=breakdown.overall_score,
+        metrics=[ProbeMetricResponse(**asdict(metric)) for metric in breakdown.metrics],
+    )
 
 
 def build_index_context() -> dict[str, object]:
@@ -150,11 +160,7 @@ def create_app(
             sun_preference=sun_preference,
         )
         breakdown = score_matrix_row_breakdown(climate_matrix, row_index, preferences)
-        return ProbeResponse(
-            found=True,
-            overall_score=breakdown.overall_score,
-            metrics=[ProbeMetricResponse(**asdict(metric)) for metric in breakdown.metrics],
-        )
+        return build_probe_response(breakdown)
 
     return app
 
