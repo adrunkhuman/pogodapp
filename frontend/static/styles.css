@@ -356,7 +356,7 @@ ul {
   font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
   font-size: 0.78rem;
   line-height: 1.65;
-  white-space: pre;
+  white-space: nowrap;
   color: #e0e0e0;
   max-width: min(24rem, calc(100vw - 2rem));
   box-shadow: 0 0 0 1px #111111;
@@ -367,6 +367,25 @@ ul {
   white-space: nowrap;
   font-weight: 600;
   color: #c0c0c0;
+}
+
+.probe-tooltip__row {
+  display: grid;
+  grid-template-columns: 3ch 8ch auto;
+  column-gap: 0.75rem;
+}
+
+.probe-tooltip__label {
+  color: #8a8a8a;
+  letter-spacing: 0.02em;
+}
+
+.probe-tooltip__value {
+  color: #d6d6d6;
+}
+
+.probe-tooltip__metric {
+  color: #e0e0e0;
 }
 
 .score-results__continent {

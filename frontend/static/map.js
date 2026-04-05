@@ -39,6 +39,7 @@ const TOOLTIP_FOCUS_HIDE_DELAY_MS = 2200;
 const FOCUS_PING_MS = 1800;
 const FOCUS_ANIMATION_MS = 900;
 const FOCUS_VISIBILITY_PADDING_PX = 72;
+const CITY_SNAP_RADIUS_PX = 14;
 
 // Color stops matching the server-side heatmap palette (heatmap.py _COLOR_STOPS).
 // Used for scored city circle stroke colors so markers read consistently with the heatmap.
@@ -154,6 +155,10 @@ function cancelTooltipHideTimer() {
 function armTooltipHideTimer(delayMs = TOOLTIP_HIDE_DELAY_MS) {
   cancelTooltipHideTimer();
   tooltipHideTimer = setTimeout(() => hideTooltip(), delayMs);
+}
+
+function persistTooltip() {
+  cancelTooltipHideTimer();
 }
 
 function clearFocusedCity() {
@@ -455,7 +460,7 @@ function applyMarkers(markers) {
       e.lngLat.lat, e.lngLat.lng,
       e.originalEvent.clientX, e.originalEvent.clientY,
       `${props.flag} ${props.name}`,
-      { hideDelayMs: TOOLTIP_HIDE_DELAY_MS },
+      { hideDelayMs: null },
     );
   });
 
@@ -515,7 +520,7 @@ function loadLandmarkCities() {
           ? `${countryFlag(lp.country_code)} ${lp.name}`
           : lp.name;
         fetchProbe(e.lngLat.lat, e.lngLat.lng, e.originalEvent.clientX, e.originalEvent.clientY, landmarkHeader, {
-          hideDelayMs: TOOLTIP_HIDE_DELAY_MS,
+          hideDelayMs: null,
         });
       });
 
@@ -556,29 +561,76 @@ function positionTooltip(x, y) {
   tooltip.style.top = `${top}px`;
 }
 
-function showTooltip(data, x, y, cityHeader = null, { hideDelayMs = TOOLTIP_HIDE_DELAY_MS } = {}) {
+function nearestFeatureAtPoint(point) {
+  if (!mapLoaded) return null;
+
+  const bounds = [
+    [point.x - CITY_SNAP_RADIUS_PX, point.y - CITY_SNAP_RADIUS_PX],
+    [point.x + CITY_SNAP_RADIUS_PX, point.y + CITY_SNAP_RADIUS_PX],
+  ];
+  const candidates = map.queryRenderedFeatures(bounds, { layers: [MARKER_LAYER_ID, LANDMARK_LAYER_ID] });
+  if (candidates.length === 0) return null;
+
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const feature of candidates) {
+    if (!feature.geometry || feature.geometry.type !== "Point") continue;
+    const [lon, lat] = feature.geometry.coordinates;
+    const featurePoint = map.project([lon, lat]);
+    const dx = featurePoint.x - point.x;
+    const dy = featurePoint.y - point.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance > CITY_SNAP_RADIUS_PX || distance >= nearestDistance) continue;
+    nearest = {
+      lat,
+      lon,
+      header: feature.layer.id === MARKER_LAYER_ID
+        ? `${feature.properties.flag} ${feature.properties.name}`
+        : (feature.properties.country_code
+          ? `${countryFlag(feature.properties.country_code)} ${feature.properties.name}`
+          : feature.properties.name),
+      cursor: feature.layer.id === MARKER_LAYER_ID ? "pointer" : "default",
+    };
+    nearestDistance = distance;
+  }
+
+  return nearest;
+}
+
+function showTooltip(data, x, y, cityHeader = null, { hideDelayMs = null } = {}) {
   if (!tooltip || !data.found) {
     if (tooltip) tooltip.hidden = true;
     return;
   }
 
-  const overall = (data.temp_score + data.rain_score + data.cloud_score) / 3;
+  const overall = data.overall_score ?? ((data.temp_score + data.rain_score + data.cloud_score) / 3);
   const temp = `${data.avg_temp_c > 0 ? "+" : ""}${data.avg_temp_c.toFixed(1)}°C`.padStart(8);
   const rain = `${Math.round(data.avg_precip_mm)}mm/mo`.padStart(8);
   const sun  = `${Math.round(100 - data.avg_cloud_pct)}% sun`.padStart(8);
+  const line = (label, value, score) => (
+    `<div class="probe-tooltip__row">` +
+    `<span class="probe-tooltip__label">${label}</span>` +
+    `<span class="probe-tooltip__value">${value}</span>` +
+    `<span class="probe-tooltip__metric">${scoreSpan(score)}</span>` +
+    `</div>`
+  );
 
   // Score always left so it doesn't jump when entering/leaving a city marker.
   const header = `<div class="probe-tooltip__header">${scoreSpan(overall)}${cityHeader ? `  ${escapeHtml(cityHeader)}` : ""}</div>`;
 
   tooltip.innerHTML =
     header +
-    `temp ${temp}  ${scoreSpan(data.temp_score)}\n` +
-    `rain ${rain}  ${scoreSpan(data.rain_score)}\n` +
-    `sun  ${sun}  ${scoreSpan(data.cloud_score)}`;
+    line("temp", temp, data.temp_score) +
+    line("rain", rain, data.rain_score) +
+    line("sun", sun, data.cloud_score);
 
   tooltip.hidden = false;
   positionTooltip(x, y);
-  armTooltipHideTimer(hideDelayMs);
+  if (hideDelayMs == null) {
+    persistTooltip();
+  } else {
+    armTooltipHideTimer(hideDelayMs);
+  }
 }
 
 function hideTooltip() {
@@ -586,7 +638,7 @@ function hideTooltip() {
   if (tooltip) tooltip.hidden = true;
 }
 
-function fetchProbe(lat, lon, clientX, clientY, cityHeader = null, { hideDelayMs = TOOLTIP_HIDE_DELAY_MS } = {}) {
+function fetchProbe(lat, lon, clientX, clientY, cityHeader = null, { hideDelayMs = null } = {}) {
   const prefs = getCurrentPreferences();
   if (!prefs) return;
 
@@ -647,8 +699,18 @@ function initializeMap() {
     hideTooltip();
     clearTimeout(probeTimer);
     probeTimer = setTimeout(() => {
+      const snapped = nearestFeatureAtPoint(e.point);
+      if (snapped) {
+        map.getCanvas().style.cursor = snapped.cursor;
+        fetchProbe(snapped.lat, snapped.lon, e.originalEvent.clientX, e.originalEvent.clientY, snapped.header, {
+          hideDelayMs: null,
+        });
+        return;
+      }
+
+      map.getCanvas().style.cursor = "";
       fetchProbe(e.lngLat.lat, e.lngLat.lng, e.originalEvent.clientX, e.originalEvent.clientY, null, {
-        hideDelayMs: TOOLTIP_HIDE_DELAY_MS,
+        hideDelayMs: null,
       });
     }, 80);
   });
