@@ -12,6 +12,12 @@ const HEATMAP_LAYER_ID = "score-heatmap";
 const WORLD_CORNERS = [[-180, 90], [180, 90], [180, -90], [-180, -90]];
 
 let map;
+// Set to true once map.on("load") has fired and all layers are registered.
+// isStyleLoaded() is unreliable after addSource() — it stays false while the
+// GeoJSON worker tiles the backdrop, so the load event is the correct signal.
+let mapLoaded = false;
+// Holds a response that arrived before mapLoaded was set.
+let pendingResponse = null;
 
 function setMapStatus(message) {
   const status = document.getElementById("map-status");
@@ -45,7 +51,6 @@ function renderScoreList(scores) {
 }
 
 // Adds the heatmap source+layer on the first call; updates the image URL on subsequent calls.
-// Avoids the EMPTY_IMAGE placeholder whose async load races with the first updateImage call.
 function applyHeatmap(heatmap) {
   const source = map.getSource(HEATMAP_SOURCE_ID);
 
@@ -144,7 +149,14 @@ function initializeMap() {
       },
     });
 
+    mapLoaded = true;
     setMapStatus("Map backdrop ready.");
+
+    if (pendingResponse) {
+      applyHeatmap(pendingResponse.heatmap);
+      setMapStatus(`${pendingResponse.scores.length} top matches shown.`);
+      pendingResponse = null;
+    }
   });
 }
 
@@ -157,15 +169,12 @@ window.renderScores = function renderScores(response) {
     return;
   }
 
-  if (map.isStyleLoaded()) {
+  if (mapLoaded) {
     applyHeatmap(heatmap);
     setMapStatus(`${scores.length} top matches shown.`);
   } else {
-    // Score came back before the map finished loading — apply once it does.
-    map.once("load", () => {
-      applyHeatmap(heatmap);
-      setMapStatus(`${scores.length} top matches shown.`);
-    });
+    // Response arrived before map.on("load") fired — defer until layers exist.
+    pendingResponse = response;
   }
 };
 
