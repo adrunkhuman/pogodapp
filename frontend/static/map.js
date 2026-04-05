@@ -15,6 +15,8 @@ const LANDMARK_SOURCE_ID = "landmark-cities";
 const LANDMARK_LAYER_ID = "landmark-cities";
 const MARKER_SOURCE_ID = "scored-cities";
 const MARKER_LAYER_ID = "scored-cities";
+const FOCUS_SOURCE_ID = "focused-city";
+const FOCUS_RING_LAYER_ID = "focused-city-ring";
 const MAP_CONFIG = window.POGODAPP_MAP_CONFIG ?? {
   projection: "mercator",
   imageCorners: [[-180, 85.051129], [180, 85.051129], [180, -85.051129], [-180, -85.051129]],
@@ -29,17 +31,24 @@ const EMPTY_IMAGE =
 // Score-band coloring used in the probe tooltip and marker strokes.
 // Matches the heatmap palette tiers: dim < 50%, warm 50-75%, bright ≥ 75%.
 const SCORE_LOW_COLOR  = "#555555";
-const SCORE_MID_COLOR  = "#f8b65a";
-const SCORE_HIGH_COLOR = "#4a9eff";
+const SCORE_MID_COLOR  = "#ff9f43";
+const SCORE_HIGH_COLOR = "#d946ef";
+const TOOLTIP_PADDING_PX = 12;
+const TOOLTIP_HIDE_DELAY_MS = 1400;
+const TOOLTIP_FOCUS_HIDE_DELAY_MS = 2200;
+const FOCUS_PING_MS = 1800;
+const FOCUS_ANIMATION_MS = 900;
+const FOCUS_VISIBILITY_PADDING_PX = 72;
 
 // Color stops matching the server-side heatmap palette (heatmap.py _COLOR_STOPS).
 // Used for scored city circle stroke colors so markers read consistently with the heatmap.
 const SCORE_COLOR_EXPR = [
   "interpolate", ["linear"], ["get", "score"],
   0.00, "#355c7d",
-  0.45, "#7fb3d5",
-  0.65, "#f8b65a",
-  0.82, "#ea5f89",
+  0.55, "#5d8cff",
+  0.75, "#ff9f43",
+  0.88, "#ff5f87",
+  0.95, "#d946ef",
   1.00, "#7928ca",
 ];
 
@@ -74,9 +83,15 @@ let pendingResponse = null;
 // Probe debounce + abort controller.
 let probeTimer = null;
 let probeController = null;
+let tooltipHideTimer = null;
+let focusClearTimer = null;
+let focusAnimationFrame = null;
+let focusRequestToken = 0;
 // True while cursor is inside a city marker or landmark layer — suppresses the
 // general mousemove probe so the layer-specific handler stays in control.
 let hoveringLayer = false;
+let currentScores = [];
+const continentVisibleCounts = new Map();
 
 const tooltip = document.getElementById("map-probe-tooltip");
 
@@ -107,6 +122,169 @@ function scoreSpan(v) {
   return `<span style="color:${scoreColor(v)}">${pct}</span>`;
 }
 
+function visibleCountForContinent(continent) {
+  return continentVisibleCounts.get(continent) ?? 5;
+}
+
+function nextVisibleCount(currentVisibleCount) {
+  return Math.ceil((currentVisibleCount + 1) / 5) * 5;
+}
+
+function visibleScoresForList(scores) {
+  const visibleScores = [];
+  const groupedCounts = new Map();
+
+  for (const point of scores) {
+    const continent = continentOf(point.country_code);
+    const usedCount = groupedCounts.get(continent) ?? 0;
+    if (usedCount >= visibleCountForContinent(continent)) {
+      continue;
+    }
+    groupedCounts.set(continent, usedCount + 1);
+    visibleScores.push(point);
+  }
+
+  return visibleScores;
+}
+
+function cancelTooltipHideTimer() {
+  clearTimeout(tooltipHideTimer);
+}
+
+function armTooltipHideTimer(delayMs = TOOLTIP_HIDE_DELAY_MS) {
+  cancelTooltipHideTimer();
+  tooltipHideTimer = setTimeout(() => hideTooltip(), delayMs);
+}
+
+function clearFocusedCity() {
+  clearTimeout(focusClearTimer);
+  cancelAnimationFrame(focusAnimationFrame);
+  if (!map) return;
+  const source = map.getSource(FOCUS_SOURCE_ID);
+  if (!source) return;
+  source.setData({ type: "FeatureCollection", features: [] });
+}
+
+function focusSourceGeoJSON(point, phase = 0) {
+  return {
+    type: "FeatureCollection",
+    features: point ? [{
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [point.lon, point.lat] },
+      properties: { score: point.score, phase },
+    }] : [],
+  };
+}
+
+function ensureFocusLayers() {
+  if (map.getSource(FOCUS_SOURCE_ID)) return;
+
+  map.addSource(FOCUS_SOURCE_ID, { type: "geojson", data: focusSourceGeoJSON(null) });
+  map.addLayer({
+    id: FOCUS_RING_LAYER_ID,
+    type: "circle",
+    source: FOCUS_SOURCE_ID,
+    paint: {
+      "circle-radius": [
+        "+",
+        ["interpolate", ["linear"], ["zoom"], 1, 6, 6, 8, 10, 10],
+        ["*", ["get", "phase"], ["interpolate", ["linear"], ["zoom"], 1, 46, 6, 62, 10, 82]],
+      ],
+      "circle-color": "rgba(0,0,0,0)",
+      "circle-stroke-width": [
+        "+",
+        ["interpolate", ["linear"], ["zoom"], 1, 1.5, 6, 2.5, 10, 3.5],
+        ["*", ["get", "phase"], 2.5],
+      ],
+      "circle-stroke-color": "#f5f5f5",
+      "circle-stroke-opacity": ["+", 0.2, ["*", ["get", "phase"], 0.8]],
+    },
+  });
+}
+
+function isPointVisible(point) {
+  if (!map) return true;
+  const pixel = map.project([point.lon, point.lat]);
+  const width = map.getContainer().clientWidth;
+  const height = map.getContainer().clientHeight;
+  return (
+    pixel.x >= FOCUS_VISIBILITY_PADDING_PX &&
+    pixel.y >= FOCUS_VISIBILITY_PADDING_PX &&
+    pixel.x <= width - FOCUS_VISIBILITY_PADDING_PX &&
+    pixel.y <= height - FOCUS_VISIBILITY_PADDING_PX
+  );
+}
+
+function ensurePointVisible(point, callback) {
+  if (!map || isPointVisible(point)) {
+    callback();
+    return;
+  }
+
+  const token = ++focusRequestToken;
+
+  const onMoveEnd = () => {
+    map.off("moveend", onMoveEnd);
+    if (token !== focusRequestToken) return;
+    callback();
+  };
+
+  map.on("moveend", onMoveEnd);
+  map.easeTo({
+    center: [point.lon, point.lat],
+    zoom: Math.max(map.getZoom(), 2.4),
+    duration: 450,
+    essential: true,
+  });
+}
+
+function animateFocusedCity(point) {
+  ensureFocusLayers();
+  cancelAnimationFrame(focusAnimationFrame);
+  const source = map.getSource(FOCUS_SOURCE_ID);
+  const startedAt = performance.now();
+
+  const tick = (now) => {
+    const elapsed = now - startedAt;
+    const phase = Math.max(0, 1 - elapsed / FOCUS_ANIMATION_MS);
+    source.setData(focusSourceGeoJSON(point, phase));
+    if (phase > 0) {
+      focusAnimationFrame = requestAnimationFrame(tick);
+      return;
+    }
+    source.setData(focusSourceGeoJSON(point, 0));
+    focusAnimationFrame = null;
+  };
+
+  focusAnimationFrame = requestAnimationFrame(tick);
+}
+
+function focusCity(point, { withTooltip = false, hideDelayMs = TOOLTIP_HIDE_DELAY_MS, moveIfNeeded = false } = {}) {
+  if (!map || !mapLoaded || !point) return;
+  focusRequestToken += 1;
+
+  const finalizeFocus = () => {
+    animateFocusedCity(point);
+    clearTimeout(focusClearTimer);
+    focusClearTimer = setTimeout(() => clearFocusedCity(), FOCUS_PING_MS);
+
+    if (!withTooltip) return;
+
+    const pixel = map.project([point.lon, point.lat]);
+    const mapBox = map.getContainer().getBoundingClientRect();
+    fetchProbe(point.lat, point.lon, mapBox.left + pixel.x, mapBox.top + pixel.y, `${point.flag} ${point.name}`, {
+      hideDelayMs,
+    });
+  };
+
+  if (moveIfNeeded) {
+    ensurePointVisible(point, finalizeFocus);
+    return;
+  }
+
+  finalizeFocus();
+}
+
 // ─── Sidebar ────────────────────────────────────────────────────────────────
 
 function renderScoreList(scores) {
@@ -132,19 +310,22 @@ function renderScoreList(scores) {
 
   for (const [continent, cities] of groups) {
     if (cities.length === 0) continue;
+    const visibleCount = visibleCountForContinent(continent);
+    const visibleCities = cities.slice(0, visibleCount);
 
     const header = document.createElement("li");
     header.className = "score-results__continent";
     header.textContent = continent;
     results.append(header);
 
-    for (const point of cities) {
+    for (const point of visibleCities) {
       const item  = document.createElement("li");
       const score = document.createElement("span");
       const name  = document.createElement("span");
       const flag  = document.createElement("span");
 
       item.className  = "score-results__item";
+      item.tabIndex = 0;
       score.className = "score-results__score";
       name.className  = "score-results__name";
       flag.className  = "score-results__flag";
@@ -155,7 +336,39 @@ function renderScoreList(scores) {
       flag.title = countryNames?.of(point.country_code) ?? point.country_code;
 
       item.append(score, name, flag);
+      item.addEventListener("click", () => focusCity(point, {
+        withTooltip: true,
+        hideDelayMs: TOOLTIP_FOCUS_HIDE_DELAY_MS,
+        moveIfNeeded: true,
+      }));
+      item.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        focusCity(point, {
+          withTooltip: true,
+          hideDelayMs: TOOLTIP_FOCUS_HIDE_DELAY_MS,
+          moveIfNeeded: true,
+        });
+      });
       results.append(item);
+    }
+
+    if (visibleCount < cities.length) {
+      const moreItem = document.createElement("li");
+      const moreButton = document.createElement("button");
+      moreItem.className = "score-results__more";
+      moreButton.className = "score-results__more-button";
+      moreButton.type = "button";
+      moreButton.textContent = "show more";
+      moreButton.addEventListener("click", () => {
+        continentVisibleCounts.set(continent, nextVisibleCount(visibleCount));
+        renderScoreList(currentScores);
+        if (mapLoaded) {
+          applyMarkers(visibleScoresForList(currentScores));
+        }
+      });
+      moreItem.append(moreButton);
+      results.append(moreItem);
     }
   }
 }
@@ -227,6 +440,7 @@ function applyMarkers(markers) {
       "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 1, 1.5, 6, 2, 10, 2.5],
       "circle-stroke-color": "#ffffff",
       "circle-stroke-opacity": 0.9,
+      "circle-blur": 0.05,
     },
   });
 
@@ -241,6 +455,7 @@ function applyMarkers(markers) {
       e.lngLat.lat, e.lngLat.lng,
       e.originalEvent.clientX, e.originalEvent.clientY,
       `${props.flag} ${props.name}`,
+      { hideDelayMs: TOOLTIP_HIDE_DELAY_MS },
     );
   });
 
@@ -273,21 +488,21 @@ function loadLandmarkCities() {
 
       map.addSource(LANDMARK_SOURCE_ID, { type: "geojson", data: geojson });
 
-      // Dim gray dots — always visible for geographic orientation.
+      // Brighter neutral dots — always visible for geographic orientation.
       map.addLayer(
         {
           id: LANDMARK_LAYER_ID,
           type: "circle",
           source: LANDMARK_SOURCE_ID,
           paint: {
-            "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 2, 6, 3.5, 10, 5],
-            "circle-color": "#909090",
-            "circle-opacity": 0.75,
-            "circle-stroke-width": 0,
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 2.75, 6, 4.5, 10, 6],
+            "circle-color": "#c9c9c9",
+            "circle-opacity": 0.92,
+            "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 1, 0.8, 6, 1.2, 10, 1.6],
+            "circle-stroke-color": "#141414",
+            "circle-stroke-opacity": 0.95,
           },
         },
-        // Insert below scored markers so scored cities visually dominate.
-        BORDER_LAYER_ID,
       );
 
       map.on("mouseenter", LANDMARK_LAYER_ID, (e) => {
@@ -299,7 +514,9 @@ function loadLandmarkCities() {
         const landmarkHeader = lp.country_code
           ? `${countryFlag(lp.country_code)} ${lp.name}`
           : lp.name;
-        fetchProbe(e.lngLat.lat, e.lngLat.lng, e.originalEvent.clientX, e.originalEvent.clientY, landmarkHeader);
+        fetchProbe(e.lngLat.lat, e.lngLat.lng, e.originalEvent.clientX, e.originalEvent.clientY, landmarkHeader, {
+          hideDelayMs: TOOLTIP_HIDE_DELAY_MS,
+        });
       });
 
       map.on("mouseleave", LANDMARK_LAYER_ID, () => {
@@ -321,7 +538,25 @@ function getCurrentPreferences() {
   return Object.fromEntries(data.entries());
 }
 
-function showTooltip(data, x, y, cityHeader = null) {
+function positionTooltip(x, y) {
+  if (!tooltip || !map) return;
+
+  const mapBox = map.getContainer().getBoundingClientRect();
+  const tooltipBox = tooltip.getBoundingClientRect();
+  const left = Math.min(
+    Math.max(x + TOOLTIP_PADDING_PX, mapBox.left + TOOLTIP_PADDING_PX),
+    mapBox.right - tooltipBox.width - TOOLTIP_PADDING_PX,
+  );
+  const top = Math.min(
+    Math.max(y - tooltipBox.height / 2, mapBox.top + TOOLTIP_PADDING_PX),
+    mapBox.bottom - tooltipBox.height - TOOLTIP_PADDING_PX,
+  );
+
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+}
+
+function showTooltip(data, x, y, cityHeader = null, { hideDelayMs = TOOLTIP_HIDE_DELAY_MS } = {}) {
   if (!tooltip || !data.found) {
     if (tooltip) tooltip.hidden = true;
     return;
@@ -341,16 +576,17 @@ function showTooltip(data, x, y, cityHeader = null) {
     `rain ${rain}  ${scoreSpan(data.rain_score)}\n` +
     `sun  ${sun}  ${scoreSpan(data.cloud_score)}`;
 
-  tooltip.style.left = `${x}px`;
-  tooltip.style.top  = `${y}px`;
   tooltip.hidden = false;
+  positionTooltip(x, y);
+  armTooltipHideTimer(hideDelayMs);
 }
 
 function hideTooltip() {
+  cancelTooltipHideTimer();
   if (tooltip) tooltip.hidden = true;
 }
 
-function fetchProbe(lat, lon, clientX, clientY, cityHeader = null) {
+function fetchProbe(lat, lon, clientX, clientY, cityHeader = null, { hideDelayMs = TOOLTIP_HIDE_DELAY_MS } = {}) {
   const prefs = getCurrentPreferences();
   if (!prefs) return;
 
@@ -361,7 +597,7 @@ function fetchProbe(lat, lon, clientX, clientY, cityHeader = null) {
 
   fetch(`/probe?${params}`, { signal: probeController.signal })
     .then(r => r.json())
-    .then(data => showTooltip(data, clientX, clientY, cityHeader))
+    .then(data => showTooltip(data, clientX, clientY, cityHeader, { hideDelayMs }))
     .catch(() => {});
 }
 
@@ -408,16 +644,27 @@ function initializeMap() {
   // Probe on hover — debounced; skipped when a layer-specific handler takes over.
   map.on("mousemove", (e) => {
     if (hoveringLayer) return;
+    hideTooltip();
     clearTimeout(probeTimer);
     probeTimer = setTimeout(() => {
-      fetchProbe(e.lngLat.lat, e.lngLat.lng, e.originalEvent.clientX, e.originalEvent.clientY);
+      fetchProbe(e.lngLat.lat, e.lngLat.lng, e.originalEvent.clientX, e.originalEvent.clientY, null, {
+        hideDelayMs: TOOLTIP_HIDE_DELAY_MS,
+      });
     }, 80);
+  });
+
+  map.on("movestart", () => {
+    clearTimeout(probeTimer);
+    if (probeController) probeController.abort();
+    hideTooltip();
+    clearFocusedCity();
   });
 
   map.on("mouseleave", () => {
     clearTimeout(probeTimer);
     if (probeController) probeController.abort();
     hideTooltip();
+    clearFocusedCity();
   });
 
   map.on("load", () => {
@@ -464,14 +711,15 @@ function initializeMap() {
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 window.renderScores = function renderScores(response) {
-  const { scores, markers, heatmap } = response;
+  const { scores, heatmap } = response;
+  currentScores = scores ?? [];
 
-  renderScoreList(scores ?? []);
+  renderScoreList(currentScores);
 
   if (!map) return;
 
   const imageUrl = heatmap || EMPTY_IMAGE;
-  const markerList = markers ?? [];
+  const markerList = visibleScoresForList(currentScores);
 
   if (mapLoaded) {
     applyHeatmap(imageUrl);
