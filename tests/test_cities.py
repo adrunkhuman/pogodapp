@@ -9,6 +9,7 @@ from backend.cities import (
     STUB_CITY_CANDIDATES,
     CityCandidate,
     CityRankingCache,
+    RegionalPenaltyCenter,
     _diversity_strength_for_rank,
     apply_regional_penalty,
     continent_of,
@@ -102,8 +103,12 @@ def test_apply_regional_penalty_relaxes_for_deeper_rank_strength() -> None:
         name="Medellin", country_code="CO", lat=6.2442, lon=-75.5812, cell_lat=6.25, cell_lon=-75.5833
     )
 
-    strong_penalty = apply_regional_penalty(0.97, bogota, medellin, 1.0, strength=1.0)
-    relaxed_penalty = apply_regional_penalty(0.97, bogota, medellin, 1.0, strength=MIN_DIVERSITY_STRENGTH)
+    strong_penalty = apply_regional_penalty(0.97, RegionalPenaltyCenter(bogota, 1.0, 1.0), medellin)
+    relaxed_penalty = apply_regional_penalty(
+        0.97,
+        RegionalPenaltyCenter(bogota, 1.0, MIN_DIVERSITY_STRENGTH),
+        medellin,
+    )
 
     assert relaxed_penalty > strong_penalty
 
@@ -111,7 +116,7 @@ def test_apply_regional_penalty_relaxes_for_deeper_rank_strength() -> None:
 def test_apply_regional_penalty_drops_same_place_to_zero() -> None:
     bogota = CityCandidate(name="Bogota", country_code="CO", lat=4.711, lon=-74.0721, cell_lat=4.75, cell_lon=-74.0833)
 
-    assert apply_regional_penalty(0.9, bogota, bogota, 1.0) == 0.0
+    assert apply_regional_penalty(0.9, RegionalPenaltyCenter(bogota, 1.0), bogota) == 0.0
 
 
 def test_rank_city_scores_uses_configured_decay_radius() -> None:
@@ -129,7 +134,9 @@ def test_rank_city_scores_uses_configured_decay_radius() -> None:
     assert ranked[0]["name"] == "Bogota"
     assert ranked[1]["name"] == "Medellin"
     assert ranked[1]["score"] == round(
-        apply_regional_penalty(0.97, cities[0], cities[1], 1.0, decay_km=CITY_DIVERSITY_DECAY_KM),
+        apply_regional_penalty(
+            0.97, RegionalPenaltyCenter(cities[0], 1.0), cities[1], decay_km=CITY_DIVERSITY_DECAY_KM
+        ),
         4,
     )
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Protocol, cast
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
@@ -24,6 +24,9 @@ from backend.scoring import (
     score_matrix_row_breakdown,
 )
 
+if TYPE_CHECKING:
+    from backend.scoring import ClimateMatrix
+
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
 STATIC_DIR = FRONTEND_DIR / "static"
@@ -33,6 +36,12 @@ CLIMATE_DATABASE_ENV_VAR = "POGODAPP_CLIMATE_DB"
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 logger = logging.getLogger(__name__)
+
+
+class _SupportsProbeRepository(Protocol):
+    def probe_nearest_cell(self, lat: float, lon: float) -> int | None: ...
+
+    def get_climate_matrix(self) -> ClimateMatrix: ...
 
 
 class ProbeResponse(BaseModel):
@@ -103,7 +112,7 @@ def create_app(
         try:
             return build_score_response(repository, preferences)
         except ClimateDataError as error:
-            logger.error("score_request outcome=error detail=%s", error)
+            logger.exception("score_request outcome=error")
             raise HTTPException(status_code=503, detail=str(error)) from error
 
     @app.get("/probe")
@@ -118,11 +127,12 @@ def create_app(
     ) -> ProbeResponse:
         if not hasattr(repository, "probe_nearest_cell"):
             return ProbeResponse()
-        row_index = repository.probe_nearest_cell(lat, lon)  # type: ignore[union-attr]
+        probe_repository = cast("_SupportsProbeRepository", repository)
+        row_index = probe_repository.probe_nearest_cell(lat, lon)
         if row_index is None:
             return ProbeResponse()
         try:
-            climate_matrix = repository.get_climate_matrix()
+            climate_matrix = probe_repository.get_climate_matrix()
         except ClimateDataError:
             return ProbeResponse()
         preferences = PreferenceInputs(

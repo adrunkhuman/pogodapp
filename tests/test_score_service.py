@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
-from backend.cities import CityCandidate, CityRankingCache
+from backend.cities import CityCandidate, CityRankingCache, CityScorePoint
 from backend.climate_repository import StubClimateRepository
 from backend.logging_config import configure_backend_logging
 from backend.score_service import _deduplicate_city_points, build_score_response
@@ -156,15 +156,41 @@ def test_build_score_response_falls_back_to_array_heatmap_path_when_projection_c
 
 
 def test_deduplicate_city_points_removes_duplicate_substituted_cities() -> None:
-    deduplicated = _deduplicate_city_points(
-        [
-            {"name": "Bogota", "country_code": "CO", "flag": "🇨🇴", "score": 0.91, "lat": 4.711, "lon": -74.0721},
-            {"name": "Bogota", "country_code": "CO", "flag": "🇨🇴", "score": 0.9, "lat": 4.711, "lon": -74.0721},
-            {"name": "Medellin", "country_code": "CO", "flag": "🇨🇴", "score": 0.89, "lat": 6.2442, "lon": -75.5812},
-        ]
-    )
+    cities: list[CityScorePoint] = [
+        {
+            "name": "Bogota",
+            "country_code": "CO",
+            "flag": "🇨🇴",
+            "score": 0.91,
+            "lat": 4.711,
+            "lon": -74.0721,
+            "probe_lat": 4.7083,
+            "probe_lon": -74.0417,
+        },
+        {
+            "name": "Bogota",
+            "country_code": "CO",
+            "flag": "🇨🇴",
+            "score": 0.9,
+            "lat": 4.711,
+            "lon": -74.0721,
+            "probe_lat": 4.7083,
+            "probe_lon": -74.0417,
+        },
+        {
+            "name": "Medellin",
+            "country_code": "CO",
+            "flag": "🇨🇴",
+            "score": 0.89,
+            "lat": 6.2442,
+            "lon": -75.5812,
+            "probe_lat": 6.25,
+            "probe_lon": -75.5833,
+        },
+    ]
+    deduplicated = _deduplicate_city_points(cities)
 
     assert deduplicated == [
-        {"name": "Bogota", "country_code": "CO", "flag": "🇨🇴", "score": 0.91, "lat": 4.711, "lon": -74.0721},
-        {"name": "Medellin", "country_code": "CO", "flag": "🇨🇴", "score": 0.89, "lat": 6.2442, "lon": -75.5812},
+        cities[0],
+        cities[2],
     ]

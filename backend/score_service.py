@@ -158,6 +158,19 @@ def _deduplicate_city_points(cities: list[CityScorePoint]) -> list[CityScorePoin
     return deduplicated
 
 
+def _with_city_score(city: CityScorePoint, score: float) -> CityScorePoint:
+    return {
+        "name": city["name"],
+        "country_code": city["country_code"],
+        "flag": city["flag"],
+        "score": score,
+        "lat": city["lat"],
+        "lon": city["lon"],
+        "probe_lat": city["probe_lat"],
+        "probe_lon": city["probe_lon"],
+    }
+
+
 def _rescore_city_points_from_cache(
     city_catalog: CityRankingCache,
     ranked_cities: list[CityScorePoint],
@@ -169,11 +182,7 @@ def _rescore_city_points_from_cache(
         for city, climate_index in zip(city_catalog.cities, city_catalog.climate_indexes, strict=True)
     }
     rescored = [
-        {
-            **city,
-            "score": score_by_city.get(_city_identity(city), city["score"]),
-        }
-        for city in ranked_cities
+        _with_city_score(city, score_by_city.get(_city_identity(city), city["score"])) for city in ranked_cities
     ]
     return _deduplicate_city_points(sorted(rescored, key=lambda city: city["score"], reverse=True))
 
@@ -195,11 +204,7 @@ def _rescore_city_points_from_cells(
         for city in city_catalog
     }
     rescored = [
-        {
-            **city,
-            "score": score_by_city.get(_city_identity(city), city["score"]),
-        }
-        for city in ranked_cities
+        _with_city_score(city, score_by_city.get(_city_identity(city), city["score"])) for city in ranked_cities
     ]
     return _deduplicate_city_points(sorted(rescored, key=lambda city: city["score"], reverse=True))
 

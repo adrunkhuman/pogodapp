@@ -278,6 +278,15 @@ class RankedCityCandidate:
     score: float
 
 
+@dataclass(frozen=True, slots=True)
+class RegionalPenaltyCenter:
+    """Winner context for one diversity-suppression step."""
+
+    city: CityCandidate
+    score: float
+    strength: float = 1.0
+
+
 def _candidate_population(city: CityCandidate) -> int:
     return max(city.population, 0)
 
@@ -399,7 +408,7 @@ def rank_city_scores(
 
     while remaining and len(ranked) < limit:
         winner = _select_population_biased_winner(remaining)
-        diversity_strength = _diversity_strength_for_rank(len(ranked))
+        penalty_center = RegionalPenaltyCenter(winner.city, winner.score, _diversity_strength_for_rank(len(ranked)))
         ranked.append(
             {
                 "name": winner.city.name,
@@ -417,11 +426,9 @@ def rank_city_scores(
                 city=candidate.city,
                 score=apply_regional_penalty(
                     candidate.score,
-                    winner.city,
+                    penalty_center,
                     candidate.city,
-                    winner.score,
                     decay_km=diversity_decay_km,
-                    strength=diversity_strength,
                 ),
             )
             for candidate in remaining
@@ -483,16 +490,14 @@ def _diversity_strength_for_rank(rank_index: int) -> float:
 
 def apply_regional_penalty(
     score: float,
-    center: CityCandidate,
+    center: RegionalPenaltyCenter,
     candidate: CityCandidate,
-    center_score: float,
     *,
     decay_km: float = CITY_DIVERSITY_DECAY_KM,
-    strength: float = 1.0,
 ) -> float:
     """Exponentially suppress cities that cluster too close to a stronger regional center."""
-    distance_km = haversine_distance_km(center.lat, center.lon, candidate.lat, candidate.lon)
-    penalty = center_score * strength * math.exp(-distance_km / decay_km)
+    distance_km = haversine_distance_km(center.city.lat, center.city.lon, candidate.lat, candidate.lon)
+    penalty = center.score * center.strength * math.exp(-distance_km / decay_km)
     return max(0.0, score * (1 - penalty))
 
 
