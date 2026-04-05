@@ -130,8 +130,16 @@ function visibleScoresForList(scores) {
   return visibleScores;
 }
 
+function visibleMarkers() {
+  return visibleScoresForList(currentScores);
+}
+
 function cancelTooltipHideTimer() {
   clearTimeout(tooltipHideTimer);
+}
+
+function abortActiveProbe() {
+  if (probeController) probeController.abort();
 }
 
 function armTooltipHideTimer(delayMs = TOOLTIP_HIDE_DELAY_MS) {
@@ -327,9 +335,7 @@ function renderScoreList(scores) {
       moreButton.addEventListener("click", () => {
         continentVisibleCounts.set(continent, nextVisibleCount(visibleCount));
         renderScoreList(currentScores);
-        if (mapLoaded) {
-          applyMarkers(visibleScoresForList(currentScores));
-        }
+        if (mapLoaded) applyMarkers(visibleMarkers());
       });
       moreItem.append(moreButton);
       results.append(moreItem);
@@ -573,7 +579,7 @@ function registerLayerProbeHandlers(layerId, { cursor, header, coordinates = nul
     hoveringLayer = true;
     map.getCanvas().style.cursor = cursor;
     clearTimeout(probeTimer);
-    if (probeController) probeController.abort();
+    abortActiveProbe();
     const [lat, lon] = coordinates ? coordinates(e) : [e.lngLat.lat, e.lngLat.lng];
     fetchProbe(lat, lon, e.originalEvent.clientX, e.originalEvent.clientY, header(e), { hideDelayMs: null });
   });
@@ -634,7 +640,7 @@ function fetchProbe(lat, lon, clientX, clientY, cityHeader = null, { hideDelayMs
   const prefs = getCurrentPreferences();
   if (!prefs) return;
 
-  if (probeController) probeController.abort();
+  abortActiveProbe();
   probeController = new AbortController();
 
   const params = new URLSearchParams({ lat, lon, ...prefs });
@@ -646,6 +652,46 @@ function fetchProbe(lat, lon, clientX, clientY, cityHeader = null, { hideDelayMs
     })
     .then(data => showTooltip(data, clientX, clientY, cityHeader, { hideDelayMs }))
     .catch(() => {});
+}
+
+function scheduleHoverProbe(event) {
+  if (hoveringLayer) return;
+
+  hideTooltip();
+  clearTimeout(probeTimer);
+  probeTimer = setTimeout(() => {
+    const snapped = nearestFeatureAtPoint(event.point);
+    if (snapped) {
+      map.getCanvas().style.cursor = snapped.cursor;
+      fetchProbe(snapped.lat, snapped.lon, event.originalEvent.clientX, event.originalEvent.clientY, snapped.header, {
+        hideDelayMs: null,
+      });
+      return;
+    }
+
+    map.getCanvas().style.cursor = "";
+    fetchProbe(event.lngLat.lat, event.lngLat.lng, event.originalEvent.clientX, event.originalEvent.clientY, null, {
+      hideDelayMs: null,
+    });
+  }, 80);
+}
+
+function resetTransientMapUi() {
+  clearTimeout(probeTimer);
+  abortActiveProbe();
+  hideTooltip();
+  clearFocusedCity();
+}
+
+function applyScoreResponse(scores, heatmap) {
+  applyHeatmap(heatmap);
+  const markers = visibleScoresForList(scores ?? []);
+  if (markers.length > 0) {
+    applyMarkers(markers);
+  } else {
+    clearMarkers();
+  }
+  setMapStatus(heatmap !== EMPTY_IMAGE ? `${scores.length} top matches shown.` : "No matches found.");
 }
 
 // ─── Map init ─────────────────────────────────────────────────────────────────
@@ -689,40 +735,11 @@ function initializeMap() {
   });
 
   // Probe on hover — debounced; skipped when a layer-specific handler takes over.
-  map.on("mousemove", (e) => {
-    if (hoveringLayer) return;
-    hideTooltip();
-    clearTimeout(probeTimer);
-    probeTimer = setTimeout(() => {
-      const snapped = nearestFeatureAtPoint(e.point);
-      if (snapped) {
-        map.getCanvas().style.cursor = snapped.cursor;
-        fetchProbe(snapped.lat, snapped.lon, e.originalEvent.clientX, e.originalEvent.clientY, snapped.header, {
-          hideDelayMs: null,
-        });
-        return;
-      }
+  map.on("mousemove", scheduleHoverProbe);
 
-      map.getCanvas().style.cursor = "";
-      fetchProbe(e.lngLat.lat, e.lngLat.lng, e.originalEvent.clientX, e.originalEvent.clientY, null, {
-        hideDelayMs: null,
-      });
-    }, 80);
-  });
+  map.on("movestart", resetTransientMapUi);
 
-  map.on("movestart", () => {
-    clearTimeout(probeTimer);
-    if (probeController) probeController.abort();
-    hideTooltip();
-    clearFocusedCity();
-  });
-
-  map.on("mouseleave", () => {
-    clearTimeout(probeTimer);
-    if (probeController) probeController.abort();
-    hideTooltip();
-    clearFocusedCity();
-  });
+  map.on("mouseleave", resetTransientMapUi);
 
   map.on("load", () => {
     map.addSource(BACKDROP_SOURCE_ID, { type: "geojson", data: WORLD_BACKDROP_URL });
@@ -757,9 +774,7 @@ function initializeMap() {
 
     if (pendingResponse) {
       const { scores, heatmap } = pendingResponse;
-      applyHeatmap(heatmap);
-      applyMarkers(visibleScoresForList(scores ?? []));
-      setMapStatus(heatmap !== EMPTY_IMAGE ? `${scores.length} top matches shown.` : "No matches found.");
+      applyScoreResponse(scores ?? [], heatmap);
       pendingResponse = null;
     }
   });
@@ -777,16 +792,9 @@ window.renderScores = function renderScores(response) {
   if (!map) return;
 
   const imageUrl = heatmap || EMPTY_IMAGE;
-  const markerList = visibleScoresForList(currentScores);
 
   if (mapLoaded) {
-    applyHeatmap(imageUrl);
-    if (markerList.length > 0) {
-      applyMarkers(markerList);
-    } else {
-      clearMarkers();
-    }
-    setMapStatus(heatmap ? `${scores.length} top matches shown.` : "No matches found.");
+    applyScoreResponse(currentScores, imageUrl);
   } else {
     pendingResponse = { ...response, heatmap: imageUrl };
   }
