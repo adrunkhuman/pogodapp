@@ -75,6 +75,11 @@ def test_home_page_renders() -> None:
     assert 'id="score-results-list"' in response.text
     assert "/static/vendor/maplibre-gl.css" in response.text
     assert "/static/vendor/maplibre-gl.js" in response.text
+    assert "/static/map-core.js" in response.text
+    assert "/static/map-sidebar.js" in response.text
+    assert "/static/map-probe.js" in response.text
+    assert "/static/map-layers.js" in response.text
+    assert "/static/map.js" in response.text
     assert "window.POGODAPP_MAP_CONFIG" in response.text
     assert MAP_PROJECTION.name in response.text
 
@@ -153,19 +158,24 @@ def test_local_map_assets_are_served() -> None:
 
 def test_map_script_initializes_maplibre_score_layer() -> None:
     response = client.get("/static/map.js")
+    core_response = client.get("/static/map-core.js")
+    layers_response = client.get("/static/map-layers.js")
 
     assert response.status_code == 200
+    assert core_response.status_code == 200
+    assert layers_response.status_code == 200
     assert "new window.maplibregl.Map" in response.text
+    assert "WORLD_BACKDROP_URL" in response.text
+    assert "HEATMAP_SOURCE_ID" in layers_response.text
     assert "data: WORLD_BACKDROP_URL" in response.text
     assert "id: LAND_LAYER_ID" in response.text
     assert "id: BORDER_LAYER_ID" in response.text
-    assert "HEATMAP_SOURCE_ID" in response.text
-    assert 'type: "image"' in response.text
-    assert 'type: "raster"' in response.text
+    assert 'type: "image"' in layers_response.text
+    assert 'type: "raster"' in layers_response.text
     assert "projection: { type: MAP_CONFIG.projection }" in response.text
-    assert "window.POGODAPP_MAP_CONFIG" in response.text
-    assert "WORLD_CORNERS" in response.text
-    assert "updateImage" in response.text
+    assert "window.POGODAPP_MAP_CONFIG" in core_response.text
+    assert "WORLD_CORNERS" in core_response.text
+    assert "updateImage" in layers_response.text
     assert 'setMapStatus("Map backdrop ready.");' in response.text
     assert 'setMapStatus("Map library failed to load.");' in response.text
 
@@ -173,15 +183,24 @@ def test_map_script_initializes_maplibre_score_layer() -> None:
 def test_map_contract_does_not_depend_on_remote_basemap_assets() -> None:
     home_response = client.get("/")
     script_response = client.get("/static/map.js")
+    core_response = client.get("/static/map-core.js")
+    layers_response = client.get("/static/map-layers.js")
+    probe_response = client.get("/static/map-probe.js")
 
     assert home_response.status_code == 200
     assert script_response.status_code == 200
+    assert core_response.status_code == 200
+    assert layers_response.status_code == 200
+    assert probe_response.status_code == 200
     assert "pmtiles" not in home_response.text
     assert "protomaps" not in home_response.text
     assert "unpkg.com/maplibre-gl" not in home_response.text
     assert "pmtiles" not in script_response.text
     assert "protomaps" not in script_response.text
     assert "https://" not in script_response.text
+    assert "https://" not in core_response.text
+    assert "https://" not in layers_response.text
+    assert "https://" not in probe_response.text
 
 
 def test_score_endpoint_accepts_form_encoded_preferences() -> None:
@@ -450,12 +469,16 @@ def test_home_page_registers_htmx_handoff_script() -> None:
 
 
 def test_map_script_renders_city_labels_instead_of_coordinates() -> None:
-    response = client.get("/static/map.js")
+    sidebar_response = client.get("/static/map-sidebar.js")
+    probe_response = client.get("/static/map-probe.js")
+    layers_response = client.get("/static/map-layers.js")
 
-    assert response.status_code == 200
-    assert "Intl.DisplayNames" in response.text
-    assert "point.country_code" in response.text
-    assert "point.name" in response.text
-    assert "point.flag" in response.text
-    assert "score-results__item" in response.text
-    assert "if (!r.ok) throw new Error" in response.text
+    assert sidebar_response.status_code == 200
+    assert probe_response.status_code == 200
+    assert layers_response.status_code == 200
+    assert "point.country_code" in sidebar_response.text
+    assert "point.name" in sidebar_response.text
+    assert "point.flag" in sidebar_response.text
+    assert "score-results__item" in sidebar_response.text
+    assert "if (!response.ok) throw new Error" in probe_response.text
+    assert "probe_lat" in layers_response.text
