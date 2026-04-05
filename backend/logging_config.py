@@ -14,6 +14,7 @@ def configure_backend_logging() -> None:
     """
     backend_logger = logging.getLogger("backend")
     backend_logger.setLevel(logging.INFO)
+    backend_logger.propagate = False
 
     if backend_logger.handlers:
         return
@@ -21,4 +22,3 @@ def configure_backend_logging() -> None:
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(BACKEND_LOG_FORMAT))
     backend_logger.addHandler(handler)
-    backend_logger.propagate = False

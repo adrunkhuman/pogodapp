@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from backend.climate_repository import StubClimateRepository
-from backend.config import DEFAULT_PREFERENCES, PREFERENCE_FIELD_NAMES
+from backend.config import DEFAULT_PREFERENCES, MAP_PROJECTION, PREFERENCE_FIELD_NAMES
 from backend.main import create_app
 from backend.scoring import PreferenceInputs, score_preferences
 
@@ -28,6 +28,8 @@ def test_home_page_renders() -> None:
     assert 'id="score-results-list"' in response.text
     assert "/static/vendor/maplibre-gl.css" in response.text
     assert "/static/vendor/maplibre-gl.js" in response.text
+    assert "window.POGODAPP_MAP_CONFIG" in response.text
+    assert MAP_PROJECTION.name in response.text
 
 
 def test_home_page_uses_backend_default_preferences() -> None:
@@ -99,6 +101,8 @@ def test_map_script_initializes_maplibre_score_layer() -> None:
     assert "HEATMAP_SOURCE_ID" in response.text
     assert 'type: "image"' in response.text
     assert 'type: "raster"' in response.text
+    assert "projection: { type: MAP_CONFIG.projection }" in response.text
+    assert "window.POGODAPP_MAP_CONFIG" in response.text
     assert "WORLD_CORNERS" in response.text
     assert "updateImage" in response.text
     assert 'setMapStatus("Map backdrop ready.");' in response.text

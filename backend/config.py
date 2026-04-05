@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 CITY_DIVERSITY_DECAY_KM = 200.0
+WEB_MERCATOR_MAX_LATITUDE = 85.051129
 
 PREFERENCE_FIELD_NAMES: tuple[str, ...] = (
     "ideal_temperature",
@@ -21,6 +22,27 @@ class PreferenceField:
     maximum: int
     step: int
     value: int
+
+
+@dataclass(frozen=True, slots=True)
+class MapProjection:
+    """Shared map projection settings for frontend rendering and heatmap output."""
+
+    name: str
+    image_corners: tuple[tuple[float, float], tuple[float, float], tuple[float, float], tuple[float, float]]
+    max_render_latitude: float | None = None
+
+
+MAP_PROJECTION = MapProjection(
+    name="mercator",
+    image_corners=(
+        (-180.0, WEB_MERCATOR_MAX_LATITUDE),
+        (180.0, WEB_MERCATOR_MAX_LATITUDE),
+        (180.0, -WEB_MERCATOR_MAX_LATITUDE),
+        (-180.0, -WEB_MERCATOR_MAX_LATITUDE),
+    ),
+    max_render_latitude=WEB_MERCATOR_MAX_LATITUDE,
+)
 
 
 # Higher sensitivity means a stronger score penalty.

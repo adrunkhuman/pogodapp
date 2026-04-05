@@ -13,7 +13,7 @@ from backend.climate_repository import (
     ClimateRepository,
     build_default_climate_repository,
 )
-from backend.config import DEFAULT_PREFERENCES
+from backend.config import DEFAULT_PREFERENCES, MAP_PROJECTION
 from backend.logging_config import configure_backend_logging
 from backend.score_service import ScoreResponse, build_score_response
 from backend.scoring import PreferenceInputs  # noqa: TC001 - FastAPI needs the runtime symbol for Form model parsing
@@ -29,7 +29,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 def build_index_context() -> dict[str, object]:
     """Return template context for the initial page render."""
-    return {"preferences": DEFAULT_PREFERENCES}
+    return {"preferences": DEFAULT_PREFERENCES, "map_projection": MAP_PROJECTION}
 
 
 def create_app(

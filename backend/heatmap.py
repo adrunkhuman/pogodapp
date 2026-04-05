@@ -9,17 +9,22 @@ from typing import TYPE_CHECKING
 import numpy as np
 from PIL import Image, ImageFilter
 
+from backend.config import MAP_PROJECTION
+
 if TYPE_CHECKING:
     from .scoring import CellScorePoint
 
 WIDTH = 1440
 HEIGHT = 720
 BLUR_RADIUS = 14  # px — ~3.5 degrees at this resolution
+_MERCATOR_MAX_RENDER_LATITUDE = MAP_PROJECTION.max_render_latitude
 
-# Web Mercator clamps at ±85.051129°; cells beyond this latitude are not displayable.
-_MAX_LAT = 85.051129
+if MAP_PROJECTION.name != "mercator" or _MERCATOR_MAX_RENDER_LATITUDE is None:
+    msg = f"Unsupported heatmap projection: {MAP_PROJECTION.name}"
+    raise ValueError(msg)
+
 # Mercator y at the maximum latitude — used to normalise y to [0, HEIGHT].
-_Y_MAX = math.log(math.tan(math.pi / 4 + _MAX_LAT * math.pi / 360))
+_Y_MAX = math.log(math.tan(math.pi / 4 + _MERCATOR_MAX_RENDER_LATITUDE * math.pi / 360))
 
 # Color ramp: stop format (value, (R, G, B, A)). Value 0.0 maps to alpha=0 (transparent).
 _COLOR_STOPS: list[tuple[float, tuple[int, int, int, int]]] = [
@@ -53,10 +58,11 @@ def _apply_color_ramp(values: np.ndarray) -> np.ndarray:
 
 
 def render_heatmap_png(scores: list[CellScorePoint]) -> bytes:
-    """Rasterize scored cells in Mercator projection, blur, and return a PNG as bytes.
+    """Rasterize scored cells in the configured map projection and return a PNG.
 
-    The image covers the Web Mercator world extent (±85.051129°) so it aligns with
-    MapLibre's Mercator projection when used as an image source with WORLD_CORNERS.
+    The server and frontend both read `MAP_PROJECTION`, so projection changes stay
+    synchronized. Only Mercator is supported today because the rasterization math
+    and MapLibre image corners are projection-specific.
     """
     grid = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
 
@@ -65,7 +71,7 @@ def render_heatmap_png(scores: list[CellScorePoint]) -> bytes:
     vals = np.array([p["score"] for p in scores], dtype=np.float32)
 
     # Drop cells outside the Mercator-displayable latitude range.
-    valid = np.abs(lats) < _MAX_LAT
+    valid = np.abs(lats) < _MERCATOR_MAX_RENDER_LATITUDE
     lats, lons, vals = lats[valid], lons[valid], vals[valid]
 
     xs = ((lons + 180.0) / 360.0 * WIDTH).astype(np.int32)
