@@ -213,20 +213,28 @@ ul {
   overflow: hidden;
 }
 
+.results-panel h2 {
+  width: min(100%, 18.5rem);
+}
+
 #score-results-list {
   display: grid;
-  gap: 0.35rem;
+  gap: 0.2rem;
   padding: 0;
   list-style: none;
   overflow: auto;
+  justify-items: start;
+  align-content: start;
 }
 
 .score-results__item,
 .score-results__empty {
   display: grid;
-  grid-template-columns: 5ch minmax(0, 1fr) auto;
-  gap: 1rem;
+  width: min(100%, 18.5rem);
+  grid-template-columns: 5ch minmax(0, 1fr) 2ch;
+  gap: 0.75rem;
   align-items: baseline;
+  padding-block: 0.18rem;
 }
 
 .score-results__score {
@@ -246,6 +254,7 @@ ul {
 
 .score-results__flag {
   color: #e0e0e0;
+  justify-self: end;
 }
 
 .score-results__empty {
