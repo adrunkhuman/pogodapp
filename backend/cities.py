@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING, TypedDict
 from backend.config import CITY_DIVERSITY_DECAY_KM
 
 if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
+
     from backend.scoring import CellScorePoint
 
 GRID_DEGREES = 10 / 60
@@ -45,6 +48,14 @@ class RankedCityCandidate:
     score: float
 
 
+@dataclass(frozen=True, slots=True)
+class IndexedCityCandidate:
+    """City mapped to one scored climate-matrix row."""
+
+    city: CityCandidate
+    climate_index: int
+
+
 STUB_CITY_CANDIDATES: tuple[CityCandidate, ...] = (
     CityCandidate(name="San Francisco", country_code="US", lat=37.5, lon=-122.0, cell_lat=37.5, cell_lon=-122.0),
     CityCandidate(name="Rome", country_code="IT", lat=41.9, lon=12.5, cell_lat=41.9, cell_lon=12.5),
@@ -76,6 +87,48 @@ def rank_city_scores(
             continue
 
         remaining.append(RankedCityCandidate(city=city, score=score))
+
+    while remaining and len(ranked) < limit:
+        winner = max(remaining, key=lambda candidate: candidate.score)
+        ranked.append(
+            {
+                "name": winner.city.name,
+                "country_code": winner.city.country_code,
+                "flag": country_flag(winner.city.country_code),
+                "score": round(winner.score, 4),
+            }
+        )
+        remaining = [
+            RankedCityCandidate(
+                city=candidate.city,
+                score=apply_regional_penalty(
+                    candidate.score,
+                    winner.city,
+                    candidate.city,
+                    winner.score,
+                    decay_km=diversity_decay_km,
+                ),
+            )
+            for candidate in remaining
+            if candidate.city != winner.city
+        ]
+
+    return ranked
+
+
+def rank_indexed_city_scores(
+    city_catalog: tuple[IndexedCityCandidate, ...],
+    cell_scores: NDArray[np.float32],
+    *,
+    limit: int,
+    diversity_decay_km: float = CITY_DIVERSITY_DECAY_KM,
+) -> list[CityScorePoint]:
+    """Rank cities by direct climate-matrix lookup instead of lat/lon joins."""
+    remaining = [
+        RankedCityCandidate(city=indexed_city.city, score=float(cell_scores[indexed_city.climate_index]))
+        for indexed_city in city_catalog
+    ]
+    ranked: list[CityScorePoint] = []
 
     while remaining and len(ranked) < limit:
         winner = max(remaining, key=lambda candidate: candidate.score)
@@ -142,6 +195,13 @@ def snap_city_to_cell_key(city: CityCandidate) -> tuple[float, float]:
         round(90 - GRID_HALF_DEGREES - latitude_index * GRID_DEGREES, 4),
         round(-180 + GRID_HALF_DEGREES + longitude_index * GRID_DEGREES, 4),
     )
+
+
+def coordinate_key(latitude: float, longitude: float) -> int:
+    """Encode a rounded lat/lon pair into one sortable integer key."""
+    latitude_key = round(latitude * 10_000) + 900_000
+    longitude_key = round(longitude * 10_000) + 1_800_000
+    return latitude_key * 4_000_000 + longitude_key
 
 
 def country_flag(country_code: str) -> str:

@@ -6,9 +6,15 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import TYPE_CHECKING, TypedDict
 
-from backend.cities import CityScorePoint, rank_city_scores
-from backend.heatmap import render_heatmap_png
-from backend.scoring import CellScorePoint, PreferenceInputs, score_climate_cells
+from backend.cities import CityScorePoint, rank_city_scores, rank_indexed_city_scores
+from backend.heatmap import render_heatmap_png, render_heatmap_png_from_arrays
+from backend.scoring import (
+    CellScorePoint,
+    PreferenceInputs,
+    normalize_score_array,
+    score_climate_cells,
+    score_climate_matrix,
+)
 
 if TYPE_CHECKING:
     from backend.climate_repository import ClimateRepository
@@ -74,6 +80,91 @@ def build_score_response(repository: ClimateRepository, preferences: PreferenceI
     """
     request_started = perf_counter()
     timings = ScoreTimings()
+
+    if hasattr(repository, "get_climate_matrix") and hasattr(repository, "get_indexed_cities"):
+        return _build_score_response_from_matrix(repository, preferences, request_started, timings)
+
+    return _build_score_response_from_cells(repository, preferences, request_started, timings)
+
+
+def _build_score_response_from_matrix(
+    repository: ClimateRepository,
+    preferences: PreferenceInputs,
+    request_started: float,
+    timings: ScoreTimings,
+) -> ScoreResponse:
+    cells_started = perf_counter()
+    climate_matrix = repository.get_climate_matrix()
+    timings.cells_ms = _elapsed_ms(cells_started)
+
+    cities_started = perf_counter()
+    indexed_cities = repository.get_indexed_cities()
+    timings.cities_ms = _elapsed_ms(cities_started)
+
+    scoring_started = perf_counter()
+    raw_scores = score_climate_matrix(climate_matrix, preferences)
+    timings.scoring_ms = _elapsed_ms(scoring_started)
+
+    if raw_scores.size == 0:
+        timings.total_ms = _elapsed_ms(request_started)
+        _log_score_timings(
+            timings,
+            climate_cell_count=len(climate_matrix.latitudes),
+            city_count=len(indexed_cities),
+            ranked_city_count=0,
+            outcome="empty",
+        )
+        return {"scores": [], "heatmap": ""}
+
+    max_score = float(raw_scores.max())
+    if max_score == 0.0:
+        timings.total_ms = _elapsed_ms(request_started)
+        _log_score_timings(
+            timings,
+            climate_cell_count=len(climate_matrix.latitudes),
+            city_count=len(indexed_cities),
+            ranked_city_count=0,
+            outcome="all_zero",
+        )
+        return {"scores": [], "heatmap": ""}
+
+    normalize_started = perf_counter()
+    normalized_scores = normalize_score_array(raw_scores)
+    timings.normalize_ms = _elapsed_ms(normalize_started)
+
+    ranking_started = perf_counter()
+    top_cities = rank_indexed_city_scores(indexed_cities, normalized_scores, limit=TOP_CITY_RESULTS)
+    timings.ranking_ms = _elapsed_ms(ranking_started)
+
+    heatmap_started = perf_counter()
+    heatmap_png = render_heatmap_png_from_arrays(
+        climate_matrix.latitudes,
+        climate_matrix.longitudes,
+        normalized_scores,
+    )
+    timings.heatmap_ms = _elapsed_ms(heatmap_started)
+    timings.total_ms = _elapsed_ms(request_started)
+
+    _log_score_timings(
+        timings,
+        climate_cell_count=len(climate_matrix.latitudes),
+        city_count=len(indexed_cities),
+        ranked_city_count=len(top_cities),
+        outcome="ok",
+    )
+
+    return {
+        "scores": top_cities,
+        "heatmap": "data:image/png;base64," + base64.b64encode(heatmap_png).decode(),
+    }
+
+
+def _build_score_response_from_cells(
+    repository: ClimateRepository,
+    preferences: PreferenceInputs,
+    request_started: float,
+    timings: ScoreTimings,
+) -> ScoreResponse:
 
     cells_started = perf_counter()
     climate_cells = repository.list_cells()

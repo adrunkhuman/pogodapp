@@ -3,9 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, cast
 
 import duckdb
+import numpy as np
 
-from backend.cities import STUB_CITY_CANDIDATES, CityCandidate
-from backend.scoring import MONTHS_PER_YEAR, STUB_CLIMATE_CELLS, ClimateCell
+from backend.cities import STUB_CITY_CANDIDATES, CityCandidate, IndexedCityCandidate, coordinate_key
+from backend.scoring import MONTHS_PER_YEAR, STUB_CLIMATE_CELLS, ClimateCell, ClimateMatrix
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -45,6 +46,12 @@ class ClimateRepository(Protocol):
     def list_cities(self) -> tuple[CityCandidate, ...]:
         """Return user-facing cities already mapped onto the dataset."""
 
+    def get_climate_matrix(self) -> ClimateMatrix:
+        """Return compact climate arrays ready for vectorized scoring."""
+
+    def get_indexed_cities(self) -> tuple[IndexedCityCandidate, ...]:
+        """Return cities already resolved to climate-matrix row indexes."""
+
 
 class StubClimateRepository:
     """Fallback repository used when the local DuckDB artifact is absent."""
@@ -56,6 +63,27 @@ class StubClimateRepository:
     def list_cities(self) -> tuple[CityCandidate, ...]:
         """Return deterministic in-repo city fixtures."""
         return STUB_CITY_CANDIDATES
+
+    def get_climate_matrix(self) -> ClimateMatrix:
+        """Return the stub dataset in compact array form."""
+        latitudes = np.array([cell.lat for cell in STUB_CLIMATE_CELLS], dtype=np.float32)
+        longitudes = np.array([cell.lon for cell in STUB_CLIMATE_CELLS], dtype=np.float32)
+        temperature_c = np.array([cell.temperature_c for cell in STUB_CLIMATE_CELLS], dtype=np.float32)
+        precipitation_mm = np.array([cell.precipitation_mm for cell in STUB_CLIMATE_CELLS], dtype=np.float32)
+        cloud_cover_pct = np.array([cell.cloud_cover_pct for cell in STUB_CLIMATE_CELLS], dtype=np.float32)
+        return ClimateMatrix(
+            latitudes=latitudes,
+            longitudes=longitudes,
+            temperature_c=temperature_c,
+            precipitation_mm=precipitation_mm,
+            cloud_cover_pct=cloud_cover_pct,
+        )
+
+    def get_indexed_cities(self) -> tuple[IndexedCityCandidate, ...]:
+        """Return stub cities aligned to the stub matrix rows."""
+        return tuple(
+            IndexedCityCandidate(city=city, climate_index=index) for index, city in enumerate(STUB_CITY_CANDIDATES)
+        )
 
 
 def build_default_climate_repository(database_path: Path) -> ClimateRepository:
@@ -72,6 +100,11 @@ class DuckDbClimateRepository:
     def __init__(self, database_path: Path) -> None:
         """Store the database file path used for subsequent reads."""
         self.database_path = database_path
+        self._climate_matrix: ClimateMatrix | None = None
+        self._cities: tuple[CityCandidate, ...] | None = None
+        self._indexed_cities: tuple[IndexedCityCandidate, ...] | None = None
+        self._sorted_climate_keys: np.ndarray[tuple[int], np.dtype[np.int64]] | None = None
+        self._sorted_climate_indexes: np.ndarray[tuple[int], np.dtype[np.int32]] | None = None
 
     def list_cells(self) -> tuple[ClimateCell, ...]:
         """Read climate rows and map them onto the scoring domain model.
@@ -95,13 +128,78 @@ class DuckDbClimateRepository:
             ClimateDataError: The database file is missing, unreadable, missing
                 the `cities` table, or contains invalid city rows.
         """
+        if self._cities is not None:
+            return self._cities
+
         rows = self._fetch_rows(SELECT_CITIES_QUERY, table_name="cities")
 
         try:
-            return tuple(self._row_to_city(row) for row in rows)
+            self._cities = tuple(self._row_to_city(row) for row in rows)
         except (TypeError, ValueError) as error:
             msg = f"Failed to map city data from {self.database_path} into city rows: {error}"
             raise ClimateDataError(msg) from error
+
+        return self._cities
+
+    def get_climate_matrix(self) -> ClimateMatrix:
+        """Load the climate table once into compact arrays for repeated scoring."""
+        if self._climate_matrix is not None:
+            return self._climate_matrix
+
+        rows = self._fetch_rows(SELECT_CLIMATE_CELLS_QUERY)
+        row_count = len(rows)
+        latitudes = np.empty(row_count, dtype=np.float32)
+        longitudes = np.empty(row_count, dtype=np.float32)
+        temperature_c = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.float32)
+        precipitation_mm = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.float32)
+        cloud_cover_pct = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.float32)
+
+        try:
+            for index, row in enumerate(rows):
+                latitude, longitude, *monthly_values = row
+                latitudes[index] = float(cast("int | float", latitude))
+                longitudes[index] = float(cast("int | float", longitude))
+                temperature_c[index] = tuple(
+                    float(cast("int | float", value)) for value in monthly_values[:MONTHS_PER_YEAR]
+                )
+                precipitation_mm[index] = tuple(
+                    float(cast("int | float", value)) for value in monthly_values[MONTHS_PER_YEAR : MONTHS_PER_YEAR * 2]
+                )
+                cloud_cover_pct[index] = tuple(
+                    float(cast("int | float", value))
+                    for value in monthly_values[MONTHS_PER_YEAR * 2 : MONTHS_PER_YEAR * 3]
+                )
+        except (TypeError, ValueError) as error:
+            msg = f"Failed to map climate data from {self.database_path} into climate rows: {error}"
+            raise ClimateDataError(msg) from error
+
+        self._climate_matrix = ClimateMatrix(
+            latitudes=latitudes,
+            longitudes=longitudes,
+            temperature_c=temperature_c,
+            precipitation_mm=precipitation_mm,
+            cloud_cover_pct=cloud_cover_pct,
+        )
+        return self._climate_matrix
+
+    def get_indexed_cities(self) -> tuple[IndexedCityCandidate, ...]:
+        """Resolve every city to its climate-matrix row once and cache the result."""
+        if self._indexed_cities is not None:
+            return self._indexed_cities
+
+        cities = self.list_cities()
+        sorted_climate_keys, sorted_climate_indexes = self._get_sorted_climate_keys()
+        indexed_cities: list[IndexedCityCandidate] = []
+
+        for city in cities:
+            climate_key = coordinate_key(city.cell_lat, city.cell_lon)
+            position = int(np.searchsorted(sorted_climate_keys, climate_key))
+            if position >= len(sorted_climate_keys) or int(sorted_climate_keys[position]) != climate_key:
+                continue
+            indexed_cities.append(IndexedCityCandidate(city=city, climate_index=int(sorted_climate_indexes[position])))
+
+        self._indexed_cities = tuple(indexed_cities)
+        return self._indexed_cities
 
     def _fetch_rows(self, query: str, *, table_name: str = "climate_cells") -> list[tuple[object, ...]]:
         if not self.database_path.exists():
@@ -147,3 +245,22 @@ class DuckDbClimateRepository:
             cell_lat=float(cast("int | float", cell_latitude)),
             cell_lon=float(cast("int | float", cell_longitude)),
         )
+
+    def _get_sorted_climate_keys(
+        self,
+    ) -> tuple[np.ndarray[tuple[int], np.dtype[np.int64]], np.ndarray[tuple[int], np.dtype[np.int32]]]:
+        if self._sorted_climate_keys is not None and self._sorted_climate_indexes is not None:
+            return self._sorted_climate_keys, self._sorted_climate_indexes
+
+        climate_matrix = self.get_climate_matrix()
+        climate_keys = np.fromiter(
+            (
+                coordinate_key(float(lat), float(lon))
+                for lat, lon in zip(climate_matrix.latitudes, climate_matrix.longitudes, strict=True)
+            ),
+            dtype=np.int64,
+            count=len(climate_matrix.latitudes),
+        )
+        self._sorted_climate_indexes = np.argsort(climate_keys).astype(np.int32, copy=False)
+        self._sorted_climate_keys = climate_keys[self._sorted_climate_indexes]
+        return self._sorted_climate_keys, self._sorted_climate_indexes

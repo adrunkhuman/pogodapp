@@ -1,7 +1,11 @@
 from dataclasses import dataclass
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
+import numpy as np
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 MONTHS_PER_YEAR = 12
 TEMPERATURE_COMFORT_BAND_C = 1.5
@@ -43,6 +47,37 @@ class ClimateCell:
 
         if len(self.cloud_cover_pct) != MONTHS_PER_YEAR:
             msg = "cloud_cover_pct must contain 12 monthly values"
+            raise ValueError(msg)
+
+
+@dataclass(frozen=True, slots=True)
+class ClimateMatrix:
+    """Compact climate features for vectorized scoring."""
+
+    latitudes: NDArray[np.float32]
+    longitudes: NDArray[np.float32]
+    temperature_c: NDArray[np.float32]
+    precipitation_mm: NDArray[np.float32]
+    cloud_cover_pct: NDArray[np.float32]
+
+    def __post_init__(self) -> None:
+        """Reject malformed matrix shapes before they reach the scorer."""
+        cell_count = self.latitudes.shape[0]
+
+        if self.longitudes.shape != (cell_count,):
+            msg = "longitudes must align with latitudes"
+            raise ValueError(msg)
+
+        if self.temperature_c.shape != (cell_count, MONTHS_PER_YEAR):
+            msg = "temperature_c must be shaped (cells, 12)"
+            raise ValueError(msg)
+
+        if self.precipitation_mm.shape != (cell_count, MONTHS_PER_YEAR):
+            msg = "precipitation_mm must be shaped (cells, 12)"
+            raise ValueError(msg)
+
+        if self.cloud_cover_pct.shape != (cell_count, MONTHS_PER_YEAR):
+            msg = "cloud_cover_pct must be shaped (cells, 12)"
             raise ValueError(msg)
 
 
@@ -155,6 +190,49 @@ def score_climate_cells(climate_cells: tuple[ClimateCell, ...], preferences: Pre
         }
         for cell in climate_cells
     ]
+
+
+def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceInputs) -> NDArray[np.float32]:
+    """Score the compact climate matrix with vectorized NumPy operations."""
+    temperature_delta = climate_matrix.temperature_c - preferences.ideal_temperature
+    distance_from_band = np.maximum(np.abs(temperature_delta) - TEMPERATURE_COMFORT_BAND_C, 0.0).astype(np.float32)
+    slope_span = np.where(
+        temperature_delta >= 0,
+        TEMPERATURE_SLOPE_BASE_C + preferences.heat_tolerance,
+        TEMPERATURE_SLOPE_BASE_C + preferences.cold_tolerance,
+    ).astype(np.float32)
+    temperature_scores = np.clip(1.0 - (distance_from_band / slope_span), 0.0, 1.0)
+
+    rain_scores = np.clip(
+        1.0 - (climate_matrix.precipitation_mm / SATURATING_MONTHLY_RAIN_MM) * (preferences.rain_sensitivity / 100.0),
+        0.0,
+        1.0,
+    )
+
+    tolerated_cloud_cover = MAX_TOLERATED_CLOUD_COVER - (
+        (MAX_TOLERATED_CLOUD_COVER - MIN_TOLERATED_CLOUD_COVER) * (preferences.sun_preference / 100.0)
+    )
+    excess_ratio = (climate_matrix.cloud_cover_pct - tolerated_cloud_cover) / (100.0 - tolerated_cloud_cover)
+    cloud_scores = np.where(
+        climate_matrix.cloud_cover_pct <= tolerated_cloud_cover,
+        1.0,
+        np.clip(1.0 - excess_ratio**2, 0.0, 1.0),
+    )
+
+    annual_scores = ((temperature_scores + rain_scores + cloud_scores) / 3.0).mean(axis=1, dtype=np.float32)
+    return np.clip(annual_scores, 0.0, 1.0).astype(np.float32, copy=False)
+
+
+def normalize_score_array(scores: NDArray[np.float32]) -> NDArray[np.float32]:
+    """Scale one score vector so the best match lands at 1.0."""
+    if scores.size == 0:
+        return scores
+
+    max_score = float(scores.max())
+    if max_score == 0.0:
+        return scores
+
+    return np.round(scores / max_score, 4).astype(np.float32, copy=False)
 
 
 def score_preferences(preferences: PreferenceInputs) -> list[CellScorePoint]:
