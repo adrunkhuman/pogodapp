@@ -14,6 +14,10 @@ from backend.climate_repository import (
 from backend.config import DEFAULT_PREFERENCES
 from backend.scoring import PreferenceInputs, ScorePoint, score_climate_cells
 
+# Cells below this fraction of the top score are dropped before the response is sent.
+# Keeps the JSON payload at a browser-renderable size regardless of dataset size.
+MIN_NORMALIZED_SCORE: float = 0.1
+
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
 STATIC_DIR = FRONTEND_DIR / "static"
@@ -49,7 +53,19 @@ def create_app(climate_repository: ClimateRepository | None = None) -> FastAPI:
         except ClimateDataError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 
-        return score_climate_cells(climate_cells, preferences)
+        raw = score_climate_cells(climate_cells, preferences)
+        if not raw:
+            return []
+
+        max_score = max(p["score"] for p in raw)
+        if max_score == 0:
+            return []
+
+        return [
+            {"lat": p["lat"], "lon": p["lon"], "score": round(p["score"] / max_score, 4)}
+            for p in raw
+            if p["score"] / max_score >= MIN_NORMALIZED_SCORE
+        ]
 
     return app
 

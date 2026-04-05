@@ -142,11 +142,16 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
     assert isinstance(payload, list)
     assert payload
 
+    scores = [item["score"] for item in payload]
     for item in payload:
         assert set(item) == {"lat", "lon", "score"}
         assert isinstance(item["lat"], float)
         assert isinstance(item["lon"], float)
         assert 0 <= item["score"] <= 1
+    # Scores are normalized so the best cell is always 1.0
+    assert max(scores) == 1.0
+    # Low-quality cells are dropped; all returned scores are above the minimum threshold
+    assert all(s >= 0.1 for s in scores)
 
 
 def test_score_endpoint_is_deterministic_for_the_same_preferences() -> None:
