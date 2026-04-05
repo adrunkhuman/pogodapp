@@ -209,7 +209,12 @@ def build_insert_rows(
     monthly_precipitation: tuple[NDArray[np.float64], ...],
     monthly_solar_radiation: tuple[NDArray[np.float64], ...],
 ) -> list[tuple[float | int, ...]]:
-    """Flatten aggregated monthly grids into the DuckDB row shape."""
+    """Flatten monthly rasters into the DuckDB row shape.
+
+    Only cells with finite data for every month across all three variables are
+    kept. That makes the runtime table a pure land-cell dataset with no partial
+    yearly rows to special-case later.
+    """
     finite_mask = np.logical_and.reduce(
         [
             *[np.isfinite(month) for month in monthly_temperature],
@@ -344,7 +349,11 @@ def copy_rows_into_cities_table(connection: duckdb.DuckDBPyConnection, rows: lis
 
 
 def build_worldclim_database(output_path: Path, cache_dir: Path) -> BuildSummary:
-    """Download and persist the 10-arcminute climate dataset."""
+    """Download, build, and overwrite the runtime DuckDB climate artifact.
+
+    This performs network I/O, writes cache files under `cache_dir`, and
+    replaces `output_path` if it already exists.
+    """
     archive_paths = ensure_worldclim_archives(cache_dir)
     cities_txt_path = ensure_geonames_cities(cache_dir)
     extracted_paths = extract_worldclim_archives(archive_paths, cache_dir / "extracted")
@@ -365,7 +374,7 @@ def build_worldclim_database(output_path: Path, cache_dir: Path) -> BuildSummary
 
 
 def validate_climate_database(database_path: Path) -> ValidationSummary:
-    """Check that the built artifact matches the expected prototype contract."""
+    """Check that the built artifact matches the expected runtime contract."""
     return validate_climate_database_with_row_range(database_path, ROUGH_ROW_COUNT_RANGE)
 
 
@@ -373,7 +382,13 @@ def validate_climate_database_with_row_range(
     database_path: Path,
     expected_row_count_range: tuple[int, int],
 ) -> ValidationSummary:
-    """Check that the built artifact matches the expected schema and a supplied row-count range."""
+    """Validate runtime schema plus rough climate/city row-count expectations.
+
+    Raises:
+        ValueError: The schema, row counts, or city import output drifted from
+            the expected build contract.
+        TypeError: DuckDB returned unexpected count value types.
+    """
     with duckdb.connect(str(database_path), read_only=True) as connection:
         columns = tuple(
             column_name for _, column_name, *_ in connection.execute("PRAGMA table_info('climate_cells')").fetchall()

@@ -12,7 +12,7 @@ MIN_TOLERATED_CLOUD_COVER = 15.0
 
 
 class PreferenceInputs(BaseModel):
-    """Validated `/score` form inputs before FastAPI hands them to scoring."""
+    """Validated scoring inputs for the `/score` workflow."""
 
     ideal_temperature: int = Field(ge=-10, le=35)
     cold_tolerance: int = Field(ge=0, le=15)
@@ -158,5 +158,9 @@ def score_climate_cells(climate_cells: tuple[ClimateCell, ...], preferences: Pre
 
 
 def score_preferences(preferences: PreferenceInputs) -> list[CellScorePoint]:
-    """Retain the stub-backed scoring entry point until routing switches repositories."""
+    """Score against the in-repo stub dataset.
+
+    This stays as a small test helper while the main runtime path reads climate
+    rows through a repository.
+    """
     return score_climate_cells(STUB_CLIMATE_CELLS, preferences)

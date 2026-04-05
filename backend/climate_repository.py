@@ -47,7 +47,7 @@ class ClimateRepository(Protocol):
 
 
 class StubClimateRepository:
-    """Adapter used until a DuckDB dataset is available in runtime config."""
+    """Fallback repository used when the local DuckDB artifact is absent."""
 
     def list_cells(self) -> tuple[ClimateCell, ...]:
         """Return deterministic in-repo climate fixtures."""
@@ -59,7 +59,7 @@ class StubClimateRepository:
 
 
 def build_default_climate_repository(database_path: Path) -> ClimateRepository:
-    """Use DuckDB automatically once the dataset exists locally; otherwise keep stubs."""
+    """Return the local DuckDB repository when available, otherwise use stubs."""
     if database_path.exists():
         return DuckDbClimateRepository(database_path)
 
@@ -70,11 +70,16 @@ class DuckDbClimateRepository:
     """Load monthly climate rows from DuckDB without leaking SQL into routing code."""
 
     def __init__(self, database_path: Path) -> None:
-        """Store the database location."""
+        """Store the database file path used for subsequent reads."""
         self.database_path = database_path
 
     def list_cells(self) -> tuple[ClimateCell, ...]:
-        """Read all climate rows and map them onto the scoring domain model."""
+        """Read climate rows and map them onto the scoring domain model.
+
+        Raises:
+            ClimateDataError: The database file is missing, unreadable, or does
+                not match the runtime climate row contract.
+        """
         rows = self._fetch_rows(SELECT_CLIMATE_CELLS_QUERY)
 
         try:
@@ -84,7 +89,12 @@ class DuckDbClimateRepository:
             raise ClimateDataError(msg) from error
 
     def list_cities(self) -> tuple[CityCandidate, ...]:
-        """Read city rows that the build pipeline already mapped onto climate cells."""
+        """Read build-time city rows already mapped onto climate cells.
+
+        Raises:
+            ClimateDataError: The database file is missing, unreadable, missing
+                the `cities` table, or contains invalid city rows.
+        """
         rows = self._fetch_rows(SELECT_CITIES_QUERY, table_name="cities")
 
         try:

@@ -63,6 +63,12 @@
     </main>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <script src="/static/vendor/maplibre-gl.js"></script>
+    <script>
+      window.POGODAPP_MAP_CONFIG = {
+        projection: {{ map_projection.name | tojson }},
+        imageCorners: {{ map_projection.image_corners | tojson }},
+      };
+    </script>
     <script src="/static/map.js"></script>
     <script>
       document.addEventListener("DOMContentLoaded", () => {

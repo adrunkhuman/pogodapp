@@ -7,11 +7,12 @@ const LAND_LAYER_ID = "world-land";
 const BORDER_LAYER_ID = "world-borders";
 const HEATMAP_SOURCE_ID = "score-heatmap";
 const HEATMAP_LAYER_ID = "score-heatmap";
+const MAP_CONFIG = window.POGODAPP_MAP_CONFIG ?? {
+  projection: "mercator",
+  imageCorners: [[-180, 85.051129], [180, 85.051129], [180, -85.051129], [-180, -85.051129]],
+};
 
-// World extent corners for the image source: [lon, lat] for TL, TR, BR, BL.
-// Must use ±85.051129 (Web Mercator max latitude) — lat ±90 maps to ±Infinity
-// in the Mercator y formula, causing WebGL to discard the image triangles.
-const WORLD_CORNERS = [[-180, 85.051129], [180, 85.051129], [180, -85.051129], [-180, -85.051129]];
+const WORLD_CORNERS = MAP_CONFIG.imageCorners;
 
 // 1×1 transparent PNG — used to clear the heatmap when a response has no results.
 const EMPTY_IMAGE =
@@ -118,6 +119,7 @@ function initializeMap() {
 
   map = new window.maplibregl.Map({
     container: mapRoot,
+    projection: { type: MAP_CONFIG.projection },
     style: {
       version: 8,
       sources: {},
