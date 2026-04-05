@@ -1,10 +1,13 @@
 "use strict";
 
 const WORLD_BACKDROP_URL = "/static/data/world.geojson";
+const WORLD_OCEAN_URL = "/static/data/world_ocean.geojson";
 const BACKDROP_SOURCE_ID = "world-backdrop";
+const OCEAN_MASK_SOURCE_ID = "world-ocean-mask";
 const OCEAN_LAYER_ID = "world-ocean";
 const LAND_LAYER_ID = "world-land";
 const BORDER_LAYER_ID = "world-borders";
+const OCEAN_MASK_LAYER_ID = "world-ocean-mask";
 const HEATMAP_SOURCE_ID = "score-heatmap";
 const HEATMAP_LAYER_ID = "score-heatmap";
 const MAP_CONFIG = window.POGODAPP_MAP_CONFIG ?? {
@@ -88,7 +91,7 @@ function applyHeatmap(heatmap) {
       coordinates: WORLD_CORNERS,
     });
 
-    // Insert before BORDER_LAYER_ID so borders render on top of the heatmap.
+    // Insert before the ocean mask so the mask clips bilinear bleed at coastlines.
     map.addLayer(
       {
         id: HEATMAP_LAYER_ID,
@@ -99,7 +102,7 @@ function applyHeatmap(heatmap) {
           "raster-fade-duration": 200,
         },
       },
-      BORDER_LAYER_ID,
+      OCEAN_MASK_LAYER_ID,
     );
   }
 }
@@ -155,12 +158,28 @@ function initializeMap() {
       data: WORLD_BACKDROP_URL,
     });
 
+    map.addSource(OCEAN_MASK_SOURCE_ID, {
+      type: "geojson",
+      data: WORLD_OCEAN_URL,
+    });
+
     map.addLayer({
       id: LAND_LAYER_ID,
       type: "fill",
       source: BACKDROP_SOURCE_ID,
       paint: {
         "fill-color": "#202020",
+        "fill-opacity": 1,
+      },
+    });
+
+    // Sits above the heatmap to clip bilinear texture bleed at coastlines.
+    map.addLayer({
+      id: OCEAN_MASK_LAYER_ID,
+      type: "fill",
+      source: OCEAN_MASK_SOURCE_ID,
+      paint: {
+        "fill-color": "#101010",
         "fill-opacity": 1,
       },
     });

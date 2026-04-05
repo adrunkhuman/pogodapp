@@ -133,13 +133,20 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
     grid = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
     np.maximum.at(grid, (projection.ys, projection.xs), scores[projection.score_indexes])
 
+    # Land mask built from the projection itself.
+    # Dilated by MaxFilter so gaps between cell centers at high Mercator latitudes
+    # (where adjacent cells land 2-3 pixels apart) don't create scan-line stripes.
+    land_mask_raw = np.zeros((HEIGHT, WIDTH), dtype=np.uint8)
+    land_mask_raw[projection.ys, projection.xs] = 255
+    land_mask = np.asarray(Image.fromarray(land_mask_raw, mode="L").filter(ImageFilter.MaxFilter(7))) > 0
+
     base_gray = (grid * 255).astype(np.uint8)
     pil_gray = Image.fromarray(base_gray, mode="L")
     pil_gray = pil_gray.filter(ImageFilter.GaussianBlur(radius=BLUR_RADIUS))
-    blurred_gray = np.asarray(pil_gray, dtype=np.uint8)
+    blurred_gray = np.asarray(pil_gray, dtype=np.uint8) * land_mask
     styled_gray = _stylize_heatmap_gray(_preserve_local_maxima(base_gray, blurred_gray))
     peak_floor = np.where(base_gray >= PEAK_BOOST_THRESHOLD * 255.0, styled_gray, 0)
-    styled_gray = np.maximum(_smooth_styled_heatmap_gray(styled_gray), peak_floor).astype(np.uint8)
+    styled_gray = (np.maximum(_smooth_styled_heatmap_gray(styled_gray), peak_floor) * land_mask).astype(np.uint8)
     rgba = _COLOR_RAMP_LOOKUP[styled_gray]
 
     buf = BytesIO()
