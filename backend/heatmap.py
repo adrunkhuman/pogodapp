@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from io import BytesIO
 from typing import TYPE_CHECKING
 
@@ -14,6 +15,11 @@ if TYPE_CHECKING:
 WIDTH = 1440
 HEIGHT = 720
 BLUR_RADIUS = 14  # px — ~3.5 degrees at this resolution
+
+# Web Mercator clamps at ±85.051129°; cells beyond this latitude are not displayable.
+_MAX_LAT = 85.051129
+# Mercator y at the maximum latitude — used to normalise y to [0, HEIGHT].
+_Y_MAX = math.log(math.tan(math.pi / 4 + _MAX_LAT * math.pi / 360))
 
 # Matches the client-side color ramp; stop format: (value, (R, G, B, A))
 _COLOR_STOPS: list[tuple[float, tuple[int, int, int, int]]] = [
@@ -47,18 +53,27 @@ def _apply_color_ramp(values: np.ndarray) -> np.ndarray:
 
 
 def render_heatmap_png(scores: list[ScorePoint]) -> bytes:
-    """Rasterize scored cells, apply Gaussian blur, and return a PNG as bytes.
+    """Rasterize scored cells in Mercator projection, blur, and return a PNG as bytes.
 
-    The image covers the full world extent [-180,-90] to [180,90] in Mercator so
-    MapLibre can place it as an image source with the standard world corner coords.
+    The image covers the Web Mercator world extent (±85.051129°) so it aligns with
+    MapLibre's Mercator projection when used as an image source with WORLD_CORNERS.
     """
     grid = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
 
-    for p in scores:
-        x = int((p["lon"] + 180.0) / 360.0 * WIDTH)
-        y = int((90.0 - p["lat"]) / 180.0 * HEIGHT)
-        if 0 <= x < WIDTH and 0 <= y < HEIGHT:
-            grid[y, x] = max(grid[y, x], p["score"])
+    lats = np.array([p["lat"] for p in scores], dtype=np.float64)
+    lons = np.array([p["lon"] for p in scores], dtype=np.float64)
+    vals = np.array([p["score"] for p in scores], dtype=np.float32)
+
+    # Drop cells outside the Mercator-displayable latitude range.
+    valid = np.abs(lats) < _MAX_LAT
+    lats, lons, vals = lats[valid], lons[valid], vals[valid]
+
+    xs = ((lons + 180.0) / 360.0 * WIDTH).astype(np.int32)
+    y_merc = np.log(np.tan(np.pi / 4 + np.radians(lats) / 2))
+    ys = ((_Y_MAX - y_merc) / (2 * _Y_MAX) * HEIGHT).astype(np.int32)
+
+    in_bounds = (xs >= 0) & (xs < WIDTH) & (ys >= 0) & (ys < HEIGHT)
+    np.maximum.at(grid, (ys[in_bounds], xs[in_bounds]), vals[in_bounds])
 
     pil_gray = Image.fromarray((grid * 255).astype(np.uint8), mode="L")
     pil_gray = pil_gray.filter(ImageFilter.GaussianBlur(radius=BLUR_RADIUS))
