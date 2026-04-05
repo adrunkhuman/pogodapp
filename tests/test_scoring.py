@@ -160,7 +160,7 @@ def test_vectorized_scoring_matches_scalar_scoring_for_stub_cells() -> None:
         longitudes=np.array([cell.lon for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
         temperature_c=np.array([cell.temperature_c for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
         precipitation_mm=np.array([cell.precipitation_mm for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
-        cloud_cover_pct=np.array([cell.cloud_cover_pct for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
+        cloud_cover_pct=np.array([cell.cloud_cover_pct for cell in STUB_CLIMATE_CELLS], dtype=np.uint8),
     )
 
     scalar_scores = np.array([annual_score(cell, preferences) for cell in STUB_CLIMATE_CELLS], dtype=np.float32)

@@ -58,7 +58,7 @@ class ClimateMatrix:
     longitudes: NDArray[np.float32]
     temperature_c: NDArray[np.float32]
     precipitation_mm: NDArray[np.float32]
-    cloud_cover_pct: NDArray[np.float32]
+    cloud_cover_pct: NDArray[np.uint8]
 
     def __post_init__(self) -> None:
         """Reject malformed matrix shapes before they reach the scorer."""

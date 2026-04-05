@@ -32,6 +32,15 @@ def build_index_context() -> dict[str, object]:
     return {"preferences": DEFAULT_PREFERENCES, "map_projection": MAP_PROJECTION}
 
 
+def preload_repository(repository: ClimateRepository) -> None:
+    """Warm the optimized repository path during app startup."""
+    if not hasattr(repository, "get_climate_matrix") or not hasattr(repository, "get_indexed_cities"):
+        return
+
+    repository.get_climate_matrix()
+    repository.get_indexed_cities()
+
+
 def create_app(
     climate_repository: ClimateRepository | None = None,
 ) -> FastAPI:
@@ -45,6 +54,7 @@ def create_app(
     configure_backend_logging()
     app = FastAPI(title="Pogodapp")
     repository = climate_repository or build_default_climate_repository(CLIMATE_DATABASE_PATH)
+    preload_repository(repository)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", response_class=HTMLResponse)

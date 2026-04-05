@@ -175,6 +175,32 @@ def test_app_can_use_an_injected_climate_repository() -> None:
     assert response.json()["scores"] == []
 
 
+def test_create_app_preloads_optimized_repository() -> None:
+    class PreloadedRepository:
+        def __init__(self) -> None:
+            self.preload_calls: list[str] = []
+
+        def get_climate_matrix(self) -> object:
+            self.preload_calls.append("matrix")
+            return object()
+
+        def get_indexed_cities(self) -> tuple[object, ...]:
+            self.preload_calls.append("cities")
+            return ()
+
+        def list_cells(self) -> tuple[ClimateCell, ...]:
+            return ()
+
+        def list_cities(self) -> tuple[CityCandidate, ...]:
+            return ()
+
+    repository = PreloadedRepository()
+
+    create_app(climate_repository=repository)
+
+    assert repository.preload_calls == ["matrix", "cities"]
+
+
 def test_app_can_use_an_injected_climate_repository_with_city_catalog() -> None:
     class SingleCellRepository:
         def list_cells(self) -> tuple[ClimateCell, ...]:

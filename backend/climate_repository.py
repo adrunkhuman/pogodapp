@@ -70,7 +70,7 @@ class StubClimateRepository:
         longitudes = np.array([cell.lon for cell in STUB_CLIMATE_CELLS], dtype=np.float32)
         temperature_c = np.array([cell.temperature_c for cell in STUB_CLIMATE_CELLS], dtype=np.float32)
         precipitation_mm = np.array([cell.precipitation_mm for cell in STUB_CLIMATE_CELLS], dtype=np.float32)
-        cloud_cover_pct = np.array([cell.cloud_cover_pct for cell in STUB_CLIMATE_CELLS], dtype=np.float32)
+        cloud_cover_pct = np.array([cell.cloud_cover_pct for cell in STUB_CLIMATE_CELLS], dtype=np.uint8)
         return ClimateMatrix(
             latitudes=latitudes,
             longitudes=longitudes,
@@ -152,7 +152,7 @@ class DuckDbClimateRepository:
         longitudes = np.empty(row_count, dtype=np.float32)
         temperature_c = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.float32)
         precipitation_mm = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.float32)
-        cloud_cover_pct = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.float32)
+        cloud_cover_pct = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.uint8)
 
         try:
             for index, row in enumerate(rows):
@@ -166,7 +166,7 @@ class DuckDbClimateRepository:
                     float(cast("int | float", value)) for value in monthly_values[MONTHS_PER_YEAR : MONTHS_PER_YEAR * 2]
                 )
                 cloud_cover_pct[index] = tuple(
-                    float(cast("int | float", value))
+                    int(cast("int | float", value))
                     for value in monthly_values[MONTHS_PER_YEAR * 2 : MONTHS_PER_YEAR * 3]
                 )
         except (TypeError, ValueError) as error:
@@ -199,6 +199,8 @@ class DuckDbClimateRepository:
             indexed_cities.append(IndexedCityCandidate(city=city, climate_index=int(sorted_climate_indexes[position])))
 
         self._indexed_cities = tuple(indexed_cities)
+        self._sorted_climate_keys = None
+        self._sorted_climate_indexes = None
         return self._indexed_cities
 
     def _fetch_rows(self, query: str, *, table_name: str = "climate_cells") -> list[tuple[object, ...]]:
