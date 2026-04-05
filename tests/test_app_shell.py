@@ -105,6 +105,7 @@ def test_map_script_initializes_maplibre_score_layer() -> None:
     assert 'setMapStatus("Map backdrop ready.");' in response.text
     assert "renderScoreList(collection);" in response.text
     assert 'setMapStatus("Map library failed to load.");' in response.text
+    assert ".slice(0, 20)" in response.text
 
 
 def test_map_contract_does_not_depend_on_remote_basemap_assets() -> None:
