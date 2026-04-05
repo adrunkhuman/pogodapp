@@ -70,7 +70,7 @@ def test_validate_climate_database_accepts_expected_schema_and_row_count(tmp_pat
         connection.execute(f"CREATE TABLE climate_cells ({columns}, {cloud_columns})")
         connection.executemany(INSERT_CLIMATE_CELL_QUERY, [tuple(0 for _ in EXPECTED_CLIMATE_COLUMNS)] * 2)
         create_cities_table(connection)
-        connection.executemany(INSERT_CITY_QUERY, [("Bogota", "CO", 4.711, -74.0721, 4.75, -74.0833)])
+        connection.executemany(INSERT_CITY_QUERY, [("Bogota", "CO", 4.711, -74.0721, 4.75, -74.0833, 0)])
 
     summary = validate_climate_database_with_row_range(database_path, (1, 10))
 
@@ -88,7 +88,7 @@ def test_validate_climate_database_rejects_unexpected_row_count(tmp_path: Path) 
         connection.execute(f"CREATE TABLE climate_cells ({columns}, {cloud_columns})")
         connection.executemany(INSERT_CLIMATE_CELL_QUERY, [tuple(0 for _ in EXPECTED_CLIMATE_COLUMNS)])
         create_cities_table(connection)
-        connection.executemany(INSERT_CITY_QUERY, [("Bogota", "CO", 4.711, -74.0721, 4.75, -74.0833)])
+        connection.executemany(INSERT_CITY_QUERY, [("Bogota", "CO", 4.711, -74.0721, 4.75, -74.0833, 0)])
 
     with pytest.raises(ValueError, match="outside expected rough range"):
         validate_climate_database(database_path)
@@ -117,7 +117,7 @@ def test_build_city_rows_filters_out_cities_that_snap_to_ocean_cells(tmp_path: P
 
     rows = build_city_rows(city_catalog_path, [(4.7083, -74.0417, *([0.0] * 36))], DEFAULT_WORLDCLIM_RESOLUTION)
 
-    assert rows == [("Bogota", "CO", 4.711, -74.0721, 4.7083, -74.0417)]
+    assert rows == [("Bogota", "CO", 4.711, -74.0721, 4.7083, -74.0417, 0)]
 
 
 def test_ensure_geonames_cities_uses_cached_extract(tmp_path: Path) -> None:
@@ -144,7 +144,7 @@ def test_validate_climate_database_uses_resolution_specific_row_range(tmp_path: 
         connection.execute(f"CREATE TABLE climate_cells ({columns}, {cloud_columns})")
         connection.executemany(INSERT_CLIMATE_CELL_QUERY, [tuple(0 for _ in EXPECTED_CLIMATE_COLUMNS)] * 2)
         create_cities_table(connection)
-        connection.executemany(INSERT_CITY_QUERY, [("Bogota", "CO", 4.711, -74.0721, 4.75, -74.0833)])
+        connection.executemany(INSERT_CITY_QUERY, [("Bogota", "CO", 4.711, -74.0721, 4.75, -74.0833, 0)])
 
     with pytest.raises(ValueError, match="outside expected rough range"):
         validate_climate_database(database_path, resolution=WORLDCLIM_RESOLUTIONS["5m"])

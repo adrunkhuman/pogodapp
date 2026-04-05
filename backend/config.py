@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 
-CITY_DIVERSITY_DECAY_KM = 200.0
+CITY_DIVERSITY_DECAY_KM = 500.0
+# Only cities above this population appear in the ranked sidebar list.
+# Population == 0 means the DB predates this field; those cities pass the filter.
+RANKING_MIN_POPULATION = 30_000
 WEB_MERCATOR_MAX_LATITUDE = 85.051129
 
 PREFERENCE_FIELD_NAMES: tuple[str, ...] = (

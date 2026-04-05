@@ -26,8 +26,14 @@ const WORLD_CORNERS = MAP_CONFIG.imageCorners;
 const EMPTY_IMAGE =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
+// Score-band coloring used in the probe tooltip and marker strokes.
+// Matches the heatmap palette tiers: dim < 50%, warm 50-75%, bright ≥ 75%.
+const SCORE_LOW_COLOR  = "#555555";
+const SCORE_MID_COLOR  = "#f8b65a";
+const SCORE_HIGH_COLOR = "#4a9eff";
+
 // Color stops matching the server-side heatmap palette (heatmap.py _COLOR_STOPS).
-// Used for scored city circle colors so markers read consistently with the heatmap.
+// Used for scored city circle stroke colors so markers read consistently with the heatmap.
 const SCORE_COLOR_EXPR = [
   "interpolate", ["linear"], ["get", "score"],
   0.00, "#355c7d",
@@ -45,7 +51,7 @@ const _NORTH_AMERICA  = new Set("AG BB BS BZ CA CR CU DM DO GD GT HN HT JM KN LC
 const _SOUTH_AMERICA  = new Set("AR BO BR CL CO EC GF GY PE PY SR UY VE".split(" "));
 const _OCEANIA = new Set("AU FJ FM KI MH NR NZ PG PW SB TO TV VU WS".split(" "));
 
-const CONTINENT_ORDER = ["Europe", "Asia", "Africa", "North America", "South America", "Oceania", "Other"];
+const CONTINENT_ORDER = ["Europe", "Asia", "Africa", "North America", "South America", "Oceania"];
 
 function continentOf(code) {
   if (_EUROPE.has(code))        return "Europe";
@@ -68,12 +74,37 @@ let pendingResponse = null;
 // Probe debounce + abort controller.
 let probeTimer = null;
 let probeController = null;
+// True while cursor is inside a city marker or landmark layer — suppresses the
+// general mousemove probe so the layer-specific handler stays in control.
+let hoveringLayer = false;
 
 const tooltip = document.getElementById("map-probe-tooltip");
 
 function setMapStatus(message) {
   const status = document.getElementById("map-status");
   if (status) status.textContent = message;
+}
+
+// ─── Utilities ──────────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Regional indicator letters: A=🇦, Z=🇿 — pair two letters to get a flag emoji.
+function countryFlag(code) {
+  return [...code.toUpperCase()].map(c => String.fromCodePoint(c.charCodeAt(0) + 127397)).join("");
+}
+
+function scoreColor(v) {
+  if (v >= 0.75) return SCORE_HIGH_COLOR;
+  if (v >= 0.5)  return SCORE_MID_COLOR;
+  return SCORE_LOW_COLOR;
+}
+
+function scoreSpan(v) {
+  const pct = `${String(Math.round(v * 100)).padStart(3)}%`;
+  return `<span style="color:${scoreColor(v)}">${pct}</span>`;
 }
 
 // ─── Sidebar ────────────────────────────────────────────────────────────────
@@ -184,35 +215,39 @@ function applyMarkers(markers) {
 
   map.addSource(MARKER_SOURCE_ID, { type: "geojson", data: geojson });
 
+  // Score-colored fill + white stroke — color conveys rank, white outline pops on any heatmap.
   map.addLayer({
     id: MARKER_LAYER_ID,
     type: "circle",
     source: MARKER_SOURCE_ID,
     paint: {
-      "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 3, 6, 5, 10, 7],
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 5, 6, 7, 10, 10],
       "circle-color": SCORE_COLOR_EXPR,
-      "circle-opacity": ["interpolate", ["linear"], ["get", "score"], 0, 0.25, 0.5, 0.7, 1, 1],
-      "circle-stroke-width": 1,
-      "circle-stroke-color": "#111111",
-      "circle-stroke-opacity": 0.6,
+      "circle-opacity": 1.0,
+      "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 1, 1.5, 6, 2, 10, 2.5],
+      "circle-stroke-color": "#ffffff",
+      "circle-stroke-opacity": 0.9,
     },
   });
 
-  // Popup on hover.
-  const popup = new window.maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 10 });
-
+  // Unified probe tooltip — no separate MapLibre popup.
   map.on("mouseenter", MARKER_LAYER_ID, (e) => {
+    hoveringLayer = true;
     map.getCanvas().style.cursor = "pointer";
+    clearTimeout(probeTimer);
+    if (probeController) probeController.abort();
     const props = e.features[0].properties;
-    popup
-      .setLngLat(e.lngLat)
-      .setHTML(`<span class="city-popup">${props.flag} ${props.name} &nbsp; ${Math.round(props.score * 100)}%</span>`)
-      .addTo(map);
+    fetchProbe(
+      e.lngLat.lat, e.lngLat.lng,
+      e.originalEvent.clientX, e.originalEvent.clientY,
+      `${props.flag} ${props.name}`,
+    );
   });
 
   map.on("mouseleave", MARKER_LAYER_ID, () => {
+    hoveringLayer = false;
     map.getCanvas().style.cursor = "";
-    popup.remove();
+    hideTooltip();
   });
 }
 
@@ -232,7 +267,7 @@ function loadLandmarkCities() {
         features: cities.map(c => ({
           type: "Feature",
           geometry: { type: "Point", coordinates: [c.lon, c.lat] },
-          properties: { name: c.name },
+          properties: { name: c.name, country_code: c.country_code ?? null },
         })),
       };
 
@@ -245,9 +280,9 @@ function loadLandmarkCities() {
           type: "circle",
           source: LANDMARK_SOURCE_ID,
           paint: {
-            "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 1.5, 6, 3, 10, 4],
-            "circle-color": "#555555",
-            "circle-opacity": 0.6,
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 2, 6, 3.5, 10, 5],
+            "circle-color": "#909090",
+            "circle-opacity": 0.75,
             "circle-stroke-width": 0,
           },
         },
@@ -255,18 +290,21 @@ function loadLandmarkCities() {
         BORDER_LAYER_ID,
       );
 
-      const landmarkPopup = new window.maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 8 });
-
       map.on("mouseenter", LANDMARK_LAYER_ID, (e) => {
+        hoveringLayer = true;
         map.getCanvas().style.cursor = "default";
-        landmarkPopup
-          .setLngLat(e.lngLat)
-          .setHTML(`<span class="city-popup">${e.features[0].properties.name}</span>`)
-          .addTo(map);
+        clearTimeout(probeTimer);
+        if (probeController) probeController.abort();
+        const lp = e.features[0].properties;
+        const landmarkHeader = lp.country_code
+          ? `${countryFlag(lp.country_code)} ${lp.name}`
+          : lp.name;
+        fetchProbe(e.lngLat.lat, e.lngLat.lng, e.originalEvent.clientX, e.originalEvent.clientY, landmarkHeader);
       });
 
       map.on("mouseleave", LANDMARK_LAYER_ID, () => {
-        landmarkPopup.remove();
+        hoveringLayer = false;
+        hideTooltip();
       });
     })
     .catch(() => {
@@ -283,21 +321,25 @@ function getCurrentPreferences() {
   return Object.fromEntries(data.entries());
 }
 
-function showTooltip(data, x, y) {
+function showTooltip(data, x, y, cityHeader = null) {
   if (!tooltip || !data.found) {
     if (tooltip) tooltip.hidden = true;
     return;
   }
 
-  const pct = v => `${Math.round(v * 100)}%`.padStart(4);
+  const overall = (data.temp_score + data.rain_score + data.cloud_score) / 3;
   const temp = `${data.avg_temp_c > 0 ? "+" : ""}${data.avg_temp_c.toFixed(1)}°C`.padStart(8);
   const rain = `${Math.round(data.avg_precip_mm)}mm/mo`.padStart(8);
   const sun  = `${Math.round(100 - data.avg_cloud_pct)}% sun`.padStart(8);
 
-  tooltip.textContent =
-    `temp ${temp}  ${pct(data.temp_score)}\n` +
-    `rain ${rain}  ${pct(data.rain_score)}\n` +
-    `sun  ${sun}  ${pct(data.cloud_score)}`;
+  // Score always left so it doesn't jump when entering/leaving a city marker.
+  const header = `<div class="probe-tooltip__header">${scoreSpan(overall)}${cityHeader ? `  ${escapeHtml(cityHeader)}` : ""}</div>`;
+
+  tooltip.innerHTML =
+    header +
+    `temp ${temp}  ${scoreSpan(data.temp_score)}\n` +
+    `rain ${rain}  ${scoreSpan(data.rain_score)}\n` +
+    `sun  ${sun}  ${scoreSpan(data.cloud_score)}`;
 
   tooltip.style.left = `${x}px`;
   tooltip.style.top  = `${y}px`;
@@ -308,7 +350,7 @@ function hideTooltip() {
   if (tooltip) tooltip.hidden = true;
 }
 
-function fetchProbe(lat, lon, clientX, clientY) {
+function fetchProbe(lat, lon, clientX, clientY, cityHeader = null) {
   const prefs = getCurrentPreferences();
   if (!prefs) return;
 
@@ -319,7 +361,7 @@ function fetchProbe(lat, lon, clientX, clientY) {
 
   fetch(`/probe?${params}`, { signal: probeController.signal })
     .then(r => r.json())
-    .then(data => showTooltip(data, clientX, clientY))
+    .then(data => showTooltip(data, clientX, clientY, cityHeader))
     .catch(() => {});
 }
 
@@ -363,8 +405,9 @@ function initializeMap() {
     if (event.sourceId === BACKDROP_SOURCE_ID) setMapStatus("Map backdrop failed to load.");
   });
 
-  // Probe on hover — debounced to avoid hammering the server.
+  // Probe on hover — debounced; skipped when a layer-specific handler takes over.
   map.on("mousemove", (e) => {
+    if (hoveringLayer) return;
     clearTimeout(probeTimer);
     probeTimer = setTimeout(() => {
       fetchProbe(e.lngLat.lat, e.lngLat.lng, e.originalEvent.clientX, e.originalEvent.clientY);

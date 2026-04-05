@@ -94,7 +94,8 @@ def test_duckdb_climate_repository_loads_city_rows(tmp_path: Path) -> None:
                 4.711 AS lat,
                 -74.0721 AS lon,
                 4.75 AS cell_lat,
-                -74.0833 AS cell_lon
+                -74.0833 AS cell_lon,
+                100000 AS population
             """
         )
 
@@ -103,7 +104,7 @@ def test_duckdb_climate_repository_loads_city_rows(tmp_path: Path) -> None:
     cities = repository.list_cities()
 
     assert cities == (
-        CityCandidate(name="Bogota", country_code="CO", lat=4.711, lon=-74.0721, cell_lat=4.75, cell_lon=-74.0833),
+        CityCandidate(name="Bogota", country_code="CO", lat=4.711, lon=-74.0721, cell_lat=4.75, cell_lon=-74.0833, population=100000),
     )
 
 
@@ -144,7 +145,8 @@ def test_duckdb_climate_repository_raises_clear_error_for_bad_city_row_values(tm
                 NULL AS lat,
                 -74.0721 AS lon,
                 4.75 AS cell_lat,
-                -74.0833 AS cell_lon
+                -74.0833 AS cell_lon,
+                0 AS population
             """
         )
 
@@ -436,7 +438,8 @@ def test_app_scores_from_duckdb(tmp_path: Path) -> None:
                 1.0 AS lat,
                 2.0 AS lon,
                 1.0 AS cell_lat,
-                2.0 AS cell_lon
+                2.0 AS cell_lon,
+                0 AS population
             """
         )
 
@@ -482,9 +485,9 @@ def test_duckdb_city_cache_aligns_indexes_with_shuffled_climate_rows(tmp_path: P
             CREATE TABLE cities AS
             SELECT * FROM (
                 VALUES
-                    ('First Match', 'CO', 1.0, 2.0, 1.0, 2.0),
-                    ('Missing Match', 'CO', 7.0, 8.0, 7.0, 8.0)
-            ) AS t(name, country_code, lat, lon, cell_lat, cell_lon)
+                    ('First Match', 'CO', 1.0, 2.0, 1.0, 2.0, 0),
+                    ('Missing Match', 'CO', 7.0, 8.0, 7.0, 8.0, 0)
+            ) AS t(name, country_code, lat, lon, cell_lat, cell_lon, population)
             """
         )
 
@@ -526,7 +529,8 @@ def test_app_uses_duckdb_automatically_when_default_database_exists(
                 1.0 AS lat,
                 2.0 AS lon,
                 1.0 AS cell_lat,
-                2.0 AS cell_lon
+                2.0 AS cell_lon,
+                0 AS population
             """
         )
 
@@ -599,7 +603,7 @@ def test_duckdb_climate_repository_loads_rows_built_in_pipeline_shape(tmp_path: 
         create_cities_table(connection)
         copy_rows_into_cities_table(
             connection,
-            [("North Pole Test City", "NO", 89.9, -179.9, 89.9583, -179.9583)],
+            [("North Pole Test City", "NO", 89.9, -179.9, 89.9583, -179.9583, 0)],
         )
 
     cells = DuckDbClimateRepository(database_path).list_cells()
@@ -652,7 +656,8 @@ def test_create_app_reads_climate_database_path_from_env(monkeypatch: pytest.Mon
                 1.0 AS lat,
                 2.0 AS lon,
                 1.0 AS cell_lat,
-                2.0 AS cell_lon
+                2.0 AS cell_lon,
+                0 AS population
             """
         )
 

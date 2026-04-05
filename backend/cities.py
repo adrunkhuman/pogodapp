@@ -61,6 +61,7 @@ class CityCandidate:
     lon: float
     cell_lat: float
     cell_lon: float
+    population: int = 0
 
 
 class CityScorePoint(TypedDict):

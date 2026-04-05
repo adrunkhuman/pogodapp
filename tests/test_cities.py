@@ -60,7 +60,7 @@ def test_rank_city_scores_prefers_the_highest_scoring_nearby_city_cells() -> Non
         {"lat": -0.25, "lon": -78.4167, "score": 0.91},
     ]
 
-    ranked = rank_city_scores(cities, scores, limit=2)
+    ranked = rank_city_scores(cities, scores, limit=2, diversity_decay_km=200.0)
 
     assert [city["name"] for city in ranked] == ["Bogota", "Quito"]
     assert ranked[0]["score"] == 1.0
@@ -79,7 +79,7 @@ def test_rank_city_scores_penalizes_nearby_duplicates_after_strong_regional_cent
         {"lat": -12.0833, "lon": -77.0833, "score": 0.88},
     ]
 
-    ranked = rank_city_scores(cities, scores, limit=2)
+    ranked = rank_city_scores(cities, scores, limit=2, diversity_decay_km=200.0)
 
     assert [city["name"] for city in ranked] == ["Bogota", "Lima"]
     assert ranked[0]["score"] == 1.0

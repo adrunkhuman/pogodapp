@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
 
-from backend.cities import CityScorePoint, continent_of, rank_city_scores, rank_indexed_city_scores
+from backend.cities import CityRankingCache, CityScorePoint, continent_of, rank_city_scores, rank_indexed_city_scores
+from backend.config import RANKING_MIN_POPULATION
 from backend.heatmap import render_heatmap_png, render_heatmap_png_from_arrays, render_heatmap_png_from_projection
 from backend.scoring import (
     CellScorePoint,
@@ -21,13 +22,14 @@ from backend.scoring import (
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from backend.cities import CityRankingCache
     from backend.climate_repository import ClimateRepository
 
 TOP_CITY_RESULTS = 30
+# Diversity-suppressed pool built before trimming to TOP_CITY_RESULTS.
+# Larger pool means continent fill draws from already-spread candidates, not raw clusters.
+RANKING_POOL_SIZE = TOP_CITY_RESULTS * 5
 # Larger unfiltered pool for map markers: top N globally + per-continent fill.
-MARKER_GLOBAL_LIMIT = 80
-MARKER_PER_CONTINENT_MIN = 3
+MARKER_GLOBAL_LIMIT = 20
 logger = logging.getLogger(__name__)
 
 
@@ -56,52 +58,78 @@ def _elapsed_ms(start_time: float) -> float:
     return round((perf_counter() - start_time) * 1000, 2)
 
 
+def _filter_ranking_catalog(city_catalog: CityRankingCache) -> CityRankingCache:
+    """Return a catalog limited to cities with meaningful population for the sidebar list.
+
+    Population 0 means the DB predates the population column — let those cities through
+    so old databases still produce a ranked list.
+    """
+    if RANKING_MIN_POPULATION == 0 or not city_catalog.cities:
+        return city_catalog
+
+    mask = [
+        city.population >= RANKING_MIN_POPULATION or city.population == 0
+        for city in city_catalog.cities
+    ]
+    if all(mask):
+        return city_catalog
+
+    filtered_cities = tuple(city for city, keep in zip(city_catalog.cities, mask, strict=True) if keep)
+    filtered_indexes = city_catalog.climate_indexes[np.array(mask)]
+    return CityRankingCache.from_cities(filtered_cities, filtered_indexes)
+
+
+def _ensure_continent_coverage(
+    ranked: list[CityScorePoint],
+    fill_pool: list[CityScorePoint],
+    min_per_continent: int = 3,
+) -> list[CityScorePoint]:
+    """Guarantee at least min_per_continent entries per continent in the sidebar list.
+
+    fill_pool must already be diversity-suppressed and score-ordered so that
+    fill cities are geographically spread — not raw-score clusters.
+    """
+    continent_counts: dict[str, int] = {}
+    present: set[str] = set()
+    for entry in ranked:
+        present.add(entry["name"])
+        cont = continent_of(entry["country_code"])
+        if cont != "Other":
+            continent_counts[cont] = continent_counts.get(cont, 0) + 1
+
+    all_continents = {continent_of(c["country_code"]) for c in fill_pool} - {"Other"}
+    needs_fill = {c for c in all_continents if continent_counts.get(c, 0) < min_per_continent}
+
+    if not needs_fill:
+        return ranked
+
+    for city in fill_pool:
+        cont = continent_of(city["country_code"])
+        if cont not in needs_fill or city["name"] in present:
+            continue
+        ranked.append(city)
+        present.add(city["name"])
+        continent_counts[cont] = continent_counts.get(cont, 0) + 1
+        if continent_counts[cont] >= min_per_continent:
+            needs_fill.discard(cont)
+        if not needs_fill:
+            break
+
+    return ranked
+
+
 def _select_markers(
     city_catalog: CityRankingCache,
     normalized_scores: NDArray[np.float32],
 ) -> list[CityScorePoint]:
-    """Return map marker cities: top MARKER_GLOBAL_LIMIT globally plus per-continent fill.
+    """Return map marker cities selected with the same diversity suppression as the sidebar.
 
-    Uses raw score order (no diversity suppression) so hot regions show cluster density
-    on the map. Continent fill ensures every inhabited region has at least
-    MARKER_PER_CONTINENT_MIN dots even when its climate scores are low.
+    Raw-score ordering produced tight geographic clusters; the greedy distance-penalty
+    algorithm spreads markers across distinct hot zones instead.
     """
     if not city_catalog.cities:
         return []
-
-    city_scores = normalized_scores[city_catalog.climate_indexes]
-    # Descending sort order by score.
-    order = np.argsort(city_scores)[::-1]
-
-    markers: list[CityScorePoint] = []
-    continent_counts: dict[str, int] = {}
-    seen: set[int] = set()
-
-    for idx in order:
-        city = city_catalog.cities[idx]
-        continent = continent_of(city.country_code)
-        in_global_top = len(markers) < MARKER_GLOBAL_LIMIT
-
-        if not in_global_top and continent_counts.get(continent, 0) >= MARKER_PER_CONTINENT_MIN:
-            continue
-
-        markers.append(
-            {
-                "name": city.name,
-                "country_code": city.country_code,
-                "flag": city_catalog.flags[idx],
-                "score": round(float(city_scores[idx]), 4),
-                "lat": city.lat,
-                "lon": city.lon,
-            }
-        )
-        continent_counts[continent] = continent_counts.get(continent, 0) + 1
-        seen.add(int(idx))
-
-        if len(markers) >= MARKER_GLOBAL_LIMIT + len(continent_counts) * MARKER_PER_CONTINENT_MIN:
-            break
-
-    return markers
+    return rank_indexed_city_scores(city_catalog, normalized_scores, limit=MARKER_GLOBAL_LIMIT)
 
 
 def _log_score_timings(
@@ -190,7 +218,12 @@ def _build_score_response_from_matrix(
     timings.normalize_ms = _elapsed_ms(normalize_started)
 
     ranking_started = perf_counter()
-    top_cities = rank_indexed_city_scores(indexed_cities, normalized_scores, limit=TOP_CITY_RESULTS)
+    ranking_catalog = _filter_ranking_catalog(indexed_cities)
+    # Build a large diversity-suppressed pool so the continent fill draws from
+    # already-spread candidates rather than raw score clusters.
+    diverse_pool = rank_indexed_city_scores(ranking_catalog, normalized_scores, limit=RANKING_POOL_SIZE)
+    top_cities = list(diverse_pool[:TOP_CITY_RESULTS])
+    top_cities = _ensure_continent_coverage(top_cities, diverse_pool[TOP_CITY_RESULTS:])
     markers = _select_markers(indexed_cities, normalized_scores)
     timings.ranking_ms = _elapsed_ms(ranking_started)
 

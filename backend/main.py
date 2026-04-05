@@ -69,8 +69,8 @@ def preload_repository(repository: ClimateRepository) -> None:
         repository.get_indexed_cities()
         if hasattr(repository, "get_heatmap_projection"):
             repository.get_heatmap_projection()
-    except ClimateDataError:
-        logger.warning("startup_preload outcome=skipped")
+    except ClimateDataError as error:
+        logger.warning("startup_preload outcome=skipped detail=%s", error)
 
 
 def create_app(
@@ -102,6 +102,7 @@ def create_app(
         try:
             return build_score_response(repository, preferences)
         except ClimateDataError as error:
+            logger.error("score_request outcome=error detail=%s", error)
             raise HTTPException(status_code=503, detail=str(error)) from error
 
     @app.get("/probe")

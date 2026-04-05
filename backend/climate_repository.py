@@ -35,7 +35,8 @@ SELECT
     lat,
     lon,
     cell_lat,
-    cell_lon
+    cell_lon,
+    population
 FROM cities
 """
 
@@ -269,7 +270,8 @@ class DuckDbClimateRepository:
 
     def _row_to_city(self, row: tuple[object, ...]) -> CityCandidate:
         """Convert one city row into the in-memory ranking shape."""
-        name, country_code, latitude, longitude, cell_latitude, cell_longitude = row
+        name, country_code, latitude, longitude, cell_latitude, cell_longitude = row[:6]
+        population = int(cast("int | float", row[6])) if len(row) > 6 else 0
         return CityCandidate(
             name=str(cast("str", name)),
             country_code=str(cast("str", country_code)),
@@ -277,6 +279,7 @@ class DuckDbClimateRepository:
             lon=float(cast("int | float", longitude)),
             cell_lat=float(cast("int | float", cell_latitude)),
             cell_lon=float(cast("int | float", cell_longitude)),
+            population=population,
         )
 
     def _get_sorted_climate_keys(
