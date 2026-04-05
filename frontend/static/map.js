@@ -774,9 +774,9 @@ function initializeMap() {
     setMapStatus("Map backdrop ready.");
 
     if (pendingResponse) {
-      const { scores, markers, heatmap } = pendingResponse;
+      const { scores, heatmap } = pendingResponse;
       applyHeatmap(heatmap);
-      applyMarkers(markers ?? []);
+      applyMarkers(visibleScoresForList(scores ?? []));
       setMapStatus(heatmap !== EMPTY_IMAGE ? `${scores.length} top matches shown.` : "No matches found.");
       pendingResponse = null;
     }

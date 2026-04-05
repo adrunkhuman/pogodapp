@@ -202,8 +202,7 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
     payload = response.json()
 
     assert isinstance(payload, dict)
-    assert "scores" in payload
-    assert "heatmap" in payload
+    assert set(payload) == {"scores", "heatmap"}
 
     scores = payload["scores"]
     assert isinstance(scores, list)

@@ -58,7 +58,6 @@ class ScoreResponse(TypedDict):
     """Backend response contract for one scored user preference request."""
 
     scores: list[CityScorePoint]
-    markers: list[CityScorePoint]
     heatmap: str
 
 
@@ -276,7 +275,7 @@ def _build_score_response_from_matrix(
             ranked_city_count=0,
             outcome="empty",
         )
-        return {"scores": [], "markers": [], "heatmap": ""}
+        return {"scores": [], "heatmap": ""}
 
     max_score = float(raw_scores.max())
     if max_score == 0.0:
@@ -288,7 +287,7 @@ def _build_score_response_from_matrix(
             ranked_city_count=0,
             outcome="all_zero",
         )
-        return {"scores": [], "markers": [], "heatmap": ""}
+        return {"scores": [], "heatmap": ""}
 
     normalize_started = perf_counter()
     normalized_scores = normalize_score_array(raw_scores)
@@ -303,7 +302,6 @@ def _build_score_response_from_matrix(
     initial_cities = _ensure_continent_coverage(initial_cities, diverse_pool[INITIAL_CITY_RESULTS:])
     top_cities = _build_sidebar_scores(initial_cities + diverse_pool[INITIAL_CITY_RESULTS:])
     top_cities = _rescore_city_points_from_cache(ranking_catalog, top_cities, raw_scores)
-    markers = list(top_cities)
     timings.ranking_ms = _elapsed_ms(ranking_started)
 
     heatmap_started = perf_counter()
@@ -329,7 +327,6 @@ def _build_score_response_from_matrix(
 
     return {
         "scores": top_cities,
-        "markers": markers,
         "heatmap": "data:image/png;base64," + base64.b64encode(heatmap_png).decode(),
     }
 
@@ -362,7 +359,7 @@ def _build_score_response_from_cells(
             ranked_city_count=0,
             outcome="empty",
         )
-        return {"scores": [], "markers": [], "heatmap": ""}
+        return {"scores": [], "heatmap": ""}
 
     max_score = max(point["score"] for point in raw_scores)
     if max_score == 0:
@@ -375,7 +372,7 @@ def _build_score_response_from_cells(
             ranked_city_count=0,
             outcome="all_zero",
         )
-        return {"scores": [], "markers": [], "heatmap": ""}
+        return {"scores": [], "heatmap": ""}
 
     # Re-normalize each response so the best match in the current result set lands
     # at 1.0, which keeps the heatmap visually informative across very different queries.
@@ -389,8 +386,6 @@ def _build_score_response_from_cells(
     ranking_started = perf_counter()
     top_cities = _build_sidebar_scores(rank_city_scores(cities, normalized_scores, limit=RANKING_POOL_SIZE))
     top_cities = _rescore_city_points_from_cells(cities, top_cities, raw_scores)
-    # Cells path has no CityRankingCache; use top_cities itself as markers (already has lat/lon).
-    markers = top_cities
     timings.ranking_ms = _elapsed_ms(ranking_started)
 
     heatmap_started = perf_counter()
@@ -408,6 +403,5 @@ def _build_score_response_from_cells(
 
     return {
         "scores": top_cities,
-        "markers": markers,
         "heatmap": "data:image/png;base64," + base64.b64encode(heatmap_png).decode(),
     }

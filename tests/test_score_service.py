@@ -43,6 +43,7 @@ def test_build_score_response_logs_step_timings(caplog: LogCaptureFixture) -> No
         backend_logger.propagate = original_propagate
 
     assert response["scores"]
+    assert "markers" not in response
     assert response["heatmap"].startswith("data:image/png;base64,")
     assert "score_request outcome=ok" in caplog.text
     assert "total_ms=" in caplog.text
@@ -81,7 +82,7 @@ def test_build_score_response_returns_empty_payload_for_empty_matrix() -> None:
         ),
     )
 
-    assert response == {"scores": [], "markers": [], "heatmap": ""}
+    assert response == {"scores": [], "heatmap": ""}
 
 
 def test_build_score_response_returns_empty_payload_for_all_zero_matrix_scores(monkeypatch: MonkeyPatch) -> None:
@@ -117,7 +118,7 @@ def test_build_score_response_returns_empty_payload_for_all_zero_matrix_scores(m
         ),
     )
 
-    assert response == {"scores": [], "markers": [], "heatmap": ""}
+    assert response == {"scores": [], "heatmap": ""}
 
 
 def test_build_score_response_falls_back_to_array_heatmap_path_when_projection_cache_is_absent() -> None:
