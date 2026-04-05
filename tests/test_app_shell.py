@@ -2,7 +2,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 from backend.cities import CityCandidate, CityRankingCache, continent_of
-from backend.climate_repository import StubClimateRepository
+from backend.climate_repository import ClimateDataError, StubClimateRepository
 from backend.config import DEFAULT_PREFERENCES, MAP_PROJECTION, PREFERENCE_FIELD_NAMES
 from backend.heatmap import HeatmapProjection
 from backend.main import create_app
@@ -359,6 +359,76 @@ def test_score_endpoint_returns_all_available_cities_when_under_continent_reserv
     assert set(returned_names) == all_names
 
 
+def test_probe_endpoint_returns_scored_breakdown_for_a_valid_cell() -> None:
+    class ProbeRepository(StubClimateRepository):
+        def __init__(self) -> None:
+            self._matrix = ClimateMatrix.from_cells(self.list_cells())
+
+        def get_climate_matrix(self) -> ClimateMatrix:
+            return self._matrix
+
+        def probe_nearest_cell(self, lat: float, lon: float) -> int | None:
+            return 0
+
+    probe_client = TestClient(create_app(climate_repository=ProbeRepository()))
+
+    response = probe_client.get(
+        "/probe",
+        params={
+            "lat": 37.5,
+            "lon": -122.0,
+            "ideal_temperature": 22,
+            "cold_tolerance": 7,
+            "heat_tolerance": 5,
+            "rain_sensitivity": 55,
+            "sun_preference": 60,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["found"] is True
+    assert 0 <= payload["overall_score"] <= 1
+    assert set(payload) == {
+        "found",
+        "avg_temp_c",
+        "avg_precip_mm",
+        "avg_cloud_pct",
+        "temp_score",
+        "rain_score",
+        "cloud_score",
+        "overall_score",
+    }
+
+
+def test_probe_endpoint_returns_503_for_repository_failures() -> None:
+    class BrokenProbeRepository(StubClimateRepository):
+        def probe_nearest_cell(self, lat: float, lon: float) -> int | None:
+            return 0
+
+        def get_climate_matrix(self) -> ClimateMatrix:
+            msg = "Climate database file not found: data/climate.duckdb"
+            raise ClimateDataError(msg)
+
+    probe_client = TestClient(create_app(climate_repository=BrokenProbeRepository()))
+
+    response = probe_client.get(
+        "/probe",
+        params={
+            "lat": 37.5,
+            "lon": -122.0,
+            "ideal_temperature": 22,
+            "cold_tolerance": 7,
+            "heat_tolerance": 5,
+            "rain_sensitivity": 55,
+            "sun_preference": 60,
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Climate database file not found: data/climate.duckdb"}
+
+
 def test_home_page_registers_htmx_handoff_script() -> None:
     response = client.get("/")
 
@@ -376,3 +446,4 @@ def test_map_script_renders_city_labels_instead_of_coordinates() -> None:
     assert "point.name" in response.text
     assert "point.flag" in response.text
     assert "score-results__item" in response.text
+    assert "if (!r.ok) throw new Error" in response.text

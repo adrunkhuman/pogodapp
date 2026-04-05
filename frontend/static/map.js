@@ -292,6 +292,14 @@ function focusCity(point, { withTooltip = false, hideDelayMs = TOOLTIP_HIDE_DELA
   finalizeFocus();
 }
 
+function focusCityFromList(point) {
+  focusCity(point, {
+    withTooltip: true,
+    hideDelayMs: TOOLTIP_FOCUS_HIDE_DELAY_MS,
+    moveIfNeeded: true,
+  });
+}
+
 // ─── Sidebar ────────────────────────────────────────────────────────────────
 
 function renderScoreList(scores) {
@@ -326,38 +334,7 @@ function renderScoreList(scores) {
     results.append(header);
 
     for (const point of visibleCities) {
-      const item  = document.createElement("li");
-      const score = document.createElement("span");
-      const name  = document.createElement("span");
-      const flag  = document.createElement("span");
-
-      item.className  = "score-results__item";
-      item.tabIndex = 0;
-      score.className = "score-results__score";
-      name.className  = "score-results__name";
-      flag.className  = "score-results__flag";
-
-      score.textContent = `${Math.round(point.score * 100)}%`.padStart(4, " ");
-      name.textContent  = point.name;
-      flag.textContent  = point.flag;
-      flag.title = countryNames?.of(point.country_code) ?? point.country_code;
-
-      item.append(score, name, flag);
-      item.addEventListener("click", () => focusCity(point, {
-        withTooltip: true,
-        hideDelayMs: TOOLTIP_FOCUS_HIDE_DELAY_MS,
-        moveIfNeeded: true,
-      }));
-      item.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        focusCity(point, {
-          withTooltip: true,
-          hideDelayMs: TOOLTIP_FOCUS_HIDE_DELAY_MS,
-          moveIfNeeded: true,
-        });
-      });
-      results.append(item);
+      results.append(renderScoreItem(point));
     }
 
     if (visibleCount < cities.length) {
@@ -378,6 +355,34 @@ function renderScoreList(scores) {
       results.append(moreItem);
     }
   }
+}
+
+function renderScoreItem(point) {
+  const item  = document.createElement("li");
+  const score = document.createElement("span");
+  const name  = document.createElement("span");
+  const flag  = document.createElement("span");
+
+  item.className = "score-results__item";
+  item.tabIndex = 0;
+  score.className = "score-results__score";
+  name.className = "score-results__name";
+  flag.className = "score-results__flag";
+
+  score.textContent = `${Math.round(point.score * 100)}%`.padStart(4, " ");
+  name.textContent = point.name;
+  flag.textContent = point.flag;
+  flag.title = countryNames?.of(point.country_code) ?? point.country_code;
+
+  item.append(score, name, flag);
+  item.addEventListener("click", () => focusCityFromList(point));
+  item.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    focusCityFromList(point);
+  });
+
+  return item;
 }
 
 // ─── Heatmap ─────────────────────────────────────────────────────────────────
@@ -458,25 +463,13 @@ function applyMarkers(markers) {
     },
   });
 
-  // Unified probe tooltip — no separate MapLibre popup.
-  map.on("mouseenter", MARKER_LAYER_ID, (e) => {
-    hoveringLayer = true;
-    map.getCanvas().style.cursor = "pointer";
-    clearTimeout(probeTimer);
-    if (probeController) probeController.abort();
-    const props = e.features[0].properties;
-    fetchProbe(
-      Number(props.probe_lat ?? e.lngLat.lat), Number(props.probe_lon ?? e.lngLat.lng),
-      e.originalEvent.clientX, e.originalEvent.clientY,
-      `${props.flag} ${props.name}`,
-      { hideDelayMs: null },
-    );
-  });
-
-  map.on("mouseleave", MARKER_LAYER_ID, () => {
-    hoveringLayer = false;
-    map.getCanvas().style.cursor = "";
-    hideTooltip();
+  registerLayerProbeHandlers(MARKER_LAYER_ID, {
+    cursor: "pointer",
+    header: (e) => `${e.features[0].properties.flag} ${e.features[0].properties.name}`,
+    coordinates: (e) => {
+      const props = e.features[0].properties;
+      return [Number(props.probe_lat ?? e.lngLat.lat), Number(props.probe_lon ?? e.lngLat.lng)];
+    },
   });
 }
 
@@ -519,23 +512,12 @@ function loadLandmarkCities() {
         },
       );
 
-      map.on("mouseenter", LANDMARK_LAYER_ID, (e) => {
-        hoveringLayer = true;
-        map.getCanvas().style.cursor = "default";
-        clearTimeout(probeTimer);
-        if (probeController) probeController.abort();
-        const lp = e.features[0].properties;
-        const landmarkHeader = lp.country_code
-          ? `${countryFlag(lp.country_code)} ${lp.name}`
-          : lp.name;
-        fetchProbe(e.lngLat.lat, e.lngLat.lng, e.originalEvent.clientX, e.originalEvent.clientY, landmarkHeader, {
-          hideDelayMs: null,
-        });
-      });
-
-      map.on("mouseleave", LANDMARK_LAYER_ID, () => {
-        hoveringLayer = false;
-        hideTooltip();
+      registerLayerProbeHandlers(LANDMARK_LAYER_ID, {
+        cursor: "default",
+        header: (e) => {
+          const landmark = e.features[0].properties;
+          return landmark.country_code ? `${countryFlag(landmark.country_code)} ${landmark.name}` : landmark.name;
+        },
       });
     })
     .catch(() => {
@@ -606,6 +588,23 @@ function nearestFeatureAtPoint(point) {
   return nearest;
 }
 
+function registerLayerProbeHandlers(layerId, { cursor, header, coordinates = null }) {
+  map.on("mouseenter", layerId, (e) => {
+    hoveringLayer = true;
+    map.getCanvas().style.cursor = cursor;
+    clearTimeout(probeTimer);
+    if (probeController) probeController.abort();
+    const [lat, lon] = coordinates ? coordinates(e) : [e.lngLat.lat, e.lngLat.lng];
+    fetchProbe(lat, lon, e.originalEvent.clientX, e.originalEvent.clientY, header(e), { hideDelayMs: null });
+  });
+
+  map.on("mouseleave", layerId, () => {
+    hoveringLayer = false;
+    map.getCanvas().style.cursor = "";
+    hideTooltip();
+  });
+}
+
 function showTooltip(data, x, y, cityHeader = null, { hideDelayMs = null } = {}) {
   if (!tooltip || !data.found) {
     if (tooltip) tooltip.hidden = true;
@@ -661,7 +660,10 @@ function fetchProbe(lat, lon, clientX, clientY, cityHeader = null, { hideDelayMs
   const params = new URLSearchParams({ lat, lon, ...prefs });
 
   fetch(`/probe?${params}`, { signal: probeController.signal })
-    .then(r => r.json())
+    .then((r) => {
+      if (!r.ok) throw new Error(`Probe request failed with ${r.status}`);
+      return r.json();
+    })
     .then(data => showTooltip(data, clientX, clientY, cityHeader, { hideDelayMs }))
     .catch(() => {});
 }

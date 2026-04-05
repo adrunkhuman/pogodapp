@@ -133,8 +133,9 @@ def create_app(
             return ProbeResponse()
         try:
             climate_matrix = probe_repository.get_climate_matrix()
-        except ClimateDataError:
-            return ProbeResponse()
+        except ClimateDataError as error:
+            logger.exception("probe_request outcome=error")
+            raise HTTPException(status_code=503, detail=str(error)) from error
         preferences = PreferenceInputs(
             ideal_temperature=ideal_temperature,
             cold_tolerance=cold_tolerance,
