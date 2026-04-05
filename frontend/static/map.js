@@ -40,7 +40,12 @@ function renderScoreList(collection) {
     return;
   }
 
-  for (const feature of collection.features) {
+  const top = collection.features
+    .slice()
+    .sort((a, b) => b.properties.score - a.properties.score)
+    .slice(0, 20);
+
+  for (const feature of top) {
     const item = document.createElement("li");
     const [lon, lat] = feature.geometry.coordinates;
     const score = feature.properties.score;
