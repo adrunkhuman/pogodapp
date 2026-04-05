@@ -14,9 +14,10 @@ from backend.climate_repository import (
 from backend.config import DEFAULT_PREFERENCES
 from backend.scoring import PreferenceInputs, ScorePoint, score_climate_cells
 
-# Cells below this fraction of the top score are dropped before the response is sent.
-# Keeps the JSON payload at a browser-renderable size regardless of dataset size.
-MIN_NORMALIZED_SCORE: float = 0.1
+# Only the top N cells by score are sent to the browser.
+# At world zoom (~68k px of land) a heatmap saturates when N >> 68k / radius².
+# 5000 cells at radius 6px gives ~2x coverage — visible hotspots without a solid blob.
+MAX_SCORE_CELLS: int = 5000
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
@@ -57,14 +58,14 @@ def create_app(climate_repository: ClimateRepository | None = None) -> FastAPI:
         if not raw:
             return []
 
-        max_score = max(p["score"] for p in raw)
+        top = sorted(raw, key=lambda p: p["score"], reverse=True)[:MAX_SCORE_CELLS]
+        max_score = top[0]["score"]
         if max_score == 0:
             return []
 
         return [
             {"lat": p["lat"], "lon": p["lon"], "score": round(p["score"] / max_score, 4)}
-            for p in raw
-            if p["score"] / max_score >= MIN_NORMALIZED_SCORE
+            for p in top
         ]
 
     return app
