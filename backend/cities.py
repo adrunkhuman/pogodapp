@@ -15,15 +15,194 @@ if TYPE_CHECKING:
 
 # Sets of ISO 3166-1 alpha-2 codes by continent for sidebar grouping and marker selection.
 _EUROPE = frozenset(
-    ["AD", "AL", "AT", "BA", "BE", "BG", "BY", "CH", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GB", "GI", "GR", "HR", "HU", "IE", "IS", "IT", "LI", "LT", "LU", "LV", "MC", "MD", "ME", "MK", "MT", "NL", "NO", "PL", "PT", "RO", "RS", "RU", "SE", "SI", "SK", "SM", "UA", "VA", "XK"]
+    [
+        "AD",
+        "AL",
+        "AT",
+        "BA",
+        "BE",
+        "BG",
+        "BY",
+        "CH",
+        "CY",
+        "CZ",
+        "DE",
+        "DK",
+        "EE",
+        "ES",
+        "FI",
+        "FR",
+        "GB",
+        "GI",
+        "GR",
+        "HR",
+        "HU",
+        "IE",
+        "IS",
+        "IT",
+        "LI",
+        "LT",
+        "LU",
+        "LV",
+        "MC",
+        "MD",
+        "ME",
+        "MK",
+        "MT",
+        "NL",
+        "NO",
+        "PL",
+        "PT",
+        "RO",
+        "RS",
+        "RU",
+        "SE",
+        "SI",
+        "SK",
+        "SM",
+        "UA",
+        "VA",
+        "XK",
+    ]
 )
 _ASIA = frozenset(
-    ["AE", "AF", "AM", "AZ", "BD", "BH", "BN", "BT", "CN", "GE", "ID", "IL", "IN", "IQ", "IR", "JO", "JP", "KG", "KH", "KP", "KR", "KW", "KZ", "LA", "LB", "LK", "MM", "MN", "MO", "MV", "MY", "NP", "OM", "PH", "PK", "PS", "QA", "SA", "SG", "SY", "TH", "TJ", "TL", "TM", "TR", "TW", "UZ", "VN", "YE"]
+    [
+        "AE",
+        "AF",
+        "AM",
+        "AZ",
+        "BD",
+        "BH",
+        "BN",
+        "BT",
+        "CN",
+        "GE",
+        "ID",
+        "IL",
+        "IN",
+        "IQ",
+        "IR",
+        "JO",
+        "JP",
+        "KG",
+        "KH",
+        "KP",
+        "KR",
+        "KW",
+        "KZ",
+        "LA",
+        "LB",
+        "LK",
+        "MM",
+        "MN",
+        "MO",
+        "MV",
+        "MY",
+        "NP",
+        "OM",
+        "PH",
+        "PK",
+        "PS",
+        "QA",
+        "SA",
+        "SG",
+        "SY",
+        "TH",
+        "TJ",
+        "TL",
+        "TM",
+        "TR",
+        "TW",
+        "UZ",
+        "VN",
+        "YE",
+    ]
 )
 _AFRICA = frozenset(
-    ["AO", "BF", "BI", "BJ", "BW", "CD", "CF", "CG", "CI", "CM", "CV", "DJ", "DZ", "EG", "EH", "ER", "ET", "GA", "GH", "GM", "GN", "GQ", "GW", "KE", "KM", "LR", "LS", "LY", "MA", "MG", "ML", "MR", "MU", "MW", "MZ", "NA", "NE", "NG", "RW", "SC", "SD", "SL", "SN", "SO", "SS", "ST", "SZ", "TD", "TG", "TN", "TZ", "UG", "ZA", "ZM", "ZW"]
+    [
+        "AO",
+        "BF",
+        "BI",
+        "BJ",
+        "BW",
+        "CD",
+        "CF",
+        "CG",
+        "CI",
+        "CM",
+        "CV",
+        "DJ",
+        "DZ",
+        "EG",
+        "EH",
+        "ER",
+        "ET",
+        "GA",
+        "GH",
+        "GM",
+        "GN",
+        "GQ",
+        "GW",
+        "KE",
+        "KM",
+        "LR",
+        "LS",
+        "LY",
+        "MA",
+        "MG",
+        "ML",
+        "MR",
+        "MU",
+        "MW",
+        "MZ",
+        "NA",
+        "NE",
+        "NG",
+        "RW",
+        "SC",
+        "SD",
+        "SL",
+        "SN",
+        "SO",
+        "SS",
+        "ST",
+        "SZ",
+        "TD",
+        "TG",
+        "TN",
+        "TZ",
+        "UG",
+        "ZA",
+        "ZM",
+        "ZW",
+    ]
 )
-_NORTH_AMERICA = frozenset(["AG", "BB", "BS", "BZ", "CA", "CR", "CU", "DM", "DO", "GD", "GT", "HN", "HT", "JM", "KN", "LC", "MX", "NI", "PA", "TT", "US", "VC"])
+_NORTH_AMERICA = frozenset(
+    [
+        "AG",
+        "BB",
+        "BS",
+        "BZ",
+        "CA",
+        "CR",
+        "CU",
+        "DM",
+        "DO",
+        "GD",
+        "GT",
+        "HN",
+        "HT",
+        "JM",
+        "KN",
+        "LC",
+        "MX",
+        "NI",
+        "PA",
+        "TT",
+        "US",
+        "VC",
+    ]
+)
 _SOUTH_AMERICA = frozenset(["AR", "BO", "BR", "CL", "CO", "EC", "GF", "GY", "PE", "PY", "SR", "UY", "VE"])
 _OCEANIA = frozenset(["AU", "FJ", "FM", "KI", "MH", "NR", "NZ", "PG", "PW", "SB", "TO", "TV", "VU", "WS"])
 
@@ -44,11 +223,13 @@ def continent_of(country_code: str) -> str:
             return continent
     return "Other"
 
+
 GRID_DEGREES = 5 / 60
 GRID_HALF_DEGREES = GRID_DEGREES / 2
 MAX_LATITUDE_INDEX = 2159
 MAX_LONGITUDE_INDEX = 4319
 EARTH_RADIUS_KM = 6371.0
+POPULATION_TIE_SCORE_WINDOW = 0.015
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +262,33 @@ class RankedCityCandidate:
 
     city: CityCandidate
     score: float
+
+
+def _candidate_population(city: CityCandidate) -> int:
+    return max(city.population, 0)
+
+
+def _select_population_biased_winner(remaining: list[RankedCityCandidate]) -> RankedCityCandidate:
+    """Prefer larger population centers when effective scores are nearly tied."""
+    best_score = max(candidate.score for candidate in remaining)
+    score_floor = best_score - POPULATION_TIE_SCORE_WINDOW
+    near_tied = [candidate for candidate in remaining if candidate.score >= score_floor]
+    return max(near_tied, key=lambda candidate: (_candidate_population(candidate.city), candidate.score))
+
+
+def _select_population_biased_winner_index(
+    city_catalog: CityRankingCache,
+    scores: NDArray[np.float32],
+    active: NDArray[np.bool],
+) -> int:
+    """Prefer larger population centers when effective scores are nearly tied."""
+    active_scores = np.where(active, scores, -1.0)
+    best_score = float(active_scores.max())
+    near_tied = np.flatnonzero(active & (scores >= best_score - POPULATION_TIE_SCORE_WINDOW))
+    return max(
+        near_tied.tolist(),
+        key=lambda index: (_candidate_population(city_catalog.cities[index]), float(scores[index])),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,7 +384,7 @@ def rank_city_scores(
         remaining.append(RankedCityCandidate(city=city, score=score))
 
     while remaining and len(ranked) < limit:
-        winner = max(remaining, key=lambda candidate: candidate.score)
+        winner = _select_population_biased_winner(remaining)
         ranked.append(
             {
                 "name": winner.city.name,
@@ -221,7 +429,7 @@ def rank_indexed_city_scores(
     ranked: list[CityScorePoint] = []
 
     while active.any() and len(ranked) < limit:
-        winner_index = int(np.argmax(np.where(active, scores, -1.0), axis=None))
+        winner_index = _select_population_biased_winner_index(city_catalog, scores, active)
         winner_city = city_catalog.cities[winner_index]
         winner_score = float(scores[winner_index])
         ranked.append(

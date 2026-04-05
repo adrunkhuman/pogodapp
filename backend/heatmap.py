@@ -19,11 +19,13 @@ if TYPE_CHECKING:
 
 WIDTH = 4096
 HEIGHT = 2048
-BLUR_RADIUS = 9  # px — keeps broad transitions but avoids mushy zoomed-in edges
+BLUR_RADIUS = 7  # px — preserves more local structure while still showing broad regions
+DETAIL_PRESERVE_THRESHOLD = 0.35
+DETAIL_PRESERVE_STRENGTH = 0.9
 PEAK_BOOST_THRESHOLD = 0.72
-PEAK_BOOST_STRENGTH = 0.8
+PEAK_BOOST_STRENGTH = 1.0
 SCORE_CURVE_GAMMA = 1.35
-FINAL_SMOOTH_BLUR_RADIUS = 1.2
+FINAL_SMOOTH_BLUR_RADIUS = 0.0
 _MERCATOR_MAX_RENDER_LATITUDE = MAP_PROJECTION.max_render_latitude
 
 if MAP_PROJECTION.name != "mercator" or _MERCATOR_MAX_RENDER_LATITUDE is None:
@@ -101,19 +103,33 @@ def _build_color_ramp_lookup() -> np.ndarray:
 _COLOR_RAMP_LOOKUP = _build_color_ramp_lookup()
 
 
+def _expand_detail_source(base_gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
+    """Bridge row gaps in the projected grid before local-detail preservation.
+
+    The climate grid lands on discrete Mercator scanlines. Once local floors were
+    strengthened, those scanlines became visible at high latitudes. A tiny max
+    filter keeps nearby rows connected without reintroducing the old mushy field.
+    """
+    return np.asarray(Image.fromarray(base_gray, mode="L").filter(ImageFilter.MaxFilter(3)), dtype=np.uint8)
+
+
 def _preserve_local_maxima(base_gray: NDArray[np.uint8], blurred_gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
     """Keep isolated strong cells visible after the soft blur pass.
 
     The blur gives the surface a continuous look, but it can also flatten a real
-    local best match into its weaker surroundings. Only genuinely strong source
-    cells get a direct boost so the broader surface stays soft and low-value
-    single-cell noise does not leak back into the final image.
+    local best match into its weaker surroundings. Mid-to-strong source cells keep
+    most of their local intensity so the pixel under a good point still reads like
+    a good point, while only the strongest cells get a full floor.
     """
+    detail_source_float = _expand_detail_source(base_gray).astype(np.float32)
     base_float = base_gray.astype(np.float32)
     blurred_float = blurred_gray.astype(np.float32)
+    detail_mask = detail_source_float >= DETAIL_PRESERVE_THRESHOLD * 255.0
+    detail_floor = np.where(detail_mask, detail_source_float * DETAIL_PRESERVE_STRENGTH, 0.0)
     peak_mask = base_float >= PEAK_BOOST_THRESHOLD * 255.0
     peak_floor = np.where(peak_mask, base_float * PEAK_BOOST_STRENGTH, 0.0)
-    preserved = np.maximum(blurred_float, peak_floor)
+    preserved = np.maximum(blurred_float, detail_floor)
+    preserved = np.maximum(preserved, peak_floor)
     return np.clip(preserved, 0, 255).astype(np.uint8)
 
 
@@ -125,6 +141,8 @@ def _stylize_heatmap_gray(gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
 
 def _smooth_styled_heatmap_gray(gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
     """Calm coastal chatter in the styled output without smearing the whole field."""
+    if FINAL_SMOOTH_BLUR_RADIUS <= 0.0:
+        return gray
     return np.asarray(Image.fromarray(gray, mode="L").filter(ImageFilter.GaussianBlur(radius=FINAL_SMOOTH_BLUR_RADIUS)))
 
 

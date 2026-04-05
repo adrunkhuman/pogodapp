@@ -28,8 +28,6 @@ TOP_CITY_RESULTS = 30
 # Diversity-suppressed pool built before trimming to TOP_CITY_RESULTS.
 # Larger pool means continent fill draws from already-spread candidates, not raw clusters.
 RANKING_POOL_SIZE = TOP_CITY_RESULTS * 5
-# Larger unfiltered pool for map markers: top N globally + per-continent fill.
-MARKER_GLOBAL_LIMIT = 20
 logger = logging.getLogger(__name__)
 
 
@@ -67,10 +65,7 @@ def _filter_ranking_catalog(city_catalog: CityRankingCache) -> CityRankingCache:
     if RANKING_MIN_POPULATION == 0 or not city_catalog.cities:
         return city_catalog
 
-    mask = [
-        city.population >= RANKING_MIN_POPULATION or city.population == 0
-        for city in city_catalog.cities
-    ]
+    mask = [city.population >= RANKING_MIN_POPULATION or city.population == 0 for city in city_catalog.cities]
     if all(mask):
         return city_catalog
 
@@ -116,20 +111,6 @@ def _ensure_continent_coverage(
             break
 
     return ranked
-
-
-def _select_markers(
-    city_catalog: CityRankingCache,
-    normalized_scores: NDArray[np.float32],
-) -> list[CityScorePoint]:
-    """Return map marker cities selected with the same diversity suppression as the sidebar.
-
-    Raw-score ordering produced tight geographic clusters; the greedy distance-penalty
-    algorithm spreads markers across distinct hot zones instead.
-    """
-    if not city_catalog.cities:
-        return []
-    return rank_indexed_city_scores(city_catalog, normalized_scores, limit=MARKER_GLOBAL_LIMIT)
 
 
 def _log_score_timings(
@@ -224,7 +205,7 @@ def _build_score_response_from_matrix(
     diverse_pool = rank_indexed_city_scores(ranking_catalog, normalized_scores, limit=RANKING_POOL_SIZE)
     top_cities = list(diverse_pool[:TOP_CITY_RESULTS])
     top_cities = _ensure_continent_coverage(top_cities, diverse_pool[TOP_CITY_RESULTS:])
-    markers = _select_markers(indexed_cities, normalized_scores)
+    markers = list(top_cities)
     timings.ranking_ms = _elapsed_ms(ranking_started)
 
     heatmap_started = perf_counter()

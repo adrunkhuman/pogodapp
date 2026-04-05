@@ -142,6 +142,75 @@ def test_rank_indexed_city_scores_matches_classic_ranking_behavior() -> None:
     assert indexed_ranked == classic_ranked
 
 
+def test_rank_city_scores_prefers_larger_population_center_when_scores_are_nearly_tied() -> None:
+    cities = (
+        CityCandidate(
+            name="Tiny Village",
+            country_code="CO",
+            lat=4.711,
+            lon=-74.0721,
+            cell_lat=4.75,
+            cell_lon=-74.0833,
+            population=2_000,
+        ),
+        CityCandidate(
+            name="Bogota",
+            country_code="CO",
+            lat=4.8,
+            lon=-74.1,
+            cell_lat=4.8333,
+            cell_lon=-74.125,
+            population=8_000_000,
+        ),
+    )
+    scores: list[CellScorePoint] = [
+        {"lat": 4.75, "lon": -74.0833, "score": 0.9},
+        {"lat": 4.8333, "lon": -74.125, "score": 0.892},
+    ]
+
+    ranked = rank_city_scores(cities, scores, limit=1, diversity_decay_km=200.0)
+
+    assert ranked[0]["name"] == "Bogota"
+
+
+def test_rank_indexed_city_scores_prefers_larger_population_center_when_scores_are_nearly_tied() -> None:
+    cities = (
+        CityCandidate(
+            name="Tiny Village",
+            country_code="CO",
+            lat=4.711,
+            lon=-74.0721,
+            cell_lat=4.75,
+            cell_lon=-74.0833,
+            population=2_000,
+        ),
+        CityCandidate(
+            name="Bogota",
+            country_code="CO",
+            lat=4.8,
+            lon=-74.1,
+            cell_lat=4.8333,
+            cell_lon=-74.125,
+            population=8_000_000,
+        ),
+    )
+    indexed_catalog = CityRankingCache(
+        cities=cities,
+        climate_indexes=np.array([0, 1], dtype=np.int32),
+        latitude_radians=np.radians(np.array([city.lat for city in cities], dtype=np.float32)),
+        longitude_radians=np.radians(np.array([city.lon for city in cities], dtype=np.float32)),
+        cosine_latitudes=np.cos(np.radians(np.array([city.lat for city in cities], dtype=np.float32))).astype(
+            np.float32,
+            copy=False,
+        ),
+        flags=tuple(country_flag(city.country_code) for city in cities),
+    )
+
+    ranked = rank_indexed_city_scores(indexed_catalog, np.array([0.9, 0.892], dtype=np.float32), limit=1)
+
+    assert ranked[0]["name"] == "Bogota"
+
+
 def test_haversine_distance_km_is_small_for_nearby_cities() -> None:
     distance = haversine_distance_km(4.711, -74.0721, 6.2442, -75.5812)
 
