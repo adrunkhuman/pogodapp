@@ -104,6 +104,7 @@ uv run pogodapp
 - Starts the FastAPI app on `http://127.0.0.1:8000`
 - Uses live reload by default for local iteration
 - Still runs with stub climate rows when `data/climate.duckdb` is absent
+- Logs per-request timing for climate cell load, city load, scoring, normalization, ranking, and heatmap rendering so optimization work has a baseline
 
 Optional flags:
 

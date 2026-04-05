@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -14,10 +14,9 @@ from backend.climate_repository import (
     build_default_climate_repository,
 )
 from backend.config import DEFAULT_PREFERENCES
+from backend.logging_config import configure_backend_logging
 from backend.score_service import ScoreResponse, build_score_response
-
-if TYPE_CHECKING:
-    from backend.scoring import PreferenceInputs
+from backend.scoring import PreferenceInputs  # noqa: TC001 - FastAPI needs the runtime symbol for Form model parsing
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
@@ -43,6 +42,7 @@ def create_app(
     falls back to the local DuckDB artifact when present and otherwise uses the
     in-repo stub dataset.
     """
+    configure_backend_logging()
     app = FastAPI(title="Pogodapp")
     repository = climate_repository or build_default_climate_repository(CLIMATE_DATABASE_PATH)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
