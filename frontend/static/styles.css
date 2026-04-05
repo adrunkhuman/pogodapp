@@ -33,7 +33,7 @@ ul {
 .app-shell {
   display: grid;
   min-height: 100vh;
-  grid-template-columns: minmax(18rem, 20rem) minmax(0, 1fr) minmax(18rem, 24rem);
+  grid-template-columns: minmax(17rem, 19rem) minmax(26rem, 1.35fr) minmax(16rem, 22rem);
   grid-template-rows: auto minmax(0, 1fr);
 }
 
@@ -46,7 +46,7 @@ ul {
   grid-column: 1 / -1;
   display: grid;
   gap: 0.5rem;
-  padding: 2rem;
+  padding: clamp(1.5rem, 2vw, 2rem);
   border-bottom: 1px solid #2a2a2a;
 }
 
@@ -57,7 +57,7 @@ ul {
 }
 
 .subtitle {
-  max-width: 64rem;
+  max-width: 34rem;
   color: #666666;
   line-height: 1.5;
 }
@@ -67,7 +67,7 @@ ul {
   align-content: start;
   gap: 1rem;
   min-height: 0;
-  padding: 1.5rem;
+  padding: clamp(1.15rem, 1.4vw, 1.5rem);
 }
 
 .controls-panel,
@@ -173,9 +173,11 @@ ul {
 .map-panel {
   grid-template-rows: auto auto auto minmax(0, 1fr);
   min-height: 0;
+  gap: 0.85rem;
 }
 
 .map-description {
+  max-width: 40rem;
   color: #666666;
   line-height: 1.5;
 }
@@ -252,15 +254,17 @@ ul {
 }
 
 #map {
-  min-height: 24rem;
-  height: 100%;
+  min-height: clamp(24rem, 52vh, 42rem);
+  height: auto;
+  aspect-ratio: 1.5;
   overflow: hidden;
   background: #111111;
   border: 1px solid #2a2a2a;
 }
 
 #map .maplibregl-map {
-  min-height: 24rem;
+  width: 100%;
+  height: 100%;
 }
 
 #map .maplibregl-ctrl-group {
@@ -280,17 +284,25 @@ ul {
 
 @media (max-width: 72rem) {
   .app-shell {
-    grid-template-columns: minmax(16rem, 18rem) minmax(0, 1fr);
+    grid-template-columns: minmax(16rem, 19rem) minmax(0, 1fr);
     grid-template-rows: auto auto minmax(0, 1fr);
   }
 
+  .controls-panel {
+    border-bottom: 1px solid #2a2a2a;
+  }
+
   .map-panel {
+    grid-column: 2;
+    grid-row: 2 / 4;
     border-right: 0;
   }
 
   .results-panel {
-    grid-column: 1 / -1;
-    border-top: 1px solid #2a2a2a;
+    grid-column: 1;
+    grid-row: 3;
+    border-right: 1px solid #2a2a2a;
+    border-top: 0;
   }
 }
 
@@ -315,6 +327,21 @@ ul {
   .app-header,
   .app-panel {
     padding: 1.25rem;
+  }
+
+  .map-panel {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .results-panel {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  #map {
+    min-height: 20rem;
+    aspect-ratio: 1.1;
   }
 
   .score-results__item {
