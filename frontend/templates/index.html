@@ -9,15 +9,14 @@
   </head>
   <body>
     <main class="app-shell">
-      <section class="intro">
-        <p class="eyebrow">Climate preference search</p>
-        <h1>Pogodapp</h1>
-        <p class="lede">
-          Describe an ideal climate profile, score places against long-term normals, and inspect the results on one map.
+      <header class="app-header">
+        <h1>POGODAPP</h1>
+        <p class="subtitle">
+          Describe an ideal climate profile, score places against long-term normals, and inspect the strongest matches on one screen.
         </p>
-      </section>
+      </header>
 
-      <section class="panel" aria-label="Controls area">
+      <section class="app-panel controls-panel" aria-label="Controls area">
         <h2>Controls</h2>
         <form
           id="preferences"
@@ -27,7 +26,10 @@
         >
           {% for preference in preferences %}
           <label class="control" for="{{ preference.name }}">
-            <span>{{ preference.label }}</span>
+            <span class="control__header">
+              <span class="control__label">{{ preference.label }}</span>
+              <output class="control__value" for="{{ preference.name }}">{{ preference.value }}</output>
+            </span>
             <input
               id="{{ preference.name }}"
               name="{{ preference.name }}"
@@ -38,30 +40,25 @@
               step="{{ preference.step }}"
               value="{{ preference.value }}"
             />
-            <output for="{{ preference.name }}">{{ preference.value }}</output>
           </label>
           {% endfor %}
         </form>
       </section>
 
-      <section class="panel map-panel" aria-label="Map container">
-        <h2>Map</h2>
+      <section class="app-panel map-panel" aria-label="Map container">
         <p id="map-status" class="visually-hidden" role="status" aria-live="polite"></p>
-        <p id="map-description" class="map-description">
-          Interactive world map of scored climate matches. A simple world backdrop provides context while colored
-          climate cells highlight stronger matching regions.
-        </p>
+        <p id="map-description" class="visually-hidden">Interactive climate score map.</p>
         <div id="map-legend" class="map-legend" aria-label="Map legend">
-          <span class="map-legend__title">Score</span>
-          <span class="map-legend__swatch map-legend__swatch--low">Low</span>
-          <span class="map-legend__swatch map-legend__swatch--mid">Medium</span>
-          <span class="map-legend__swatch map-legend__swatch--high">High</span>
+          <span class="map-legend__item"><span class="map-legend__swatch map-legend__swatch--low" aria-hidden="true">■</span> LOW</span>
+          <span class="map-legend__item"><span class="map-legend__swatch map-legend__swatch--mid" aria-hidden="true">■</span> MED</span>
+          <span class="map-legend__item"><span class="map-legend__swatch map-legend__swatch--high" aria-hidden="true">■</span> HIGH</span>
         </div>
         <div id="map" role="region" aria-label="Interactive climate score map" aria-describedby="map-description map-legend map-status"></div>
-        <div class="score-results" aria-labelledby="score-results-title">
-          <h3 id="score-results-title">Scored locations</h3>
-          <ol id="score-results-list"></ol>
-        </div>
+      </section>
+
+      <section class="app-panel results-panel" aria-labelledby="score-results-title">
+        <h2 id="score-results-title">Scored locations</h2>
+        <ul id="score-results-list"></ul>
       </section>
     </main>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
@@ -78,15 +75,21 @@
         for (const input of form.querySelectorAll("input[type='range']")) {
           const output = form.querySelector(`output[for='${input.id}']`);
 
-          if (output) {
-            output.value = input.value;
-          }
+          const syncControl = () => {
+            const minimum = Number(input.min);
+            const maximum = Number(input.max);
+            const value = Number(input.value);
+            const progress = ((value - minimum) / (maximum - minimum)) * 100;
 
-          input.addEventListener("input", () => {
+            input.style.setProperty("--range-progress", `${progress}%`);
+
             if (output) {
               output.value = input.value;
             }
-          });
+          };
+
+          syncControl();
+          input.addEventListener("input", syncControl);
         }
 
         document.body.addEventListener("htmx:afterRequest", (event) => {
