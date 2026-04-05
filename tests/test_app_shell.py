@@ -1,10 +1,11 @@
 from fastapi.testclient import TestClient
 
+from backend.climate_repository import StubClimateRepository
 from backend.config import DEFAULT_PREFERENCES, PREFERENCE_FIELD_NAMES
-from backend.main import app
+from backend.main import create_app
 from backend.scoring import PreferenceInputs, score_preferences
 
-client = TestClient(app)
+client = TestClient(create_app(climate_repository=StubClimateRepository()))
 
 
 def test_home_page_renders() -> None:
@@ -144,12 +145,17 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
 
     score_values = [item["score"] for item in scores]
     for item in scores:
-        assert set(item) == {"lat", "lon", "score"}
-        assert isinstance(item["lat"], float)
-        assert isinstance(item["lon"], float)
+        assert set(item) == {"name", "country_code", "flag", "score"}
+        assert isinstance(item["name"], str)
+        assert item["name"]
+        assert isinstance(item["country_code"], str)
+        assert len(item["country_code"]) == 2
+        assert isinstance(item["flag"], str)
+        assert item["flag"]
         assert 0 <= item["score"] <= 1
-    # Scores are normalized so the best cell is always 1.0
-    assert max(score_values) == 1.0
+    # City scores inherit normalized cell scores, but the best cell may have no nearby city.
+    assert max(score_values) <= 1.0
+    assert max(score_values) > 0
     # List capped at top 20 for the text panel
     assert len(scores) <= 20
     # Heatmap is a PNG data URL
@@ -223,3 +229,13 @@ def test_home_page_registers_htmx_handoff_script() -> None:
     assert response.status_code == 200
     assert "htmx:afterRequest" in response.text
     assert "window.renderScores(scores);" in response.text
+
+
+def test_map_script_renders_city_labels_instead_of_coordinates() -> None:
+    response = client.get("/static/map.js")
+
+    assert response.status_code == 200
+    assert "Intl.DisplayNames" in response.text
+    assert "point.country_code" in response.text
+    assert "point.name" in response.text
+    assert "point.flag" in response.text

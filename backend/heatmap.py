@@ -10,7 +10,7 @@ import numpy as np
 from PIL import Image, ImageFilter
 
 if TYPE_CHECKING:
-    from .scoring import ScorePoint
+    from .scoring import CellScorePoint
 
 WIDTH = 1440
 HEIGHT = 720
@@ -52,7 +52,7 @@ def _apply_color_ramp(values: np.ndarray) -> np.ndarray:
     return np.clip(rgba, 0, 255).astype(np.uint8)
 
 
-def render_heatmap_png(scores: list[ScorePoint]) -> bytes:
+def render_heatmap_png(scores: list[CellScorePoint]) -> bytes:
     """Rasterize scored cells in Mercator projection, blur, and return a PNG as bytes.
 
     The image covers the Web Mercator world extent (±85.051129°) so it aligns with

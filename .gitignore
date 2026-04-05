@@ -10,5 +10,6 @@ build/
 *.egg-info/
 PLAN.md
 data/climate.duckdb
+data/cities.csv
 data/worldclim/
 data/worldclim_probe/

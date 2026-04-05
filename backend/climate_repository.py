@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 import duckdb
 
+from backend.cities import STUB_CITY_CANDIDATES, CityCandidate
 from backend.scoring import MONTHS_PER_YEAR, STUB_CLIMATE_CELLS, ClimateCell
 
 if TYPE_CHECKING:
@@ -19,6 +20,17 @@ SELECT
 FROM climate_cells
 """
 
+SELECT_CITIES_QUERY = """
+SELECT
+    name,
+    country_code,
+    lat,
+    lon,
+    cell_lat,
+    cell_lon
+FROM cities
+"""
+
 
 class ClimateDataError(RuntimeError):
     """Raised when climate data cannot be loaded into the scoring model."""
@@ -30,6 +42,9 @@ class ClimateRepository(Protocol):
     def list_cells(self) -> tuple[ClimateCell, ...]:
         """Return climate rows ready for scoring."""
 
+    def list_cities(self) -> tuple[CityCandidate, ...]:
+        """Return user-facing cities already mapped onto the dataset."""
+
 
 class StubClimateRepository:
     """Adapter used until a DuckDB dataset is available in runtime config."""
@@ -37,6 +52,10 @@ class StubClimateRepository:
     def list_cells(self) -> tuple[ClimateCell, ...]:
         """Return deterministic in-repo climate fixtures."""
         return STUB_CLIMATE_CELLS
+
+    def list_cities(self) -> tuple[CityCandidate, ...]:
+        """Return deterministic in-repo city fixtures."""
+        return STUB_CITY_CANDIDATES
 
 
 def build_default_climate_repository(database_path: Path) -> ClimateRepository:
@@ -56,21 +75,40 @@ class DuckDbClimateRepository:
 
     def list_cells(self) -> tuple[ClimateCell, ...]:
         """Read all climate rows and map them onto the scoring domain model."""
+        rows = self._fetch_rows(SELECT_CLIMATE_CELLS_QUERY)
+
+        try:
+            return tuple(self._row_to_climate_cell(row) for row in rows)
+        except (TypeError, ValueError) as error:
+            msg = f"Failed to map climate data from {self.database_path} into climate rows: {error}"
+            raise ClimateDataError(msg) from error
+
+    def list_cities(self) -> tuple[CityCandidate, ...]:
+        """Read city rows that the build pipeline already mapped onto climate cells."""
+        rows = self._fetch_rows(SELECT_CITIES_QUERY, table_name="cities")
+
+        try:
+            return tuple(self._row_to_city(row) for row in rows)
+        except (TypeError, ValueError) as error:
+            msg = f"Failed to map city data from {self.database_path} into city rows: {error}"
+            raise ClimateDataError(msg) from error
+
+    def _fetch_rows(self, query: str, *, table_name: str = "climate_cells") -> list[tuple[object, ...]]:
         if not self.database_path.exists():
             msg = f"Climate database file not found: {self.database_path}"
             raise ClimateDataError(msg)
 
         try:
             with duckdb.connect(str(self.database_path), read_only=True) as connection:
-                rows = connection.execute(SELECT_CLIMATE_CELLS_QUERY).fetchall()
+                return connection.execute(query).fetchall()
         except duckdb.Error as error:
+            if table_name == "cities" and "Table with name cities does not exist" in str(error):
+                msg = (
+                    f"Climate database file is missing the cities table: {self.database_path}. "
+                    "Rebuild it with `uv run python scripts/build_climate_db.py`."
+                )
+                raise ClimateDataError(msg) from error
             msg = f"Failed to read climate data from {self.database_path}: {error}"
-            raise ClimateDataError(msg) from error
-
-        try:
-            return tuple(self._row_to_climate_cell(row) for row in rows)
-        except (TypeError, ValueError) as error:
-            msg = f"Failed to map climate data from {self.database_path} into climate rows: {error}"
             raise ClimateDataError(msg) from error
 
     def _row_to_climate_cell(self, row: tuple[object, ...]) -> ClimateCell:
@@ -86,4 +124,16 @@ class DuckDbClimateRepository:
             cloud_cover_pct=tuple(
                 int(cast("int | float", value)) for value in monthly_values[MONTHS_PER_YEAR * 2 : MONTHS_PER_YEAR * 3]
             ),
+        )
+
+    def _row_to_city(self, row: tuple[object, ...]) -> CityCandidate:
+        """Convert one city row into the in-memory ranking shape."""
+        name, country_code, latitude, longitude, cell_latitude, cell_longitude = row
+        return CityCandidate(
+            name=str(cast("str", name)),
+            country_code=str(cast("str", country_code)),
+            lat=float(cast("int | float", latitude)),
+            lon=float(cast("int | float", longitude)),
+            cell_lat=float(cast("int | float", cell_latitude)),
+            cell_lon=float(cast("int | float", cell_longitude)),
         )

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import heapq
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -10,6 +9,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from backend.cities import CityScorePoint, rank_city_scores
 from backend.climate_repository import (
     ClimateDataError,
     ClimateRepository,
@@ -17,7 +17,7 @@ from backend.climate_repository import (
 )
 from backend.config import DEFAULT_PREFERENCES
 from backend.heatmap import render_heatmap_png
-from backend.scoring import PreferenceInputs, ScorePoint, score_climate_cells
+from backend.scoring import CellScorePoint, PreferenceInputs, score_climate_cells
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
@@ -31,7 +31,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 class ScoreResponse(TypedDict):
     """Combined score + heatmap response so cells are only scored once per request."""
 
-    scores: list[ScorePoint]
+    scores: list[CityScorePoint]
     heatmap: str  # data:image/png;base64,... covering the full world extent
 
 
@@ -40,7 +40,9 @@ def build_index_context() -> dict[str, object]:
     return {"preferences": DEFAULT_PREFERENCES}
 
 
-def create_app(climate_repository: ClimateRepository | None = None) -> FastAPI:
+def create_app(
+    climate_repository: ClimateRepository | None = None,
+) -> FastAPI:
     """Create the FastAPI application."""
     app = FastAPI(title="Pogodapp")
     repository = climate_repository or build_default_climate_repository(CLIMATE_DATABASE_PATH)
@@ -58,6 +60,7 @@ def create_app(climate_repository: ClimateRepository | None = None) -> FastAPI:
     async def score(preferences: Annotated[PreferenceInputs, Form()]) -> ScoreResponse:
         try:
             climate_cells = repository.list_cells()
+            cities = repository.list_cities()
         except ClimateDataError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 
@@ -69,11 +72,11 @@ def create_app(climate_repository: ClimateRepository | None = None) -> FastAPI:
         if max_score == 0:
             return {"scores": [], "heatmap": ""}
 
-        normalized: list[ScorePoint] = [
+        normalized: list[CellScorePoint] = [
             {"lat": p["lat"], "lon": p["lon"], "score": round(p["score"] / max_score, 4)} for p in raw
         ]
 
-        top20 = heapq.nlargest(20, normalized, key=lambda p: p["score"])
+        top20 = rank_city_scores(cities, normalized, limit=20)
         png = render_heatmap_png(normalized)
         heatmap_data_url = "data:image/png;base64," + base64.b64encode(png).decode()
 

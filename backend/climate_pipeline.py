@@ -20,6 +20,8 @@ import tifffile
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+from backend.cities import CityCandidate, snap_city_to_cell_key
+
 MONTH_NAMES: Final[tuple[str, ...]] = (
     "jan",
     "feb",
@@ -39,6 +41,7 @@ WORLDCLIM_ARCHIVES: Final[dict[str, str]] = {
     "prec": "https://geodata.ucdavis.edu/climate/worldclim/2_1/base/wc2.1_10m_prec.zip",
     "srad": "https://geodata.ucdavis.edu/climate/worldclim/2_1/base/wc2.1_10m_srad.zip",
 }
+GEONAMES_CITIES_URL: Final[str] = "https://download.geonames.org/export/dump/cities15000.zip"
 GRID_DEGREES: Final[float] = 10 / 60
 # WorldClim stores ocean pixels as ≈ -3.4e38 (np.finfo(np.float32).min).
 # Any value below this cutoff is nodata; no real climate measurement comes close to -1e20.
@@ -58,9 +61,11 @@ EXPECTED_CLIMATE_COLUMNS: Final[tuple[str, ...]] = (
     *PRECIPITATION_COLUMNS,
     *CLOUD_COLUMNS,
 )
+EXPECTED_CITY_COLUMNS: Final[tuple[str, ...]] = ("name", "country_code", "lat", "lon", "cell_lat", "cell_lon")
 INSERT_CLIMATE_CELL_QUERY: Final[str] = (
     "INSERT INTO climate_cells VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
+INSERT_CITY_QUERY: Final[str] = "INSERT INTO cities VALUES (?, ?, ?, ?, ?, ?)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +82,42 @@ class ValidationSummary:
 
     row_count: int
     columns: tuple[str, ...]
+    city_count: int
+    city_columns: tuple[str, ...]
+
+
+def ensure_geonames_cities(cache_dir: Path) -> Path:
+    """Download and extract the GeoNames cities15000 catalog once into the cache."""
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = cache_dir / Path(GEONAMES_CITIES_URL).name
+    extracted_path = cache_dir / "cities15000.txt"
+
+    if not archive_path.exists():
+        with urlopen(GEONAMES_CITIES_URL) as response, archive_path.open("wb") as destination:  # noqa: S310
+            shutil.copyfileobj(response, destination)
+
+    if not extracted_path.exists():
+        with zipfile.ZipFile(archive_path) as archive:
+            archive.extract("cities15000.txt", path=cache_dir)
+
+    return extracted_path
+
+
+def load_city_catalog(cities_txt_path: Path) -> tuple[CityCandidate, ...]:
+    """Read the GeoNames cities15000 dump that feeds the build-time city mapping."""
+    with cities_txt_path.open(newline="", encoding="utf-8") as source:
+        rows = csv.reader(source, delimiter="\t")
+        return tuple(
+            CityCandidate(
+                name=row[1],
+                country_code=row[8],
+                lat=float(row[4]),
+                lon=float(row[5]),
+                cell_lat=0.0,
+                cell_lon=0.0,
+            )
+            for row in rows
+        )
 
 
 def solar_radiation_to_cloud_proxy(monthly_solar_radiation: NDArray[np.float64]) -> NDArray[np.int16]:
@@ -255,12 +296,61 @@ def copy_rows_into_climate_table(connection: duckdb.DuckDBPyConnection, rows: li
         csv_path.unlink(missing_ok=True)
 
 
+def build_city_rows(
+    cities_txt_path: Path, climate_rows: list[tuple[float | int, ...]]
+) -> list[tuple[str | float, ...]]:
+    """Keep only cities that snap onto valid land climate cells."""
+    valid_cells = {(float(row[0]), float(row[1])) for row in climate_rows}
+    city_rows: list[tuple[str | float, ...]] = []
+
+    for city in load_city_catalog(cities_txt_path):
+        cell_lat, cell_lon = snap_city_to_cell_key(city)
+        if (cell_lat, cell_lon) not in valid_cells:
+            continue
+
+        city_rows.append((city.name, city.country_code, city.lat, city.lon, cell_lat, cell_lon))
+
+    return city_rows
+
+
+def create_cities_table(connection: duckdb.DuckDBPyConnection) -> None:
+    """Create the build-time city lookup table used by runtime ranking."""
+    connection.execute("DROP TABLE IF EXISTS cities")
+    connection.execute(
+        """
+        CREATE TABLE cities (
+            name VARCHAR NOT NULL,
+            country_code VARCHAR NOT NULL,
+            lat DOUBLE NOT NULL,
+            lon DOUBLE NOT NULL,
+            cell_lat DOUBLE NOT NULL,
+            cell_lon DOUBLE NOT NULL
+        )
+        """
+    )
+
+
+def copy_rows_into_cities_table(connection: duckdb.DuckDBPyConnection, rows: list[tuple[str | float, ...]]) -> None:
+    """Bulk-load city rows through a temporary CSV like the climate table path."""
+    with tempfile.NamedTemporaryFile("w", newline="", delete=False, suffix=".csv", encoding="utf-8") as temporary_file:
+        csv_path = Path(temporary_file.name)
+        csv.writer(temporary_file).writerows(rows)
+
+    try:
+        copy_query = f"COPY cities FROM '{csv_path.as_posix()}'"
+        connection.execute(copy_query)
+    finally:
+        csv_path.unlink(missing_ok=True)
+
+
 def build_worldclim_database(output_path: Path, cache_dir: Path) -> BuildSummary:
     """Download and persist the 10-arcminute climate dataset."""
     archive_paths = ensure_worldclim_archives(cache_dir)
+    cities_txt_path = ensure_geonames_cities(cache_dir)
     extracted_paths = extract_worldclim_archives(archive_paths, cache_dir / "extracted")
     monthly = load_monthly_rasters(extracted_paths)
     rows = build_insert_rows(monthly["tavg"], monthly["prec"], monthly["srad"])
+    city_rows = build_city_rows(cities_txt_path, rows)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.exists():
         output_path.unlink()
@@ -268,6 +358,8 @@ def build_worldclim_database(output_path: Path, cache_dir: Path) -> BuildSummary
     with duckdb.connect(str(output_path)) as connection:
         create_climate_cells_table(connection)
         copy_rows_into_climate_table(connection, rows)
+        create_cities_table(connection)
+        copy_rows_into_cities_table(connection, city_rows)
 
     return BuildSummary(output_path=output_path, row_count=len(rows))
 
@@ -289,24 +381,41 @@ def validate_climate_database_with_row_range(
         if columns != EXPECTED_CLIMATE_COLUMNS:
             msg = f"Unexpected climate_cells schema: {columns}"
             raise ValueError(msg)
+        city_columns = tuple(
+            column_name for _, column_name, *_ in connection.execute("PRAGMA table_info('cities')").fetchall()
+        )
+        if city_columns != EXPECTED_CITY_COLUMNS:
+            msg = f"Unexpected cities schema: {city_columns}"
+            raise ValueError(msg)
         row_count_result = connection.execute("SELECT COUNT(*) FROM climate_cells").fetchone()
+        city_count_result = connection.execute("SELECT COUNT(*) FROM cities").fetchone()
 
     if row_count_result is None:
         msg = "Failed to fetch climate row count"
         raise ValueError(msg)
+    if city_count_result is None:
+        msg = "Failed to fetch city row count"
+        raise ValueError(msg)
 
     row_count = row_count_result[0]
+    city_count = city_count_result[0]
 
     if not isinstance(row_count, int):
         msg = f"Unexpected row count type: {type(row_count)!r}"
         raise TypeError(msg)
+    if not isinstance(city_count, int):
+        msg = f"Unexpected city count type: {type(city_count)!r}"
+        raise TypeError(msg)
+    if city_count == 0:
+        msg = "City count is zero; GeoNames import likely failed"
+        raise ValueError(msg)
 
     minimum_rows, maximum_rows = expected_row_count_range
     if not minimum_rows <= row_count <= maximum_rows:
         msg = f"Row count {row_count} outside expected rough range {minimum_rows}..{maximum_rows}"
         raise ValueError(msg)
 
-    return ValidationSummary(row_count=row_count, columns=columns)
+    return ValidationSummary(row_count=row_count, columns=columns, city_count=city_count, city_columns=city_columns)
 
 
 def parse_args() -> argparse.Namespace:

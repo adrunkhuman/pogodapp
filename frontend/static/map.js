@@ -18,6 +18,9 @@ const EMPTY_IMAGE =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
 let map;
+const countryNames = typeof Intl.DisplayNames === "function"
+  ? new Intl.DisplayNames(["en"], { type: "region" })
+  : null;
 // Set to true once map.on("load") has fired and all layers are registered.
 // isStyleLoaded() is unreliable after addSource() — it stays false while the
 // GeoJSON worker tiles the backdrop, so the load event is the correct signal.
@@ -51,7 +54,8 @@ function renderScoreList(scores) {
 
   for (const point of scores) {
     const item = document.createElement("li");
-    item.textContent = `${Math.round(point.score * 100)}% match at ${point.lat}, ${point.lon}`;
+    const country = countryNames?.of(point.country_code) ?? point.country_code;
+    item.textContent = `${Math.round(point.score * 100)}% match: ${point.name}, ${country} ${point.flag}`;
     results.append(item);
   }
 }
