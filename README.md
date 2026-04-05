@@ -1,15 +1,15 @@
 # Pogodapp
 
-Pogodapp helps people search for climates they like.
+Pogodapp is a small app for finding climates you like.
 
-It is not a weather app. The user sets a few climate preferences, the backend scores long-term climate normals across the world, and the UI returns a ranked list of cities plus a map overlay.
+It is not a weather app. It scores long-term climate normals against a few user preferences and returns a city list plus a map overlay.
 
 ## What It Does
 
-- Accepts climate preferences through one form.
-- Scores global land cells against those preferences.
-- Returns a ranked city shortlist and a heatmap image for the map.
-- Keeps the whole interaction on one page.
+- Takes a few climate preferences.
+- Scores land cells around the world.
+- Returns a ranked city list and a heatmap.
+- Keeps everything on one page.
 
 ## Stack
 
@@ -24,13 +24,13 @@ It is not a weather app. The user sets a few climate preferences, the backend sc
 
 ## How It Works
 
-- `GET /` renders the app shell with slider defaults and shared map config.
+- `GET /` renders the page.
 - `POST /score` accepts standard form fields and returns JSON.
 - The response shape is `{"scores": [{"name", "country_code", "flag", "score"}, ...], "heatmap": "data:image/png;base64,..."}`.
 - Empty or all-zero results return `{"scores": [], "heatmap": ""}`.
 - FastAPI handles HTTP and validation.
-- Scoring, city ranking, and heatmap rendering stay in backend service modules instead of the route layer.
-- `frontend/static/map.js` only renders. HTMX submits the form, and `htmx:afterRequest` hands the JSON payload to the map code.
+- Scoring, ranking, and heatmap rendering stay out of the route layer.
+- `frontend/static/map.js` only renders. HTMX submits the form and hands the response to the map code.
 
 ## Data
 
@@ -38,7 +38,7 @@ It is not a weather app. The user sets a few climate preferences, the backend sc
 - Current baseline: native `10m` WorldClim grids, meaning 10 arc-minutes per cell.
 - Runtime tables: `climate_cells(...)` and `cities(...)` inside `data/climate.duckdb`.
 - If the database is missing, the app falls back to a small in-repo stub dataset.
-- Cloud cover is currently approximated from solar radiation so the scoring schema can stay stable while the real source is still undecided.
+- Cloud cover is currently approximated from solar radiation.
 
 ## Scoring
 
@@ -68,7 +68,7 @@ Notes:
 - Default local URL: `http://127.0.0.1:8000`
 - Live reload is on by default.
 - If `data/climate.duckdb` exists, startup warms the climate matrix, city cache, and heatmap projection.
-- If preload fails, startup logs the problem and requests still use the existing `503` path.
+- If preload fails, startup logs the problem and requests fall back to the existing `503` path.
 
 ## Build Climate Data
 
@@ -76,7 +76,7 @@ Notes:
 uv run python scripts/build_climate_db.py
 ```
 
-This builds `data/climate.duckdb`, downloads the required WorldClim rasters and GeoNames city source, keeps only valid land cells, and populates both `climate_cells` and `cities`.
+This builds `data/climate.duckdb`, downloads the required WorldClim rasters and GeoNames city source, keeps only valid land cells, and populates `climate_cells` plus `cities`.
 
 ## Quality Checks
 
@@ -86,9 +86,3 @@ uv run ruff format --check .
 uv run ty check
 uv run pytest
 ```
-
-## Current State
-
-- Recent work moved the app onto the native `10m` grid, server-side heatmap rendering, ranked city results, and cached vectorized scoring.
-- MapLibre and the world backdrop are served locally.
-- HTMX is still loaded externally. That policy is not settled yet.
