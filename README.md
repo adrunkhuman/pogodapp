@@ -94,6 +94,8 @@ uv run pogodapp
 ```
 
 - The app serves its own map assets from `/static`, so local map rendering no longer depends on remote PMTiles, sprite, or glyph hosts
+- When `data/climate.duckdb` is present, app startup eagerly warms the climate matrix, city ranking cache, and heatmap projection so the first `/score` request avoids the cold-load penalty
+- That preload is synchronous and increases steady memory use; if preload hits a climate-data error, startup now logs and skips the warm cache so requests can still surface the existing `503` error path
 
 ## Local Testing
 

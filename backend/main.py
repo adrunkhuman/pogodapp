@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Annotated
 
@@ -25,11 +26,27 @@ TEMPLATES_DIR = FRONTEND_DIR / "templates"
 CLIMATE_DATABASE_PATH = ROOT_DIR / "data" / "climate.duckdb"
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+logger = logging.getLogger(__name__)
 
 
 def build_index_context() -> dict[str, object]:
     """Return template context for the initial page render."""
     return {"preferences": DEFAULT_PREFERENCES, "map_projection": MAP_PROJECTION}
+
+
+def preload_repository(repository: ClimateRepository) -> None:
+    """Warm startup caches without turning recoverable data issues into boot failures."""
+    if not hasattr(repository, "get_climate_matrix") or not hasattr(repository, "get_indexed_cities"):
+        return
+
+    try:
+        # Test doubles and fallback repositories may only implement the slower request path.
+        repository.get_climate_matrix()
+        repository.get_indexed_cities()
+        if hasattr(repository, "get_heatmap_projection"):
+            repository.get_heatmap_projection()
+    except ClimateDataError:
+        logger.warning("startup_preload outcome=skipped")
 
 
 def create_app(
@@ -45,6 +62,7 @@ def create_app(
     configure_backend_logging()
     app = FastAPI(title="Pogodapp")
     repository = climate_repository or build_default_climate_repository(CLIMATE_DATABASE_PATH)
+    preload_repository(repository)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", response_class=HTMLResponse)

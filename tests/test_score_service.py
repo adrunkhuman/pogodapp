@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+import numpy as np
+
+from backend.cities import CityCandidate, CityRankingCache
 from backend.climate_repository import StubClimateRepository
 from backend.logging_config import configure_backend_logging
 from backend.score_service import build_score_response
-from backend.scoring import PreferenceInputs
+from backend.scoring import ClimateCell, ClimateMatrix, PreferenceInputs
 
 if TYPE_CHECKING:
     from _pytest.logging import LogCaptureFixture
+    from _pytest.monkeypatch import MonkeyPatch
+
+    from backend.climate_repository import ClimateRepository
 
 
 def test_build_score_response_logs_step_timings(caplog: LogCaptureFixture) -> None:
@@ -46,3 +52,104 @@ def test_build_score_response_logs_step_timings(caplog: LogCaptureFixture) -> No
     assert "normalize_ms=" in caplog.text
     assert "ranking_ms=" in caplog.text
     assert "heatmap_ms=" in caplog.text
+
+
+def test_build_score_response_returns_empty_payload_for_empty_matrix() -> None:
+    class EmptyMatrixRepository:
+        def list_cells(self) -> tuple[ClimateCell, ...]:
+            return ()
+
+        def list_cities(self) -> tuple[CityCandidate, ...]:
+            return ()
+
+        def get_climate_matrix(self) -> ClimateMatrix:
+            return ClimateMatrix(
+                latitudes=np.array([], dtype=np.float32),
+                longitudes=np.array([], dtype=np.float32),
+                temperature_c=np.empty((0, 12), dtype=np.float32),
+                precipitation_mm=np.empty((0, 12), dtype=np.float32),
+                cloud_cover_pct=np.empty((0, 12), dtype=np.uint8),
+            )
+
+        def get_indexed_cities(self) -> CityRankingCache:
+            return CityRankingCache.from_cities((), np.array([], dtype=np.int32))
+
+    response = build_score_response(
+        cast("ClimateRepository", EmptyMatrixRepository()),
+        PreferenceInputs(
+            ideal_temperature=22, cold_tolerance=7, heat_tolerance=5, rain_sensitivity=55, sun_preference=60
+        ),
+    )
+
+    assert response == {"scores": [], "heatmap": ""}
+
+
+def test_build_score_response_returns_empty_payload_for_all_zero_matrix_scores(monkeypatch: MonkeyPatch) -> None:
+    class SingleCellRepository:
+        def list_cells(self) -> tuple[ClimateCell, ...]:
+            return ()
+
+        def list_cities(self) -> tuple[CityCandidate, ...]:
+            return ()
+
+        def get_climate_matrix(self) -> ClimateMatrix:
+            return ClimateMatrix.from_cells(
+                (
+                    ClimateCell(
+                        lat=1.0,
+                        lon=2.0,
+                        temperature_c=(22.0,) * 12,
+                        precipitation_mm=(0.0,) * 12,
+                        cloud_cover_pct=(15,) * 12,
+                    ),
+                )
+            )
+
+        def get_indexed_cities(self) -> CityRankingCache:
+            return CityRankingCache.from_cities((), np.array([], dtype=np.int32))
+
+    monkeypatch.setattr("backend.score_service.score_climate_matrix", lambda *_args: np.array([0.0], dtype=np.float32))
+
+    response = build_score_response(
+        cast("ClimateRepository", SingleCellRepository()),
+        PreferenceInputs(
+            ideal_temperature=22, cold_tolerance=7, heat_tolerance=5, rain_sensitivity=55, sun_preference=60
+        ),
+    )
+
+    assert response == {"scores": [], "heatmap": ""}
+
+
+def test_build_score_response_falls_back_to_array_heatmap_path_when_projection_cache_is_absent() -> None:
+    class MatrixOnlyRepository:
+        def list_cells(self) -> tuple[ClimateCell, ...]:
+            return ()
+
+        def list_cities(self) -> tuple[CityCandidate, ...]:
+            return ()
+
+        def get_climate_matrix(self) -> ClimateMatrix:
+            return ClimateMatrix.from_cells(
+                (
+                    ClimateCell(
+                        lat=1.0,
+                        lon=2.0,
+                        temperature_c=(22.0,) * 12,
+                        precipitation_mm=(0.0,) * 12,
+                        cloud_cover_pct=(15,) * 12,
+                    ),
+                )
+            )
+
+        def get_indexed_cities(self) -> CityRankingCache:
+            return CityRankingCache.from_cities((), np.array([], dtype=np.int32))
+
+    response = build_score_response(
+        cast("ClimateRepository", MatrixOnlyRepository()),
+        PreferenceInputs(
+            ideal_temperature=22, cold_tolerance=7, heat_tolerance=5, rain_sensitivity=55, sun_preference=60
+        ),
+    )
+
+    assert response["scores"] == []
+    assert response["heatmap"].startswith("data:image/png;base64,")

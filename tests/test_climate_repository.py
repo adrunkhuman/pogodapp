@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import duckdb
 import numpy as np
@@ -10,7 +10,9 @@ from fastapi.testclient import TestClient
 if TYPE_CHECKING:
     from pathlib import Path
 
-from backend.cities import CityCandidate
+    from backend.climate_repository import ClimateRepository
+
+from backend.cities import CityCandidate, CityRankingCache
 from backend.climate_pipeline import (
     build_insert_rows,
     copy_rows_into_cities_table,
@@ -18,9 +20,14 @@ from backend.climate_pipeline import (
     create_cities_table,
     create_climate_cells_table,
 )
-from backend.climate_repository import ClimateDataError, DuckDbClimateRepository, StubClimateRepository
+from backend.climate_repository import (
+    ClimateDataError,
+    DuckDbClimateRepository,
+    StubClimateRepository,
+)
+from backend.heatmap import HeatmapProjection
 from backend.main import create_app
-from backend.scoring import ClimateCell
+from backend.scoring import ClimateCell, ClimateMatrix
 
 
 def test_stub_climate_repository_returns_climate_cells() -> None:
@@ -160,7 +167,17 @@ def test_app_can_use_an_injected_climate_repository() -> None:
         def list_cities(self) -> tuple[CityCandidate, ...]:
             return ()
 
-    response = TestClient(create_app(climate_repository=SingleCellRepository())).post(
+        def get_climate_matrix(self) -> ClimateMatrix:
+            return ClimateMatrix.from_cells(self.list_cells())
+
+        def get_indexed_cities(self) -> CityRankingCache:
+            return CityRankingCache.from_cities((), np.array([], dtype=np.int32))
+
+        def get_heatmap_projection(self) -> HeatmapProjection:
+            climate_matrix = self.get_climate_matrix()
+            return HeatmapProjection.from_coordinates(climate_matrix.latitudes, climate_matrix.longitudes)
+
+    response = TestClient(create_app(climate_repository=cast("ClimateRepository", SingleCellRepository()))).post(
         "/score",
         data={
             "ideal_temperature": "22",
@@ -173,6 +190,126 @@ def test_app_can_use_an_injected_climate_repository() -> None:
 
     assert response.status_code == 200
     assert response.json()["scores"] == []
+
+
+def test_create_app_preloads_optimized_repository() -> None:
+    class PreloadedRepository:
+        def __init__(self) -> None:
+            self.preload_calls: list[str] = []
+
+        def get_climate_matrix(self) -> ClimateMatrix:
+            self.preload_calls.append("matrix")
+            return ClimateMatrix(
+                latitudes=np.array([], dtype=np.float32),
+                longitudes=np.array([], dtype=np.float32),
+                temperature_c=np.empty((0, 12), dtype=np.float32),
+                precipitation_mm=np.empty((0, 12), dtype=np.float32),
+                cloud_cover_pct=np.empty((0, 12), dtype=np.uint8),
+            )
+
+        def get_indexed_cities(self) -> CityRankingCache:
+            self.preload_calls.append("cities")
+            return CityRankingCache.from_cities((), np.array([], dtype=np.int32))
+
+        def get_heatmap_projection(self) -> HeatmapProjection:
+            self.preload_calls.append("heatmap")
+            return HeatmapProjection.from_coordinates(np.array([], dtype=np.float32), np.array([], dtype=np.float32))
+
+        def list_cells(self) -> tuple[ClimateCell, ...]:
+            return ()
+
+        def list_cities(self) -> tuple[CityCandidate, ...]:
+            return ()
+
+    repository = PreloadedRepository()
+
+    create_app(climate_repository=cast("ClimateRepository", repository))
+
+    assert repository.preload_calls == ["matrix", "cities", "heatmap"]
+
+
+def test_create_app_preload_is_best_effort_for_data_errors() -> None:
+    class BrokenPreloadRepository:
+        def get_climate_matrix(self) -> ClimateMatrix:
+            msg = "Climate database file not found: data/climate.duckdb"
+            raise ClimateDataError(msg)
+
+        def list_cells(self) -> tuple[ClimateCell, ...]:
+            return ()
+
+        def list_cities(self) -> tuple[CityCandidate, ...]:
+            return ()
+
+    app = create_app(climate_repository=cast("ClimateRepository", BrokenPreloadRepository()))
+
+    assert app.title == "Pogodapp"
+
+
+def test_create_app_preload_warms_caches_without_rebuilding_on_first_request() -> None:
+    class CountingRepository:
+        def __init__(self) -> None:
+            self.matrix_builds = 0
+            self.city_cache_builds = 0
+            self.heatmap_builds = 0
+            self._matrix: ClimateMatrix | None = None
+            self._cities: CityRankingCache | None = None
+            self._projection: HeatmapProjection | None = None
+
+        def list_cells(self) -> tuple[ClimateCell, ...]:
+            return ()
+
+        def list_cities(self) -> tuple[CityCandidate, ...]:
+            return ()
+
+        def get_climate_matrix(self) -> ClimateMatrix:
+            if self._matrix is None:
+                self.matrix_builds += 1
+                self._matrix = ClimateMatrix.from_cells(
+                    (
+                        ClimateCell(
+                            lat=1.0,
+                            lon=2.0,
+                            temperature_c=(22.0,) * 12,
+                            precipitation_mm=(0.0,) * 12,
+                            cloud_cover_pct=(15,) * 12,
+                        ),
+                    )
+                )
+            return self._matrix
+
+        def get_indexed_cities(self) -> CityRankingCache:
+            if self._cities is None:
+                self.city_cache_builds += 1
+                self._cities = CityRankingCache.from_cities((), np.array([], dtype=np.int32))
+            return self._cities
+
+        def get_heatmap_projection(self) -> HeatmapProjection:
+            if self._projection is None:
+                self.heatmap_builds += 1
+                climate_matrix = self.get_climate_matrix()
+                self._projection = HeatmapProjection.from_coordinates(
+                    climate_matrix.latitudes, climate_matrix.longitudes
+                )
+            return self._projection
+
+    repository = CountingRepository()
+    client = TestClient(create_app(climate_repository=cast("ClimateRepository", repository)))
+
+    response = client.post(
+        "/score",
+        data={
+            "ideal_temperature": "22",
+            "cold_tolerance": "7",
+            "heat_tolerance": "5",
+            "rain_sensitivity": "55",
+            "sun_preference": "60",
+        },
+    )
+
+    assert response.status_code == 200
+    assert repository.matrix_builds == 1
+    assert repository.city_cache_builds == 1
+    assert repository.heatmap_builds == 1
 
 
 def test_app_can_use_an_injected_climate_repository_with_city_catalog() -> None:
@@ -191,7 +328,17 @@ def test_app_can_use_an_injected_climate_repository_with_city_catalog() -> None:
         def list_cities(self) -> tuple[CityCandidate, ...]:
             return (CityCandidate(name="Test City", country_code="CO", lat=1.0, lon=2.0, cell_lat=1.0, cell_lon=2.0),)
 
-    response = TestClient(create_app(climate_repository=SingleCellRepository())).post(
+        def get_climate_matrix(self) -> ClimateMatrix:
+            return ClimateMatrix.from_cells(self.list_cells())
+
+        def get_indexed_cities(self) -> CityRankingCache:
+            return CityRankingCache.from_cities(self.list_cities(), np.array([0], dtype=np.int32))
+
+        def get_heatmap_projection(self) -> HeatmapProjection:
+            climate_matrix = self.get_climate_matrix()
+            return HeatmapProjection.from_coordinates(climate_matrix.latitudes, climate_matrix.longitudes)
+
+    response = TestClient(create_app(climate_repository=cast("ClimateRepository", SingleCellRepository()))).post(
         "/score",
         data={
             "ideal_temperature": "22",
@@ -215,7 +362,7 @@ def test_app_returns_clear_503_when_climate_repository_fails() -> None:
         def list_cities(self) -> tuple[CityCandidate, ...]:
             return ()
 
-    response = TestClient(create_app(climate_repository=BrokenRepository())).post(
+    response = TestClient(create_app(climate_repository=cast("ClimateRepository", BrokenRepository()))).post(
         "/score",
         data={
             "ideal_temperature": "22",
@@ -247,7 +394,7 @@ def test_app_returns_clear_503_when_city_lookup_fails() -> None:
             msg = "Climate database file is missing the cities table: data/climate.duckdb"
             raise ClimateDataError(msg)
 
-    response = TestClient(create_app(climate_repository=BrokenCityRepository())).post(
+    response = TestClient(create_app(climate_repository=cast("ClimateRepository", BrokenCityRepository()))).post(
         "/score",
         data={
             "ideal_temperature": "22",
@@ -305,6 +452,49 @@ def test_app_scores_from_duckdb(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json()["scores"] == [{"name": "Test City", "country_code": "CO", "flag": "🇨🇴", "score": 1.0}]
+
+
+def test_duckdb_city_cache_aligns_indexes_with_shuffled_climate_rows(tmp_path: Path) -> None:
+    database_path = tmp_path / "climate.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(
+            """
+            CREATE TABLE climate_cells AS
+            SELECT * FROM (
+                VALUES
+                    (5.0, 6.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0,
+                     0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15),
+                    (1.0, 2.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0,
+                     0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15)
+            ) AS t(
+                lat, lon,
+                t_jan, t_feb, t_mar, t_apr, t_may, t_jun, t_jul, t_aug, t_sep, t_oct, t_nov, t_dec,
+                prec_jan, prec_feb, prec_mar, prec_apr, prec_may, prec_jun, prec_jul, prec_aug, prec_sep, prec_oct, prec_nov, prec_dec,
+                cloud_jan, cloud_feb, cloud_mar, cloud_apr, cloud_may, cloud_jun, cloud_jul, cloud_aug, cloud_sep, cloud_oct, cloud_nov, cloud_dec
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE cities AS
+            SELECT * FROM (
+                VALUES
+                    ('First Match', 'CO', 1.0, 2.0, 1.0, 2.0),
+                    ('Missing Match', 'CO', 7.0, 8.0, 7.0, 8.0)
+            ) AS t(name, country_code, lat, lon, cell_lat, cell_lon)
+            """
+        )
+
+    repository = DuckDbClimateRepository(database_path)
+    climate_matrix = repository.get_climate_matrix()
+    city_cache = repository.get_indexed_cities()
+
+    assert [city.name for city in city_cache.cities] == ["First Match"]
+    mapped_index = int(city_cache.climate_indexes[0])
+    assert float(climate_matrix.latitudes[mapped_index]) == 1.0
+    assert float(climate_matrix.longitudes[mapped_index]) == 2.0
 
 
 def test_app_uses_duckdb_automatically_when_default_database_exists(

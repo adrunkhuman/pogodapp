@@ -1,6 +1,18 @@
+import numpy as np
 import pytest
 
-from backend.scoring import ClimateCell, PreferenceInputs, annual_score, cloud_score, rain_score, temperature_score
+from backend.scoring import (
+    STUB_CLIMATE_CELLS,
+    ClimateCell,
+    ClimateMatrix,
+    PreferenceInputs,
+    annual_score,
+    cloud_score,
+    normalize_score_array,
+    rain_score,
+    score_climate_matrix,
+    temperature_score,
+)
 
 
 def test_temperature_score_keeps_the_comfort_band_at_full_score() -> None:
@@ -133,3 +145,31 @@ def test_climate_cell_requires_exactly_twelve_months_per_signal(
             precipitation_mm=precipitation_mm,
             cloud_cover_pct=cloud_cover_pct,
         )
+
+
+def test_vectorized_scoring_matches_scalar_scoring_for_stub_cells() -> None:
+    preferences = PreferenceInputs(
+        ideal_temperature=22,
+        cold_tolerance=7,
+        heat_tolerance=5,
+        rain_sensitivity=55,
+        sun_preference=60,
+    )
+    climate_matrix = ClimateMatrix(
+        latitudes=np.array([cell.lat for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
+        longitudes=np.array([cell.lon for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
+        temperature_c=np.array([cell.temperature_c for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
+        precipitation_mm=np.array([cell.precipitation_mm for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
+        cloud_cover_pct=np.array([cell.cloud_cover_pct for cell in STUB_CLIMATE_CELLS], dtype=np.uint8),
+    )
+
+    scalar_scores = np.array([annual_score(cell, preferences) for cell in STUB_CLIMATE_CELLS], dtype=np.float32)
+    vectorized_scores = score_climate_matrix(climate_matrix, preferences)
+
+    assert np.allclose(vectorized_scores, scalar_scores)
+
+
+def test_normalize_score_array_scales_best_match_to_one() -> None:
+    normalized = normalize_score_array(np.array([0.25, 0.5, 0.125], dtype=np.float32))
+
+    assert normalized.tolist() == [0.5, 1.0, 0.25]

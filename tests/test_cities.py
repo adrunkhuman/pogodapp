@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from backend.cities import (
     STUB_CITY_CANDIDATES,
     CityCandidate,
+    CityRankingCache,
     apply_regional_penalty,
     country_flag,
     haversine_distance_km,
     rank_city_scores,
+    rank_indexed_city_scores,
     snap_city_to_cell_key,
 )
 from backend.config import CITY_DIVERSITY_DECAY_KM
@@ -97,6 +101,36 @@ def test_rank_city_scores_uses_configured_decay_radius() -> None:
         apply_regional_penalty(0.97, cities[0], cities[1], 1.0, decay_km=CITY_DIVERSITY_DECAY_KM),
         4,
     )
+
+
+def test_rank_indexed_city_scores_matches_classic_ranking_behavior() -> None:
+    cities = (
+        CityCandidate(name="Bogota", country_code="CO", lat=4.711, lon=-74.0721, cell_lat=4.75, cell_lon=-74.0833),
+        CityCandidate(name="Medellin", country_code="CO", lat=6.2442, lon=-75.5812, cell_lat=6.25, cell_lon=-75.5833),
+        CityCandidate(name="Quito", country_code="EC", lat=-0.1807, lon=-78.4678, cell_lat=-0.25, cell_lon=-78.4167),
+    )
+    classic_scores: list[CellScorePoint] = [
+        {"lat": 4.75, "lon": -74.0833, "score": 1.0},
+        {"lat": 6.25, "lon": -75.5833, "score": 0.82},
+        {"lat": -0.25, "lon": -78.4167, "score": 0.91},
+    ]
+    indexed_catalog = CityRankingCache(
+        cities=cities,
+        climate_indexes=np.array([0, 1, 2], dtype=np.int32),
+        latitude_radians=np.radians(np.array([city.lat for city in cities], dtype=np.float32)),
+        longitude_radians=np.radians(np.array([city.lon for city in cities], dtype=np.float32)),
+        cosine_latitudes=np.cos(np.radians(np.array([city.lat for city in cities], dtype=np.float32))).astype(
+            np.float32,
+            copy=False,
+        ),
+        flags=tuple(country_flag(city.country_code) for city in cities),
+    )
+    indexed_scores = np.array([1.0, 0.82, 0.91], dtype=np.float32)
+
+    classic_ranked = rank_city_scores(cities, classic_scores, limit=2)
+    indexed_ranked = rank_indexed_city_scores(indexed_catalog, indexed_scores, limit=2)
+
+    assert indexed_ranked == classic_ranked
 
 
 def test_haversine_distance_km_is_small_for_nearby_cities() -> None:
