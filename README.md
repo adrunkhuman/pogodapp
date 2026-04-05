@@ -30,7 +30,7 @@ Pogodapp is a climate preference search tool, not a weather app. The user descri
 - `htmx:afterRequest` bridges the response into the map update path
 - `frontend/static/map.js` stays focused on rendering, not networking
 - The current map uses MapLibre GL with app-served static assets and a lightweight local GeoJSON world backdrop
-- The score overlay still renders as GeoJSON circles on top of that backdrop, and the textual score list remains available alongside the map
+- The score overlay now renders as a colored grid-cell surface on top of that backdrop, and the textual score list remains available alongside the map
 - DuckDB is the only runtime data store
 - The app uses `data/climate.duckdb` automatically when that file exists; otherwise it falls back to stub climate rows until the dataset lands
 
@@ -52,7 +52,7 @@ Each grid cell is scored month-by-month, then combined into one annual score.
 - `sun_preference` maps onto a cloud-cover tolerance threshold and then applies a one-sided misery-style cloud penalty
 - The stub scorer now uses one grid-cell record with 12 monthly values per climate signal and averages monthly composite scores into one annual score; DuckDB-backed data still lands in later issues
 - Final scores are normalized to the `0..1` range for map rendering
-- The current prototype renders scores as colored circle markers with larger, warmer markers indicating better matches
+- The current prototype renders scores as colored climate cells so stronger matching regions remain readable at world scale
 
 ## Repository Layout
 
