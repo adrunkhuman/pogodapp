@@ -8,9 +8,6 @@ const BORDER_LAYER_ID = "world-borders";
 const HEATMAP_SOURCE_ID = "score-heatmap";
 const HEATMAP_LAYER_ID = "score-heatmap";
 
-// 1x1 transparent PNG — placeholder until the first score response arrives
-const EMPTY_IMAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
-
 // World extent corners for the image source: [lon, lat] for TL, TR, BR, BL
 const WORLD_CORNERS = [[-180, 90], [180, 90], [180, -90], [-180, -90]];
 
@@ -44,6 +41,36 @@ function renderScoreList(scores) {
     const item = document.createElement("li");
     item.textContent = `${Math.round(point.score * 100)}% match at ${point.lat}, ${point.lon}`;
     results.append(item);
+  }
+}
+
+// Adds the heatmap source+layer on the first call; updates the image URL on subsequent calls.
+// Avoids the EMPTY_IMAGE placeholder whose async load races with the first updateImage call.
+function applyHeatmap(heatmap) {
+  const source = map.getSource(HEATMAP_SOURCE_ID);
+
+  if (source) {
+    source.updateImage({ url: heatmap });
+  } else {
+    map.addSource(HEATMAP_SOURCE_ID, {
+      type: "image",
+      url: heatmap,
+      coordinates: WORLD_CORNERS,
+    });
+
+    // Insert before BORDER_LAYER_ID so borders render on top of the heatmap.
+    map.addLayer(
+      {
+        id: HEATMAP_LAYER_ID,
+        type: "raster",
+        source: HEATMAP_SOURCE_ID,
+        paint: {
+          "raster-opacity": 0.85,
+          "raster-fade-duration": 200,
+        },
+      },
+      BORDER_LAYER_ID,
+    );
   }
 }
 
@@ -107,22 +134,6 @@ function initializeMap() {
       },
     });
 
-    map.addSource(HEATMAP_SOURCE_ID, {
-      type: "image",
-      url: EMPTY_IMAGE,
-      coordinates: WORLD_CORNERS,
-    });
-
-    map.addLayer({
-      id: HEATMAP_LAYER_ID,
-      type: "raster",
-      source: HEATMAP_SOURCE_ID,
-      paint: {
-        "raster-opacity": 0.85,
-        "raster-fade-duration": 200,
-      },
-    });
-
     map.addLayer({
       id: BORDER_LAYER_ID,
       type: "line",
@@ -142,9 +153,19 @@ window.renderScores = function renderScores(response) {
 
   renderScoreList(scores ?? []);
 
-  if (heatmap && map && map.isStyleLoaded()) {
-    map.getSource(HEATMAP_SOURCE_ID)?.updateImage({ url: heatmap });
+  if (!heatmap || !map) {
+    return;
+  }
+
+  if (map.isStyleLoaded()) {
+    applyHeatmap(heatmap);
     setMapStatus(`${scores.length} top matches shown.`);
+  } else {
+    // Score came back before the map finished loading — apply once it does.
+    map.once("load", () => {
+      applyHeatmap(heatmap);
+      setMapStatus(`${scores.length} top matches shown.`);
+    });
   }
 };
 
