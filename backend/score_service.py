@@ -98,18 +98,18 @@ def _ensure_continent_coverage(
     present: set[tuple[str, str, float, float]] = set()
     for entry in ranked:
         present.add(_city_identity(entry))
-        cont = continent_of(entry["country_code"])
+        cont = continent_of(entry["country_code"], entry["lon"])
         if cont != "Other":
             continent_counts[cont] = continent_counts.get(cont, 0) + 1
 
-    all_continents = {continent_of(c["country_code"]) for c in fill_pool} - {"Other"}
+    all_continents = {continent_of(c["country_code"], c["lon"]) for c in fill_pool} - {"Other"}
     needs_fill = {c for c in all_continents if continent_counts.get(c, 0) < min_per_continent}
 
     if not needs_fill:
         return ranked
 
     for city in fill_pool:
-        cont = continent_of(city["country_code"])
+        cont = continent_of(city["country_code"], city["lon"])
         if cont not in needs_fill or _city_identity(city) in present:
             continue
         ranked.append(city)
@@ -129,7 +129,7 @@ def _build_sidebar_scores(ranked_pool: list[CityScorePoint]) -> list[CityScorePo
     sidebar_scores: list[CityScorePoint] = []
 
     for city in ranked_pool:
-        continent = continent_of(city["country_code"])
+        continent = continent_of(city["country_code"], city["lon"])
         if continent == "Other":
             continue
         if continent_counts.get(continent, 0) >= SIDEBAR_CONTINENT_RESERVE:

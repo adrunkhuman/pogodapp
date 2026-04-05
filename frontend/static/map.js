@@ -60,10 +60,12 @@ const _AFRICA = new Set("AO BF BI BJ BW CD CF CG CI CM CV DJ DZ EG EH ER ET GA G
 const _NORTH_AMERICA  = new Set("AG BB BS BZ CA CR CU DM DO GD GT HN HT JM KN LC MX NI PA TT US VC".split(" "));
 const _SOUTH_AMERICA  = new Set("AR BO BR CL CO EC GF GY PE PY SR UY VE".split(" "));
 const _OCEANIA = new Set("AU FJ FM KI MH NR NZ PG PW SB TO TV VU WS".split(" "));
+const EUROPE_ASIA_LONGITUDE_SPLIT = 60;
 
 const CONTINENT_ORDER = ["Europe", "Asia", "Africa", "North America", "South America", "Oceania"];
 
-function continentOf(code) {
+function continentOf(code, lon = null) {
+  if (code === "RU" && lon != null) return lon >= EUROPE_ASIA_LONGITUDE_SPLIT ? "Asia" : "Europe";
   if (_EUROPE.has(code))        return "Europe";
   if (_ASIA.has(code))          return "Asia";
   if (_AFRICA.has(code))        return "Africa";
@@ -136,7 +138,7 @@ function visibleScoresForList(scores) {
   const groupedCounts = new Map();
 
   for (const point of scores) {
-    const continent = continentOf(point.country_code);
+    const continent = continentOf(point.country_code, point.lon);
     const usedCount = groupedCounts.get(continent) ?? 0;
     if (usedCount >= visibleCountForContinent(continent)) {
       continue;
@@ -309,7 +311,7 @@ function renderScoreList(scores) {
   // Group by continent, preserving score order within each group.
   const groups = new Map(CONTINENT_ORDER.map(c => [c, []]));
   for (const point of scores) {
-    const continent = continentOf(point.country_code);
+    const continent = continentOf(point.country_code, point.lon);
     groups.get(continent)?.push(point);
   }
 

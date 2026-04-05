@@ -9,6 +9,7 @@ from backend.cities import (
     CityCandidate,
     CityRankingCache,
     apply_regional_penalty,
+    continent_of,
     country_flag,
     haversine_distance_km,
     rank_city_scores,
@@ -209,6 +210,14 @@ def test_rank_indexed_city_scores_prefers_larger_population_center_when_scores_a
     ranked = rank_indexed_city_scores(indexed_catalog, np.array([0.9, 0.892], dtype=np.float32), limit=1)
 
     assert ranked[0]["name"] == "Bogota"
+
+
+def test_continent_of_treats_western_russia_as_europe() -> None:
+    assert continent_of("RU", 37.6173) == "Europe"
+
+
+def test_continent_of_treats_siberia_as_asia() -> None:
+    assert continent_of("RU", 82.9204) == "Asia"
 
 
 def test_haversine_distance_km_is_small_for_nearby_cities() -> None:

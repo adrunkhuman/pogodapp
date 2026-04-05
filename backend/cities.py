@@ -215,9 +215,18 @@ _CONTINENT_LOOKUP: tuple[tuple[str, frozenset[str]], ...] = (
     ("Oceania", _OCEANIA),
 )
 
+EUROPE_ASIA_LONGITUDE_SPLIT = 60.0
 
-def continent_of(country_code: str) -> str:
-    """Map an ISO 3166-1 alpha-2 code to its continent name."""
+
+def continent_of(country_code: str, lon: float | None = None) -> str:
+    """Map an ISO 3166-1 alpha-2 code to its continent name.
+
+    Russia spans both Europe and Asia; use longitude to keep Siberian cities out
+    of the Europe sidebar bucket.
+    """
+    if country_code == "RU" and lon is not None:
+        return "Asia" if lon >= EUROPE_ASIA_LONGITUDE_SPLIT else "Europe"
+
     for continent, codes in _CONTINENT_LOOKUP:
         if country_code in codes:
             return continent

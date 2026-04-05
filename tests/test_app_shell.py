@@ -224,7 +224,7 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
     assert max(score_values) > 0
     continent_counts: dict[str, int] = {}
     for item in scores:
-        continent = continent_of(item["country_code"])
+        continent = continent_of(item["country_code"], item["lon"])
         if continent == "Other":
             continue
         continent_counts[continent] = continent_counts.get(continent, 0) + 1
