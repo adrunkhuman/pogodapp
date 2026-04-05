@@ -5,12 +5,16 @@ const BACKDROP_SOURCE_ID = "world-backdrop";
 const OCEAN_LAYER_ID = "world-ocean";
 const LAND_LAYER_ID = "world-land";
 const BORDER_LAYER_ID = "world-borders";
-const SCORE_SOURCE_ID = "scores";
-const SCORE_LAYER_ID = "scores-circles";
-const EMPTY_SCORE_COLLECTION = { type: "FeatureCollection", features: [] };
+const SCORE_POINT_SOURCE_ID = "score-points";
+const SCORE_SURFACE_SOURCE_ID = "score-surface";
+const SCORE_SURFACE_LAYER_ID = "score-surface";
+const CLIMATE_CELL_DEGREES = 0.5;
+const CLIMATE_CELL_HALF_DEGREES = CLIMATE_CELL_DEGREES / 2;
+const EMPTY_FEATURE_COLLECTION = { type: "FeatureCollection", features: [] };
 
 let map;
-let pendingScores = EMPTY_SCORE_COLLECTION;
+let pendingPointScores = EMPTY_FEATURE_COLLECTION;
+let pendingSurfaceScores = EMPTY_FEATURE_COLLECTION;
 
 function setMapStatus(message) {
   const status = document.getElementById("map-status");
@@ -46,9 +50,9 @@ function renderScoreList(collection) {
   }
 }
 
-function toScoreFeatureCollection(scores) {
+function toScorePointCollection(scores) {
   if (!Array.isArray(scores)) {
-    return EMPTY_SCORE_COLLECTION;
+    return EMPTY_FEATURE_COLLECTION;
   }
 
   const features = [];
@@ -78,8 +82,33 @@ function toScoreFeatureCollection(scores) {
   return { type: "FeatureCollection", features };
 }
 
+function toScoreSurfaceCollection(pointCollection) {
+  return {
+    type: "FeatureCollection",
+    features: pointCollection.features.map((feature) => {
+      const [lon, lat] = feature.geometry.coordinates;
+
+      return {
+        type: "Feature",
+        geometry: {
+          type: "Polygon",
+          coordinates: [[
+            [lon - CLIMATE_CELL_HALF_DEGREES, lat - CLIMATE_CELL_HALF_DEGREES],
+            [lon + CLIMATE_CELL_HALF_DEGREES, lat - CLIMATE_CELL_HALF_DEGREES],
+            [lon + CLIMATE_CELL_HALF_DEGREES, lat + CLIMATE_CELL_HALF_DEGREES],
+            [lon - CLIMATE_CELL_HALF_DEGREES, lat + CLIMATE_CELL_HALF_DEGREES],
+            [lon - CLIMATE_CELL_HALF_DEGREES, lat - CLIMATE_CELL_HALF_DEGREES],
+          ]],
+        },
+        properties: feature.properties,
+      };
+    }),
+  };
+}
+
 function applyScores(collection) {
-  pendingScores = collection;
+  pendingPointScores = collection;
+  pendingSurfaceScores = toScoreSurfaceCollection(collection);
   renderScoreList(collection);
 
   if (collection.features.length === 0) {
@@ -92,10 +121,15 @@ function applyScores(collection) {
     return;
   }
 
-  const source = map.getSource(SCORE_SOURCE_ID);
+  const pointSource = map.getSource(SCORE_POINT_SOURCE_ID);
+  const surfaceSource = map.getSource(SCORE_SURFACE_SOURCE_ID);
 
-  if (source) {
-    source.setData(collection);
+  if (pointSource) {
+    pointSource.setData(pendingPointScores);
+  }
+
+  if (surfaceSource) {
+    surfaceSource.setData(pendingSurfaceScores);
   }
 }
 
@@ -169,49 +203,62 @@ function initializeMap() {
       },
     });
 
-    map.addSource(SCORE_SOURCE_ID, {
+    map.addSource(SCORE_POINT_SOURCE_ID, {
       type: "geojson",
-      data: pendingScores,
+      data: pendingPointScores,
+    });
+
+    map.addSource(SCORE_SURFACE_SOURCE_ID, {
+      type: "geojson",
+      data: pendingSurfaceScores,
     });
 
     map.addLayer({
-      id: SCORE_LAYER_ID,
-      type: "circle",
-      source: SCORE_SOURCE_ID,
+      id: SCORE_SURFACE_LAYER_ID,
+      type: "fill",
+      source: SCORE_SURFACE_SOURCE_ID,
       paint: {
-        "circle-color": [
+        "fill-color": [
           "interpolate",
           ["linear"],
           ["get", "score"],
           0,
-          "#355c7d",
-          0.5,
-          "#f8b65a",
+          "rgba(53, 92, 125, 0.16)",
+          0.45,
+          "rgba(127, 179, 213, 0.35)",
+          0.65,
+          "rgba(248, 182, 90, 0.58)",
+          0.82,
+          "rgba(234, 95, 137, 0.8)",
           1,
-          "#ea5f89",
+          "rgba(121, 40, 202, 0.9)",
         ],
-        "circle-opacity": 0.82,
-        "circle-radius": [
+        "fill-opacity": [
           "interpolate",
           ["linear"],
-          ["get", "score"],
+          ["zoom"],
           0,
+          0.28,
+          1,
+          0.34,
+          2,
+          0.42,
           4,
-          1,
-          13,
+          0.56,
+          6,
+          0.74,
         ],
-        "circle-stroke-color": "#fffaf3",
-        "circle-stroke-width": 1.5,
+        "fill-outline-color": "rgba(255, 250, 243, 0.06)",
       },
     });
 
     setMapStatus("Map backdrop ready.");
-    applyScores(pendingScores);
+    applyScores(pendingPointScores);
   });
 }
 
 window.renderScores = function renderScores(scores) {
-  applyScores(toScoreFeatureCollection(scores));
+  applyScores(toScorePointCollection(scores));
 };
 
 if (document.readyState === "loading") {
@@ -220,4 +267,4 @@ if (document.readyState === "loading") {
   initializeMap();
 }
 
-renderScoreList(EMPTY_SCORE_COLLECTION);
+renderScoreList(EMPTY_FEATURE_COLLECTION);
