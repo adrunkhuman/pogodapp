@@ -46,15 +46,12 @@
       </section>
 
       <section class="app-panel map-panel" aria-label="Map container">
-        <h2>Map</h2>
         <p id="map-status" class="visually-hidden" role="status" aria-live="polite"></p>
-        <p id="map-description" class="map-description">
-          Interactive world map of scored climate matches. Dark land and ocean layers keep the heatmap readable while borders stay visible.
-        </p>
+        <p id="map-description" class="visually-hidden">Interactive climate score map.</p>
         <div id="map-legend" class="map-legend" aria-label="Map legend">
-          <span class="map-legend__item map-legend__item--low"><span aria-hidden="true">■</span> LOW</span>
-          <span class="map-legend__item map-legend__item--mid"><span aria-hidden="true">■</span> MED</span>
-          <span class="map-legend__item map-legend__item--high"><span aria-hidden="true">■</span> HIGH</span>
+          <span class="map-legend__item"><span class="map-legend__swatch map-legend__swatch--low" aria-hidden="true">■</span> LOW</span>
+          <span class="map-legend__item"><span class="map-legend__swatch map-legend__swatch--mid" aria-hidden="true">■</span> MED</span>
+          <span class="map-legend__item"><span class="map-legend__swatch map-legend__swatch--high" aria-hidden="true">■</span> HIGH</span>
         </div>
         <div id="map" role="region" aria-label="Interactive climate score map" aria-describedby="map-description map-legend map-status"></div>
       </section>

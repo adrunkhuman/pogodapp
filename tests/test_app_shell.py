@@ -20,6 +20,7 @@ def test_home_page_renders() -> None:
     assert 'id="map-description"' in response.text
     assert 'id="map-status"' in response.text
     assert 'id="map-legend"' in response.text
+    assert "Interactive climate score map." in response.text
     assert (
         'id="map" role="region" aria-label="Interactive climate score map" aria-describedby="map-description map-legend map-status"'
         in response.text
