@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Protocol, cast
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 
 from backend.climate_repository import (
     ClimateDataError,
@@ -18,7 +20,14 @@ from backend.climate_repository import (
 from backend.config import DEFAULT_PREFERENCES, MAP_PROJECTION
 from backend.logging_config import configure_backend_logging
 from backend.score_service import ScoreResponse, build_score_response
-from backend.scoring import PreferenceInputs  # noqa: TC001 - FastAPI needs the runtime symbol for Form model parsing
+from backend.scoring import (
+    PreferenceInputs,
+    ProbeBreakdown,
+    score_matrix_row_breakdown,
+)
+
+if TYPE_CHECKING:
+    from backend.scoring import ClimateMatrix
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
@@ -29,6 +38,39 @@ CLIMATE_DATABASE_ENV_VAR = "POGODAPP_CLIMATE_DB"
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 logger = logging.getLogger(__name__)
+
+
+class _SupportsProbeRepository(Protocol):
+    def probe_nearest_cell(self, lat: float, lon: float) -> int | None: ...
+
+    def get_climate_matrix(self) -> ClimateMatrix: ...
+
+
+class ProbeMetricResponse(BaseModel):
+    """One rendered metric row in the `/probe` payload."""
+
+    key: str
+    label: str
+    value: float
+    display_value: str
+    score: float
+
+
+class ProbeResponse(BaseModel):
+    """Per-attribute climate breakdown for one hovered map point."""
+
+    found: bool = False
+    overall_score: float = 0.0
+    metrics: list[ProbeMetricResponse] = Field(default_factory=list)
+
+
+def build_probe_response(breakdown: ProbeBreakdown) -> ProbeResponse:
+    """Map scoring breakdown data into the stable `/probe` response model."""
+    return ProbeResponse(
+        found=True,
+        overall_score=breakdown.overall_score,
+        metrics=[ProbeMetricResponse(**asdict(metric)) for metric in breakdown.metrics],
+    )
 
 
 def build_index_context() -> dict[str, object]:
@@ -53,8 +95,8 @@ def preload_repository(repository: ClimateRepository) -> None:
         repository.get_indexed_cities()
         if hasattr(repository, "get_heatmap_projection"):
             repository.get_heatmap_projection()
-    except ClimateDataError:
-        logger.warning("startup_preload outcome=skipped")
+    except ClimateDataError as error:
+        logger.warning("startup_preload outcome=skipped detail=%s", error)
 
 
 def create_app(
@@ -86,7 +128,39 @@ def create_app(
         try:
             return build_score_response(repository, preferences)
         except ClimateDataError as error:
+            logger.exception("score_request outcome=error")
             raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.get("/probe")
+    async def probe(  # noqa: PLR0913
+        lat: Annotated[float, Query(ge=-90, le=90)],
+        lon: Annotated[float, Query(ge=-180, le=180)],
+        ideal_temperature: Annotated[int, Query(ge=-10, le=35)],
+        cold_tolerance: Annotated[int, Query(ge=0, le=15)],
+        heat_tolerance: Annotated[int, Query(ge=0, le=15)],
+        rain_sensitivity: Annotated[int, Query(ge=0, le=100)],
+        sun_preference: Annotated[int, Query(ge=0, le=100)],
+    ) -> ProbeResponse:
+        if not hasattr(repository, "probe_nearest_cell"):
+            return ProbeResponse()
+        probe_repository = cast("_SupportsProbeRepository", repository)
+        row_index = probe_repository.probe_nearest_cell(lat, lon)
+        if row_index is None:
+            return ProbeResponse()
+        try:
+            climate_matrix = probe_repository.get_climate_matrix()
+        except ClimateDataError as error:
+            logger.exception("probe_request outcome=error")
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        preferences = PreferenceInputs(
+            ideal_temperature=ideal_temperature,
+            cold_tolerance=cold_tolerance,
+            heat_tolerance=heat_tolerance,
+            rain_sensitivity=rain_sensitivity,
+            sun_preference=sun_preference,
+        )
+        breakdown = score_matrix_row_breakdown(climate_matrix, row_index, preferences)
+        return build_probe_response(breakdown)
 
     return app
 

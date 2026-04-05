@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 
-CITY_DIVERSITY_DECAY_KM = 200.0
+CITY_DIVERSITY_DECAY_KM = 500.0
+# population=0 means a pre-migration DB row; don't filter it out.
+RANKING_MIN_POPULATION = 30_000
 WEB_MERCATOR_MAX_LATITUDE = 85.051129
 
 PREFERENCE_FIELD_NAMES: tuple[str, ...] = (

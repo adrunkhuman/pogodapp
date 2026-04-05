@@ -1,12 +1,12 @@
 import numpy as np
 from fastapi.testclient import TestClient
 
-from backend.cities import CityCandidate, CityRankingCache
-from backend.climate_repository import StubClimateRepository
+from backend.cities import CityCandidate, CityRankingCache, continent_of
+from backend.climate_repository import ClimateDataError, StubClimateRepository
 from backend.config import DEFAULT_PREFERENCES, MAP_PROJECTION, PREFERENCE_FIELD_NAMES
 from backend.heatmap import HeatmapProjection
-from backend.main import create_app
-from backend.scoring import ClimateCell, ClimateMatrix, PreferenceInputs, score_preferences
+from backend.main import build_probe_response, create_app
+from backend.scoring import ClimateCell, ClimateMatrix, PreferenceInputs, score_matrix_row_breakdown, score_preferences
 
 client = TestClient(create_app(climate_repository=StubClimateRepository()))
 
@@ -75,6 +75,12 @@ def test_home_page_renders() -> None:
     assert 'id="score-results-list"' in response.text
     assert "/static/vendor/maplibre-gl.css" in response.text
     assert "/static/vendor/maplibre-gl.js" in response.text
+    assert "/static/map-core.js" in response.text
+    assert "/static/map-sidebar.js" in response.text
+    assert "/static/map-probe.js" in response.text
+    assert "/static/map-layers.js" in response.text
+    assert "/static/map.js" in response.text
+    assert "/static/app.js" in response.text
     assert "window.POGODAPP_MAP_CONFIG" in response.text
     assert MAP_PROJECTION.name in response.text
 
@@ -153,19 +159,24 @@ def test_local_map_assets_are_served() -> None:
 
 def test_map_script_initializes_maplibre_score_layer() -> None:
     response = client.get("/static/map.js")
+    core_response = client.get("/static/map-core.js")
+    layers_response = client.get("/static/map-layers.js")
 
     assert response.status_code == 200
+    assert core_response.status_code == 200
+    assert layers_response.status_code == 200
     assert "new window.maplibregl.Map" in response.text
+    assert "WORLD_BACKDROP_URL" in response.text
+    assert "HEATMAP_SOURCE_ID" in layers_response.text
     assert "data: WORLD_BACKDROP_URL" in response.text
     assert "id: LAND_LAYER_ID" in response.text
     assert "id: BORDER_LAYER_ID" in response.text
-    assert "HEATMAP_SOURCE_ID" in response.text
-    assert 'type: "image"' in response.text
-    assert 'type: "raster"' in response.text
+    assert 'type: "image"' in layers_response.text
+    assert 'type: "raster"' in layers_response.text
     assert "projection: { type: MAP_CONFIG.projection }" in response.text
-    assert "window.POGODAPP_MAP_CONFIG" in response.text
-    assert "WORLD_CORNERS" in response.text
-    assert "updateImage" in response.text
+    assert "window.POGODAPP_MAP_CONFIG" in core_response.text
+    assert "WORLD_CORNERS" in core_response.text
+    assert "updateImage" in layers_response.text
     assert 'setMapStatus("Map backdrop ready.");' in response.text
     assert 'setMapStatus("Map library failed to load.");' in response.text
 
@@ -173,15 +184,24 @@ def test_map_script_initializes_maplibre_score_layer() -> None:
 def test_map_contract_does_not_depend_on_remote_basemap_assets() -> None:
     home_response = client.get("/")
     script_response = client.get("/static/map.js")
+    core_response = client.get("/static/map-core.js")
+    layers_response = client.get("/static/map-layers.js")
+    probe_response = client.get("/static/map-probe.js")
 
     assert home_response.status_code == 200
     assert script_response.status_code == 200
+    assert core_response.status_code == 200
+    assert layers_response.status_code == 200
+    assert probe_response.status_code == 200
     assert "pmtiles" not in home_response.text
     assert "protomaps" not in home_response.text
     assert "unpkg.com/maplibre-gl" not in home_response.text
     assert "pmtiles" not in script_response.text
     assert "protomaps" not in script_response.text
     assert "https://" not in script_response.text
+    assert "https://" not in core_response.text
+    assert "https://" not in layers_response.text
+    assert "https://" not in probe_response.text
 
 
 def test_score_endpoint_accepts_form_encoded_preferences() -> None:
@@ -202,8 +222,7 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
     payload = response.json()
 
     assert isinstance(payload, dict)
-    assert "scores" in payload
-    assert "heatmap" in payload
+    assert set(payload) == {"scores", "heatmap"}
 
     scores = payload["scores"]
     assert isinstance(scores, list)
@@ -211,9 +230,21 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
 
     score_values = [item["score"] for item in scores]
     for item in scores:
-        assert set(item) == {"name", "country_code", "flag", "score"}
+        assert set(item) == {
+            "name",
+            "continent",
+            "country_code",
+            "flag",
+            "score",
+            "lat",
+            "lon",
+            "probe_lat",
+            "probe_lon",
+        }
         assert isinstance(item["name"], str)
         assert item["name"]
+        assert isinstance(item["continent"], str)
+        assert item["continent"]
         assert isinstance(item["country_code"], str)
         assert len(item["country_code"]) == 2
         assert isinstance(item["flag"], str)
@@ -222,8 +253,14 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
     # City scores inherit normalized cell scores, but the best cell may have no nearby city.
     assert max(score_values) <= 1.0
     assert max(score_values) > 0
-    # List capped at top 20 for the text panel
-    assert len(scores) <= 20
+    continent_counts: dict[str, int] = {}
+    for item in scores:
+        continent = continent_of(item["country_code"], item["lon"])
+        if continent == "Other":
+            continue
+        continent_counts[continent] = continent_counts.get(continent, 0) + 1
+    assert continent_counts
+    assert all(count <= 30 for count in continent_counts.values())
     # Heatmap is a PNG data URL
     assert payload["heatmap"].startswith("data:image/png;base64,")
 
@@ -330,7 +367,7 @@ def test_score_endpoint_rejects_non_numeric_preferences() -> None:
     assert any(item["loc"][-1] == "ideal_temperature" for item in detail)
 
 
-def test_score_endpoint_caps_city_results_to_top_twenty() -> None:
+def test_score_endpoint_returns_all_available_cities_when_under_continent_reserve() -> None:
     many_cities_client = TestClient(create_app(climate_repository=ManyCitiesRepository()))
 
     response = many_cities_client.post(
@@ -349,26 +386,170 @@ def test_score_endpoint_caps_city_results_to_top_twenty() -> None:
     returned_names = [item["name"] for item in scores]
     all_names = {f"City {index:02d}" for index in range(25)}
 
-    assert len(scores) == 20
-    assert len(set(returned_names)) == 20
-    assert set(returned_names) <= all_names
-    assert len(all_names - set(returned_names)) == 5
+    # 25 cities available in total — all returned since no continent reserve is hit.
+    assert len(scores) == 25
+    assert set(returned_names) == all_names
+
+
+def test_probe_endpoint_returns_scored_breakdown_for_a_valid_cell() -> None:
+    class ProbeRepository(StubClimateRepository):
+        def __init__(self) -> None:
+            self._matrix = ClimateMatrix.from_cells(self.list_cells())
+
+        def get_climate_matrix(self) -> ClimateMatrix:
+            return self._matrix
+
+        def probe_nearest_cell(self, lat: float, lon: float) -> int | None:
+            return 0
+
+    probe_client = TestClient(create_app(climate_repository=ProbeRepository()))
+
+    response = probe_client.get(
+        "/probe",
+        params={
+            "lat": 37.5,
+            "lon": -122.0,
+            "ideal_temperature": 22,
+            "cold_tolerance": 7,
+            "heat_tolerance": 5,
+            "rain_sensitivity": 55,
+            "sun_preference": 60,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["found"] is True
+    assert 0 <= payload["overall_score"] <= 1
+    assert set(payload) == {"found", "overall_score", "metrics"}
+    assert len(payload["metrics"]) == 3
+    assert payload["metrics"][0]["key"] == "temp"
+    assert payload["metrics"][1]["key"] == "rain"
+    assert payload["metrics"][2]["key"] == "sun"
+    assert all(set(metric) == {"key", "label", "value", "display_value", "score"} for metric in payload["metrics"])
+
+
+def test_probe_endpoint_returns_empty_payload_when_repository_has_no_probe_support() -> None:
+    probe_client = TestClient(create_app(climate_repository=StubClimateRepository()))
+
+    response = probe_client.get(
+        "/probe",
+        params={
+            "lat": 37.5,
+            "lon": -122.0,
+            "ideal_temperature": 22,
+            "cold_tolerance": 7,
+            "heat_tolerance": 5,
+            "rain_sensitivity": 55,
+            "sun_preference": 60,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"found": False, "overall_score": 0.0, "metrics": []}
+
+
+def test_probe_endpoint_returns_empty_payload_when_no_cell_is_found() -> None:
+    class MissingProbeRepository(StubClimateRepository):
+        def __init__(self) -> None:
+            self._matrix = ClimateMatrix.from_cells(self.list_cells())
+
+        def get_climate_matrix(self) -> ClimateMatrix:
+            return self._matrix
+
+        def probe_nearest_cell(self, lat: float, lon: float) -> int | None:
+            return None
+
+    probe_client = TestClient(create_app(climate_repository=MissingProbeRepository()))
+
+    response = probe_client.get(
+        "/probe",
+        params={
+            "lat": 37.5,
+            "lon": -122.0,
+            "ideal_temperature": 22,
+            "cold_tolerance": 7,
+            "heat_tolerance": 5,
+            "rain_sensitivity": 55,
+            "sun_preference": 60,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"found": False, "overall_score": 0.0, "metrics": []}
+
+
+def test_probe_endpoint_returns_503_for_repository_failures() -> None:
+    class BrokenProbeRepository(StubClimateRepository):
+        def probe_nearest_cell(self, lat: float, lon: float) -> int | None:
+            return 0
+
+        def get_climate_matrix(self) -> ClimateMatrix:
+            msg = "Climate database file not found: data/climate.duckdb"
+            raise ClimateDataError(msg)
+
+    probe_client = TestClient(create_app(climate_repository=BrokenProbeRepository()))
+
+    response = probe_client.get(
+        "/probe",
+        params={
+            "lat": 37.5,
+            "lon": -122.0,
+            "ideal_temperature": 22,
+            "cold_tolerance": 7,
+            "heat_tolerance": 5,
+            "rain_sensitivity": 55,
+            "sun_preference": 60,
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Climate database file not found: data/climate.duckdb"}
 
 
 def test_home_page_registers_htmx_handoff_script() -> None:
     response = client.get("/")
+    app_script = client.get("/static/app.js")
 
     assert response.status_code == 200
-    assert "htmx:afterRequest" in response.text
-    assert "window.renderScores(scores);" in response.text
+    assert app_script.status_code == 200
+    assert "/static/app.js" in response.text
+    assert "htmx:afterRequest" in app_script.text
+    assert "window.renderScores(JSON.parse(event.detail.xhr.responseText));" in app_script.text
 
 
 def test_map_script_renders_city_labels_instead_of_coordinates() -> None:
-    response = client.get("/static/map.js")
+    sidebar_response = client.get("/static/map-sidebar.js")
+    probe_response = client.get("/static/map-probe.js")
+    layers_response = client.get("/static/map-layers.js")
 
-    assert response.status_code == 200
-    assert "Intl.DisplayNames" in response.text
-    assert "point.country_code" in response.text
-    assert "point.name" in response.text
-    assert "point.flag" in response.text
-    assert "score-results__item" in response.text
+    assert sidebar_response.status_code == 200
+    assert probe_response.status_code == 200
+    assert layers_response.status_code == 200
+    assert "point.country_code" in sidebar_response.text
+    assert "point.name" in sidebar_response.text
+    assert "point.flag" in sidebar_response.text
+    assert "score-results__item" in sidebar_response.text
+    assert "if (!response.ok) throw new Error" in probe_response.text
+    assert "metric.display_value" in probe_response.text
+    assert "probe_lat" in layers_response.text
+
+
+def test_build_probe_response_preserves_metric_order_and_fields() -> None:
+    response = build_probe_response(
+        score_matrix_row_breakdown(
+            ClimateMatrix.from_cells((StubClimateRepository().list_cells()[0],)),
+            0,
+            PreferenceInputs(
+                ideal_temperature=22,
+                cold_tolerance=7,
+                heat_tolerance=5,
+                rain_sensitivity=55,
+                sun_preference=60,
+            ),
+        )
+    )
+
+    assert response.found is True
+    assert [metric.key for metric in response.metrics] == ["temp", "rain", "sun"]
+    assert [metric.label for metric in response.metrics] == ["temp", "rain", "sun"]

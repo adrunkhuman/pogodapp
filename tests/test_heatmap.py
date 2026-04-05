@@ -7,6 +7,7 @@ from backend.heatmap import (
     HEIGHT,
     WIDTH,
     HeatmapProjection,
+    _expand_detail_source,
     _preserve_local_maxima,
     _smooth_styled_heatmap_gray,
     _stylize_heatmap_gray,
@@ -56,6 +57,29 @@ def test_preserve_local_maxima_lifts_peak_above_blurred_neighbors() -> None:
     assert preserved[3, 4] < preserved[4, 4]
 
 
+def test_preserve_local_maxima_keeps_mid_strength_cell_close_to_raw_value() -> None:
+    base_gray = np.zeros((9, 9), dtype=np.uint8)
+    base_gray[4, 4] = 160
+
+    blurred_gray = np.full((9, 9), 72, dtype=np.uint8)
+    blurred_gray[4, 4] = 84
+
+    preserved = _preserve_local_maxima(base_gray, blurred_gray)
+
+    assert preserved[4, 4] >= 144
+    assert preserved[4, 3] >= 144
+
+
+def test_expand_detail_source_bridges_adjacent_rows() -> None:
+    base_gray = np.zeros((5, 5), dtype=np.uint8)
+    base_gray[2, 2] = 160
+
+    expanded = _expand_detail_source(base_gray)
+
+    assert expanded[1, 2] == 160
+    assert expanded[3, 2] == 160
+
+
 def test_heatmap_png_keeps_peak_pixel_opaque_when_surrounded_by_weaker_scores() -> None:
     latitudes = np.array([0.0, 0.0, 0.5, -0.5, 0.0], dtype=np.float32)
     longitudes = np.array([0.0, -0.5, 0.0, 0.0, 0.5], dtype=np.float32)
@@ -70,6 +94,22 @@ def test_heatmap_png_keeps_peak_pixel_opaque_when_surrounded_by_weaker_scores() 
     peak_y = int(projection.ys[0])
 
     assert alpha[peak_y, peak_x] >= 165
+
+
+def test_heatmap_png_keeps_mid_strength_pixel_visible_when_surrounded_by_weaker_scores() -> None:
+    latitudes = np.array([0.0, 0.0, 0.5, -0.5, 0.0], dtype=np.float32)
+    longitudes = np.array([0.0, -0.5, 0.0, 0.0, 0.5], dtype=np.float32)
+    scores = np.array([0.62, 0.2, 0.2, 0.2, 0.2], dtype=np.float32)
+
+    projection = HeatmapProjection.from_coordinates(latitudes, longitudes)
+    png_bytes = render_heatmap_png_from_projection(projection, scores)
+    image = Image.open(BytesIO(png_bytes)).convert("RGBA")
+    alpha = np.asarray(image, dtype=np.uint8)[..., 3]
+
+    peak_x = int(projection.xs[0])
+    peak_y = int(projection.ys[0])
+
+    assert alpha[peak_y, peak_x] >= 125
 
 
 def test_stylize_heatmap_gray_quantizes_to_limited_band_values() -> None:
@@ -95,4 +135,4 @@ def test_smooth_styled_heatmap_gray_softens_isolated_speckle() -> None:
 
     smoothed = _smooth_styled_heatmap_gray(gray)
 
-    assert 0 < smoothed[1, 1] < 255
+    assert smoothed[1, 1] == 255

@@ -1,118 +1,20 @@
 "use strict";
 
-const WORLD_BACKDROP_URL = "/static/data/world.geojson";
-const WORLD_OCEAN_URL = "/static/data/world_ocean.geojson";
-const BACKDROP_SOURCE_ID = "world-backdrop";
-const OCEAN_MASK_SOURCE_ID = "world-ocean-mask";
-const OCEAN_LAYER_ID = "world-ocean";
-const LAND_LAYER_ID = "world-land";
-const BORDER_LAYER_ID = "world-borders";
-const OCEAN_MASK_LAYER_ID = "world-ocean-mask";
-const HEATMAP_SOURCE_ID = "score-heatmap";
-const HEATMAP_LAYER_ID = "score-heatmap";
-const MAP_CONFIG = window.POGODAPP_MAP_CONFIG ?? {
-  projection: "mercator",
-  imageCorners: [[-180, 85.051129], [180, 85.051129], [180, -85.051129], [-180, -85.051129]],
-};
-
-const WORLD_CORNERS = MAP_CONFIG.imageCorners;
-
-// 1×1 transparent PNG — used to clear the heatmap when a response has no results.
-const EMPTY_IMAGE =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
-
-let map;
-const countryNames = typeof Intl.DisplayNames === "function"
-  ? new Intl.DisplayNames(["en"], { type: "region" })
-  : null;
-// Set to true once map.on("load") has fired and all layers are registered.
-// isStyleLoaded() is unreliable after addSource() — it stays false while the
-// GeoJSON worker tiles the backdrop, so the load event is the correct signal.
-let mapLoaded = false;
-// Holds a response that arrived before mapLoaded was set.
-let pendingResponse = null;
-
-function setMapStatus(message) {
-  const status = document.getElementById("map-status");
-
-  if (status) {
-    status.textContent = message;
-  }
-}
-
-function renderScoreList(scores) {
-  const results = document.getElementById("score-results-list");
-
-  if (!results) {
-    return;
-  }
-
-  results.replaceChildren();
-
-  if (scores.length === 0) {
-    const item = document.createElement("li");
-    item.className = "score-results__empty";
-    item.textContent = "No scored locations available yet.";
-    results.append(item);
-    return;
-  }
-
-  for (const point of scores) {
-    const item = document.createElement("li");
-    const score = document.createElement("span");
-    const name = document.createElement("span");
-    const flag = document.createElement("span");
-
-    item.className = "score-results__item";
-    score.className = "score-results__score";
-    name.className = "score-results__name";
-    flag.className = "score-results__flag";
-
-    score.textContent = `${Math.round(point.score * 100)}%`.padStart(4, " ");
-    name.textContent = point.name;
-    flag.textContent = point.flag;
-    flag.title = countryNames?.of(point.country_code) ?? point.country_code;
-
-    item.append(score, name, flag);
-    results.append(item);
-  }
-}
-
-// Adds the heatmap source+layer on the first call; updates the image URL on subsequent calls.
-function applyHeatmap(heatmap) {
-  const source = map.getSource(HEATMAP_SOURCE_ID);
-
-  if (source) {
-    source.updateImage({ url: heatmap });
+function applyScoreResponse(scores, heatmap) {
+  applyHeatmap(heatmap);
+  const markers = visibleScoresForList(scores);
+  if (markers.length > 0) {
+    applyMarkers(markers);
   } else {
-    map.addSource(HEATMAP_SOURCE_ID, {
-      type: "image",
-      url: heatmap,
-      coordinates: WORLD_CORNERS,
-    });
-
-    // Insert before the ocean mask so the mask clips bilinear bleed at coastlines.
-    map.addLayer(
-      {
-        id: HEATMAP_LAYER_ID,
-        type: "raster",
-        source: HEATMAP_SOURCE_ID,
-        paint: {
-          "raster-opacity": 0.85,
-          "raster-fade-duration": 200,
-        },
-      },
-      OCEAN_MASK_LAYER_ID,
-    );
+    clearMarkers();
   }
+  setMapStatus(heatmap !== EMPTY_IMAGE ? `${scores.length} top matches shown.` : "No matches found.");
 }
 
 function initializeMap() {
   const mapRoot = document.getElementById("map");
 
-  if (!mapRoot || map) {
-    return;
-  }
+  if (!mapRoot || map) return;
 
   if (!window.maplibregl) {
     mapRoot.textContent = "Map library failed to load.";
@@ -130,9 +32,7 @@ function initializeMap() {
         {
           id: OCEAN_LAYER_ID,
           type: "background",
-          paint: {
-            "background-color": "#101010",
-          },
+          paint: { "background-color": "#101010" },
         },
       ],
     },
@@ -141,36 +41,30 @@ function initializeMap() {
   });
 
   map.addControl(new window.maplibregl.NavigationControl({ showCompass: false }), "top-right");
+
   map.on("dataabort", (event) => {
-    if (event.sourceId === BACKDROP_SOURCE_ID) {
-      setMapStatus("Map backdrop failed to load.");
-    }
+    if (event.sourceId === BACKDROP_SOURCE_ID) setMapStatus("Map backdrop failed to load.");
   });
   map.on("error", (event) => {
-    if (event.sourceId === BACKDROP_SOURCE_ID) {
-      setMapStatus("Map backdrop failed to load.");
-    }
+    if (event.sourceId === BACKDROP_SOURCE_ID) setMapStatus("Map backdrop failed to load.");
   });
 
-  map.on("load", () => {
-    map.addSource(BACKDROP_SOURCE_ID, {
-      type: "geojson",
-      data: WORLD_BACKDROP_URL,
-    });
+  // Probe on hover — debounced; skipped when a layer-specific handler takes over.
+  map.on("mousemove", scheduleHoverProbe);
 
-    map.addSource(OCEAN_MASK_SOURCE_ID, {
-      type: "geojson",
-      data: WORLD_OCEAN_URL,
-    });
+  map.on("movestart", resetTransientMapUi);
+
+  map.on("mouseleave", resetTransientMapUi);
+
+  map.on("load", () => {
+    map.addSource(BACKDROP_SOURCE_ID, { type: "geojson", data: WORLD_BACKDROP_URL });
+    map.addSource(OCEAN_MASK_SOURCE_ID, { type: "geojson", data: WORLD_OCEAN_URL });
 
     map.addLayer({
       id: LAND_LAYER_ID,
       type: "fill",
       source: BACKDROP_SOURCE_ID,
-      paint: {
-        "fill-color": "#202020",
-        "fill-opacity": 1,
-      },
+      paint: { "fill-color": "#202020", "fill-opacity": 1 },
     });
 
     // Sits above the heatmap to clip bilinear texture bleed at coastlines.
@@ -178,52 +72,44 @@ function initializeMap() {
       id: OCEAN_MASK_LAYER_ID,
       type: "fill",
       source: OCEAN_MASK_SOURCE_ID,
-      paint: {
-        "fill-color": "#101010",
-        "fill-opacity": 1,
-      },
+      paint: { "fill-color": "#101010", "fill-opacity": 1 },
     });
 
     map.addLayer({
       id: BORDER_LAYER_ID,
       type: "line",
       source: BACKDROP_SOURCE_ID,
-      paint: {
-        "line-color": "#333333",
-        "line-width": 0.6,
-      },
+      paint: { "line-color": "#333333", "line-width": 0.6 },
     });
+
+    loadLandmarkCities();
 
     mapLoaded = true;
     setMapStatus("Map backdrop ready.");
 
-    if (pendingResponse) {
-      const { scores, heatmap } = pendingResponse;
-      applyHeatmap(heatmap);
-      setMapStatus(heatmap !== EMPTY_IMAGE ? `${scores.length} top matches shown.` : "No matches found.");
-      pendingResponse = null;
-    }
+    if (!pendingResponse) return;
+
+    const { scores, heatmap } = pendingResponse;
+    applyScoreResponse(scores ?? [], heatmap);
+    pendingResponse = null;
   });
 }
 
+// Public handoff used by `app.js` after a successful `/score` HTMX response.
+// Expects the raw backend payload and tolerates empty-result heatmaps.
 window.renderScores = function renderScores(response) {
   const { scores, heatmap } = response;
+  continentVisibleCounts.clear();
+  currentScores = scores ?? [];
 
-  renderScoreList(scores ?? []);
+  renderScoreList(currentScores);
 
-  if (!map) {
-    return;
-  }
-
-  // Clear the previous heatmap when results are empty so the layers stay in sync.
-  const imageUrl = heatmap || EMPTY_IMAGE;
+  if (!map) return;
 
   if (mapLoaded) {
-    applyHeatmap(imageUrl);
-    setMapStatus(heatmap ? `${scores.length} top matches shown.` : "No matches found.");
+    applyScoreResponse(currentScores, heatmap || EMPTY_IMAGE);
   } else {
-    // Response arrived before map.on("load") fired — defer until layers exist.
-    pendingResponse = { ...response, heatmap: imageUrl };
+    pendingResponse = { ...response, heatmap: heatmap || EMPTY_IMAGE };
   }
 };
 

@@ -51,11 +51,19 @@ EXPECTED_CLIMATE_COLUMNS: Final[tuple[str, ...]] = (
     *PRECIPITATION_COLUMNS,
     *CLOUD_COLUMNS,
 )
-EXPECTED_CITY_COLUMNS: Final[tuple[str, ...]] = ("name", "country_code", "lat", "lon", "cell_lat", "cell_lon")
+EXPECTED_CITY_COLUMNS: Final[tuple[str, ...]] = (
+    "name",
+    "country_code",
+    "lat",
+    "lon",
+    "cell_lat",
+    "cell_lon",
+    "population",
+)
 INSERT_CLIMATE_CELL_QUERY: Final[str] = (
     "INSERT INTO climate_cells VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
-INSERT_CITY_QUERY: Final[str] = "INSERT INTO cities VALUES (?, ?, ?, ?, ?, ?)"
+INSERT_CITY_QUERY: Final[str] = "INSERT INTO cities VALUES (?, ?, ?, ?, ?, ?, ?)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +150,7 @@ def ensure_geonames_cities(cache_dir: Path) -> Path:
 
 def load_city_catalog(cities_txt_path: Path) -> tuple[CityCandidate, ...]:
     """Read the GeoNames cities15000 dump that feeds the build-time city mapping."""
+    population_column_index = 14
     with cities_txt_path.open(newline="", encoding="utf-8") as source:
         rows = csv.reader(source, delimiter="\t")
         return tuple(
@@ -152,6 +161,9 @@ def load_city_catalog(cities_txt_path: Path) -> tuple[CityCandidate, ...]:
                 lon=float(row[5]),
                 cell_lat=0.0,
                 cell_lon=0.0,
+                population=int(row[population_column_index])
+                if len(row) > population_column_index and row[population_column_index]
+                else 0,
             )
             for row in rows
         )
@@ -351,7 +363,7 @@ def build_city_rows(
         if (cell_lat, cell_lon) not in valid_cells:
             continue
 
-        city_rows.append((city.name, city.country_code, city.lat, city.lon, cell_lat, cell_lon))
+        city_rows.append((city.name, city.country_code, city.lat, city.lon, cell_lat, cell_lon, city.population))
 
     return city_rows
 
@@ -367,7 +379,8 @@ def create_cities_table(connection: duckdb.DuckDBPyConnection) -> None:
             lat DOUBLE NOT NULL,
             lon DOUBLE NOT NULL,
             cell_lat DOUBLE NOT NULL,
-            cell_lon DOUBLE NOT NULL
+            cell_lon DOUBLE NOT NULL,
+            population INTEGER NOT NULL
         )
         """
     )

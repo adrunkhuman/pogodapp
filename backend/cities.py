@@ -13,11 +13,234 @@ if TYPE_CHECKING:
 
     from backend.scoring import CellScorePoint
 
+_EUROPE = frozenset(
+    [
+        "AD",
+        "AL",
+        "AT",
+        "BA",
+        "BE",
+        "BG",
+        "BY",
+        "CH",
+        "CY",
+        "CZ",
+        "DE",
+        "DK",
+        "EE",
+        "ES",
+        "FI",
+        "FR",
+        "GB",
+        "GI",
+        "GR",
+        "HR",
+        "HU",
+        "IE",
+        "IS",
+        "IT",
+        "LI",
+        "LT",
+        "LU",
+        "LV",
+        "MC",
+        "MD",
+        "ME",
+        "MK",
+        "MT",
+        "NL",
+        "NO",
+        "PL",
+        "PT",
+        "RO",
+        "RS",
+        "RU",
+        "SE",
+        "SI",
+        "SK",
+        "SM",
+        "UA",
+        "VA",
+        "XK",
+    ]
+)
+_ASIA = frozenset(
+    [
+        "AE",
+        "AF",
+        "AM",
+        "AZ",
+        "BD",
+        "BH",
+        "BN",
+        "BT",
+        "CN",
+        "GE",
+        "ID",
+        "IL",
+        "IN",
+        "IQ",
+        "IR",
+        "JO",
+        "JP",
+        "KG",
+        "KH",
+        "KP",
+        "KR",
+        "KW",
+        "KZ",
+        "LA",
+        "LB",
+        "LK",
+        "MM",
+        "MN",
+        "MO",
+        "MV",
+        "MY",
+        "NP",
+        "OM",
+        "PH",
+        "PK",
+        "PS",
+        "QA",
+        "SA",
+        "SG",
+        "SY",
+        "TH",
+        "TJ",
+        "TL",
+        "TM",
+        "TR",
+        "TW",
+        "UZ",
+        "VN",
+        "YE",
+    ]
+)
+_AFRICA = frozenset(
+    [
+        "AO",
+        "BF",
+        "BI",
+        "BJ",
+        "BW",
+        "CD",
+        "CF",
+        "CG",
+        "CI",
+        "CM",
+        "CV",
+        "DJ",
+        "DZ",
+        "EG",
+        "EH",
+        "ER",
+        "ET",
+        "GA",
+        "GH",
+        "GM",
+        "GN",
+        "GQ",
+        "GW",
+        "KE",
+        "KM",
+        "LR",
+        "LS",
+        "LY",
+        "MA",
+        "MG",
+        "ML",
+        "MR",
+        "MU",
+        "MW",
+        "MZ",
+        "NA",
+        "NE",
+        "NG",
+        "RW",
+        "SC",
+        "SD",
+        "SL",
+        "SN",
+        "SO",
+        "SS",
+        "ST",
+        "SZ",
+        "TD",
+        "TG",
+        "TN",
+        "TZ",
+        "UG",
+        "ZA",
+        "ZM",
+        "ZW",
+    ]
+)
+_NORTH_AMERICA = frozenset(
+    [
+        "AG",
+        "BB",
+        "BS",
+        "BZ",
+        "CA",
+        "CR",
+        "CU",
+        "DM",
+        "DO",
+        "GD",
+        "GT",
+        "HN",
+        "HT",
+        "JM",
+        "KN",
+        "LC",
+        "MX",
+        "NI",
+        "PA",
+        "TT",
+        "US",
+        "VC",
+    ]
+)
+_SOUTH_AMERICA = frozenset(["AR", "BO", "BR", "CL", "CO", "EC", "GF", "GY", "PE", "PY", "SR", "UY", "VE"])
+_OCEANIA = frozenset(["AU", "FJ", "FM", "KI", "MH", "NR", "NZ", "PG", "PW", "SB", "TO", "TV", "VU", "WS"])
+
+_CONTINENT_LOOKUP: tuple[tuple[str, frozenset[str]], ...] = (
+    ("Europe", _EUROPE),
+    ("Asia", _ASIA),
+    ("Africa", _AFRICA),
+    ("North America", _NORTH_AMERICA),
+    ("South America", _SOUTH_AMERICA),
+    ("Oceania", _OCEANIA),
+)
+
+EUROPE_ASIA_LONGITUDE_SPLIT = 60.0
+
+
+def continent_of(country_code: str, lon: float | None = None) -> str:
+    """Map an ISO 3166-1 alpha-2 code to its continent name.
+
+    Russia spans both Europe and Asia; use longitude to keep Siberian cities out
+    of the Europe sidebar bucket.
+    """
+    if country_code == "RU" and lon is not None:
+        return "Asia" if lon >= EUROPE_ASIA_LONGITUDE_SPLIT else "Europe"
+
+    for continent, codes in _CONTINENT_LOOKUP:
+        if country_code in codes:
+            return continent
+    return "Other"
+
+
 GRID_DEGREES = 5 / 60
 GRID_HALF_DEGREES = GRID_DEGREES / 2
 MAX_LATITUDE_INDEX = 2159
 MAX_LONGITUDE_INDEX = 4319
 EARTH_RADIUS_KM = 6371.0
+POPULATION_TIE_SCORE_WINDOW = 0.015
+FULL_DIVERSITY_RANKS = 15
+DIVERSITY_TAPER_RANKS = 20
+MIN_DIVERSITY_STRENGTH = 0.2
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,15 +253,25 @@ class CityCandidate:
     lon: float
     cell_lat: float
     cell_lon: float
+    population: int = 0
 
 
 class CityScorePoint(TypedDict):
-    """JSON score payload for the ranked city list."""
+    """JSON score payload for the ranked city list and map markers.
+
+    `lat`/`lon` place the city marker and focus ring. `probe_lat`/`probe_lon`
+    point at the snapped climate cell used for `/probe` scoring.
+    """
 
     name: str
+    continent: str
     country_code: str
     flag: str
     score: float
+    lat: float
+    lon: float
+    probe_lat: float
+    probe_lon: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +280,57 @@ class RankedCityCandidate:
 
     city: CityCandidate
     score: float
+
+
+@dataclass(frozen=True, slots=True)
+class RegionalPenaltyCenter:
+    """Winner context for one diversity-suppression step."""
+
+    city: CityCandidate
+    score: float
+    strength: float = 1.0
+
+
+def city_score_point(city: CityCandidate, score: float, *, flag: str | None = None) -> CityScorePoint:
+    """Build the API score shape for one ranked city."""
+    return {
+        "name": city.name,
+        "continent": continent_of(city.country_code, city.lon),
+        "country_code": city.country_code,
+        "flag": flag or country_flag(city.country_code),
+        "score": round(score, 4),
+        "lat": city.lat,
+        "lon": city.lon,
+        "probe_lat": city.cell_lat,
+        "probe_lon": city.cell_lon,
+    }
+
+
+def _candidate_population(city: CityCandidate) -> int:
+    return max(city.population, 0)
+
+
+def _select_population_biased_winner(remaining: list[RankedCityCandidate]) -> RankedCityCandidate:
+    """Prefer larger population centers when effective scores are nearly tied."""
+    best_score = max(candidate.score for candidate in remaining)
+    score_floor = best_score - POPULATION_TIE_SCORE_WINDOW
+    near_tied = [candidate for candidate in remaining if candidate.score >= score_floor]
+    return max(near_tied, key=lambda candidate: (_candidate_population(candidate.city), candidate.score))
+
+
+def _select_population_biased_winner_index(
+    city_catalog: CityRankingCache,
+    scores: NDArray[np.float32],
+    active: NDArray[np.bool],
+) -> int:
+    """Prefer larger population centers when effective scores are nearly tied."""
+    active_scores = np.where(active, scores, -1.0)
+    best_score = float(active_scores.max())
+    near_tied = np.flatnonzero(active & (scores >= best_score - POPULATION_TIE_SCORE_WINDOW))
+    return max(
+        near_tied.tolist(),
+        key=lambda index: (_candidate_population(city_catalog.cities[index]), float(scores[index])),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,23 +426,16 @@ def rank_city_scores(
         remaining.append(RankedCityCandidate(city=city, score=score))
 
     while remaining and len(ranked) < limit:
-        winner = max(remaining, key=lambda candidate: candidate.score)
-        ranked.append(
-            {
-                "name": winner.city.name,
-                "country_code": winner.city.country_code,
-                "flag": country_flag(winner.city.country_code),
-                "score": round(winner.score, 4),
-            }
-        )
+        winner = _select_population_biased_winner(remaining)
+        penalty_center = RegionalPenaltyCenter(winner.city, winner.score, _diversity_strength_for_rank(len(ranked)))
+        ranked.append(city_score_point(winner.city, winner.score))
         remaining = [
             RankedCityCandidate(
                 city=candidate.city,
                 score=apply_regional_penalty(
                     candidate.score,
-                    winner.city,
+                    penalty_center,
                     candidate.city,
-                    winner.score,
                     decay_km=diversity_decay_km,
                 ),
             )
@@ -185,37 +462,39 @@ def rank_indexed_city_scores(
     ranked: list[CityScorePoint] = []
 
     while active.any() and len(ranked) < limit:
-        winner_index = int(np.argmax(np.where(active, scores, -1.0), axis=None))
+        winner_index = _select_population_biased_winner_index(city_catalog, scores, active)
         winner_city = city_catalog.cities[winner_index]
         winner_score = float(scores[winner_index])
-        ranked.append(
-            {
-                "name": winner_city.name,
-                "country_code": winner_city.country_code,
-                "flag": city_catalog.flags[winner_index],
-                "score": round(winner_score, 4),
-            }
-        )
+        diversity_strength = _diversity_strength_for_rank(len(ranked))
+        ranked.append(city_score_point(winner_city, winner_score, flag=city_catalog.flags[winner_index]))
 
         distance_km = _haversine_distance_vector_km(city_catalog, winner_index)
-        penalty = winner_score * np.exp(-distance_km / diversity_decay_km)
+        penalty = winner_score * diversity_strength * np.exp(-distance_km / diversity_decay_km)
         scores = np.where(active, np.maximum(0.0, scores * (1.0 - penalty)), scores)
         active[winner_index] = False
 
     return ranked
 
 
+def _diversity_strength_for_rank(rank_index: int) -> float:
+    """Taper regional spreading once the shortlist already covers the main hot zones."""
+    if rank_index < FULL_DIVERSITY_RANKS:
+        return 1.0
+
+    taper_progress = min((rank_index - FULL_DIVERSITY_RANKS + 1) / DIVERSITY_TAPER_RANKS, 1.0)
+    return 1.0 - (1.0 - MIN_DIVERSITY_STRENGTH) * taper_progress
+
+
 def apply_regional_penalty(
     score: float,
-    center: CityCandidate,
+    center: RegionalPenaltyCenter,
     candidate: CityCandidate,
-    center_score: float,
     *,
     decay_km: float = CITY_DIVERSITY_DECAY_KM,
 ) -> float:
     """Exponentially suppress cities that cluster too close to a stronger regional center."""
-    distance_km = haversine_distance_km(center.lat, center.lon, candidate.lat, candidate.lon)
-    penalty = center_score * math.exp(-distance_km / decay_km)
+    distance_km = haversine_distance_km(center.city.lat, center.city.lon, candidate.lat, candidate.lon)
+    penalty = center.score * center.strength * math.exp(-distance_km / decay_km)
     return max(0.0, score * (1 - penalty))
 
 

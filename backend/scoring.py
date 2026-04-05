@@ -92,6 +92,25 @@ class ClimateMatrix:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ProbeMetricBreakdown:
+    """One user-facing metric row for the map probe tooltip."""
+
+    key: str
+    label: str
+    value: float
+    display_value: str
+    score: float
+
+
+@dataclass(frozen=True, slots=True)
+class ProbeBreakdown:
+    """Structured tooltip payload for one scored climate-matrix row."""
+
+    overall_score: float
+    metrics: tuple[ProbeMetricBreakdown, ...]
+
+
 class CellScorePoint(TypedDict):
     """Normalized score payload for one climate cell."""
 
@@ -253,6 +272,58 @@ def normalize_score_array(scores: NDArray[np.float32]) -> NDArray[np.float32]:
         return scores
 
     return np.round(scores / max_score, 4).astype(np.float32, copy=False)
+
+
+def score_matrix_row_breakdown(
+    climate_matrix: ClimateMatrix,
+    row_index: int,
+    preferences: PreferenceInputs,
+) -> ProbeBreakdown:
+    """Break one climate-matrix row into probe-ready averages and per-metric scores."""
+    temp_scores = []
+    rain_scores = []
+    cloud_scores = []
+
+    for month in range(MONTHS_PER_YEAR):
+        temp_scores.append(temperature_score(float(climate_matrix.temperature_c[row_index, month]), preferences))
+        rain_scores.append(
+            rain_score(float(climate_matrix.precipitation_mm[row_index, month]), preferences.rain_sensitivity)
+        )
+        cloud_scores.append(
+            cloud_score(int(climate_matrix.cloud_cover_pct[row_index, month]), preferences.sun_preference)
+        )
+
+    avg_temp_c = round(float(np.mean(climate_matrix.temperature_c[row_index])), 1)
+    avg_precip_mm = round(float(np.mean(climate_matrix.precipitation_mm[row_index])), 1)
+    avg_cloud_pct = round(float(np.mean(climate_matrix.cloud_cover_pct[row_index].astype(np.float32))), 1)
+    avg_sun_pct = round(100.0 - avg_cloud_pct, 1)
+    metric_scores = (
+        ProbeMetricBreakdown(
+            key="temp",
+            label="temp",
+            value=avg_temp_c,
+            display_value=f"{'+' if avg_temp_c > 0 else ''}{avg_temp_c:.1f}°C",
+            score=round(sum(temp_scores) / MONTHS_PER_YEAR, 3),
+        ),
+        ProbeMetricBreakdown(
+            key="rain",
+            label="rain",
+            value=avg_precip_mm,
+            display_value=f"{round(avg_precip_mm)}mm/mo",
+            score=round(sum(rain_scores) / MONTHS_PER_YEAR, 3),
+        ),
+        ProbeMetricBreakdown(
+            key="sun",
+            label="sun",
+            value=avg_sun_pct,
+            display_value=f"{round(avg_sun_pct)}% sun",
+            score=round(sum(cloud_scores) / MONTHS_PER_YEAR, 3),
+        ),
+    )
+    return ProbeBreakdown(
+        overall_score=round((sum(temp_scores) + sum(rain_scores) + sum(cloud_scores)) / (3 * MONTHS_PER_YEAR), 4),
+        metrics=metric_scores,
+    )
 
 
 def score_preferences(preferences: PreferenceInputs) -> list[CellScorePoint]:
