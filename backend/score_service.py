@@ -47,6 +47,14 @@ class ScoreTimings:
     total_ms: float = 0.0
 
 
+@dataclass(slots=True, frozen=True)
+class ScoreContext:
+    """Shared score-request counts reused by both ranking paths."""
+
+    climate_cell_count: int
+    city_count: int
+
+
 class ScoreResponse(TypedDict):
     """Backend response contract for one scored user preference request."""
 
@@ -54,8 +62,51 @@ class ScoreResponse(TypedDict):
     heatmap: str
 
 
+EMPTY_SCORE_RESPONSE: ScoreResponse = {"scores": [], "heatmap": ""}
+
+
 def _elapsed_ms(start_time: float) -> float:
     return round((perf_counter() - start_time) * 1000, 2)
+
+
+def _empty_score_response(
+    timings: ScoreTimings,
+    *,
+    request_started: float,
+    context: ScoreContext,
+    outcome: str,
+) -> ScoreResponse:
+    timings.total_ms = _elapsed_ms(request_started)
+    _log_score_timings(
+        timings,
+        climate_cell_count=context.climate_cell_count,
+        city_count=context.city_count,
+        ranked_city_count=0,
+        outcome=outcome,
+    )
+    return EMPTY_SCORE_RESPONSE
+
+
+def _finalize_score_response(
+    timings: ScoreTimings,
+    *,
+    request_started: float,
+    context: ScoreContext,
+    ranked_cities: list[CityScorePoint],
+    heatmap_png: bytes,
+) -> ScoreResponse:
+    timings.total_ms = _elapsed_ms(request_started)
+    _log_score_timings(
+        timings,
+        climate_cell_count=context.climate_cell_count,
+        city_count=context.city_count,
+        ranked_city_count=len(ranked_cities),
+        outcome="ok",
+    )
+    return {
+        "scores": ranked_cities,
+        "heatmap": "data:image/png;base64," + base64.b64encode(heatmap_png).decode(),
+    }
 
 
 def _filter_ranking_catalog(city_catalog: CityRankingCache) -> CityRankingCache:
@@ -260,33 +311,28 @@ def _build_score_response_from_matrix(
     cities_started = perf_counter()
     indexed_cities = repository.get_indexed_cities()
     timings.cities_ms = _elapsed_ms(cities_started)
+    context = ScoreContext(climate_cell_count=len(climate_matrix.latitudes), city_count=len(indexed_cities.cities))
 
     scoring_started = perf_counter()
     raw_scores = score_climate_matrix(climate_matrix, preferences)
     timings.scoring_ms = _elapsed_ms(scoring_started)
 
     if raw_scores.size == 0:
-        timings.total_ms = _elapsed_ms(request_started)
-        _log_score_timings(
+        return _empty_score_response(
             timings,
-            climate_cell_count=len(climate_matrix.latitudes),
-            city_count=len(indexed_cities.cities),
-            ranked_city_count=0,
+            request_started=request_started,
+            context=context,
             outcome="empty",
         )
-        return {"scores": [], "heatmap": ""}
 
     max_score = float(raw_scores.max())
     if max_score == 0.0:
-        timings.total_ms = _elapsed_ms(request_started)
-        _log_score_timings(
+        return _empty_score_response(
             timings,
-            climate_cell_count=len(climate_matrix.latitudes),
-            city_count=len(indexed_cities.cities),
-            ranked_city_count=0,
+            request_started=request_started,
+            context=context,
             outcome="all_zero",
         )
-        return {"scores": [], "heatmap": ""}
 
     normalize_started = perf_counter()
     normalized_scores = normalize_score_array(raw_scores)
@@ -312,20 +358,13 @@ def _build_score_response_from_matrix(
             normalized_scores,
         )
     timings.heatmap_ms = _elapsed_ms(heatmap_started)
-    timings.total_ms = _elapsed_ms(request_started)
-
-    _log_score_timings(
+    return _finalize_score_response(
         timings,
-        climate_cell_count=len(climate_matrix.latitudes),
-        city_count=len(indexed_cities.cities),
-        ranked_city_count=len(top_cities),
-        outcome="ok",
+        request_started=request_started,
+        context=context,
+        ranked_cities=top_cities,
+        heatmap_png=heatmap_png,
     )
-
-    return {
-        "scores": top_cities,
-        "heatmap": "data:image/png;base64," + base64.b64encode(heatmap_png).decode(),
-    }
 
 
 def _build_score_response_from_cells(
@@ -342,34 +381,29 @@ def _build_score_response_from_cells(
     cities_started = perf_counter()
     cities = repository.list_cities()
     timings.cities_ms = _elapsed_ms(cities_started)
+    context = ScoreContext(climate_cell_count=len(climate_cells), city_count=len(cities))
 
     scoring_started = perf_counter()
     raw_scores = score_climate_cells(climate_cells, preferences)
     timings.scoring_ms = _elapsed_ms(scoring_started)
 
     if not raw_scores:
-        timings.total_ms = _elapsed_ms(request_started)
-        _log_score_timings(
+        return _empty_score_response(
             timings,
-            climate_cell_count=len(climate_cells),
-            city_count=len(cities),
-            ranked_city_count=0,
+            request_started=request_started,
+            context=context,
             outcome="empty",
         )
-        return {"scores": [], "heatmap": ""}
 
     max_score = max(point["score"] for point in raw_scores)
     if max_score == 0:
         # An all-zero result carries no useful ranking or map signal for the UI.
-        timings.total_ms = _elapsed_ms(request_started)
-        _log_score_timings(
+        return _empty_score_response(
             timings,
-            climate_cell_count=len(climate_cells),
-            city_count=len(cities),
-            ranked_city_count=0,
+            request_started=request_started,
+            context=context,
             outcome="all_zero",
         )
-        return {"scores": [], "heatmap": ""}
 
     # Re-normalize each response so the best match in the current result set lands
     # at 1.0, which keeps the heatmap visually informative across very different queries.
@@ -390,17 +424,10 @@ def _build_score_response_from_cells(
     heatmap_started = perf_counter()
     heatmap_png = render_heatmap_png(normalized_scores)
     timings.heatmap_ms = _elapsed_ms(heatmap_started)
-    timings.total_ms = _elapsed_ms(request_started)
-
-    _log_score_timings(
+    return _finalize_score_response(
         timings,
-        climate_cell_count=len(climate_cells),
-        city_count=len(cities),
-        ranked_city_count=len(top_cities),
-        outcome="ok",
+        request_started=request_started,
+        context=context,
+        ranked_cities=top_cities,
+        heatmap_png=heatmap_png,
     )
-
-    return {
-        "scores": top_cities,
-        "heatmap": "data:image/png;base64," + base64.b64encode(heatmap_png).decode(),
-    }
