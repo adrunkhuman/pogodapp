@@ -591,6 +591,34 @@ function registerLayerProbeHandlers(layerId, { cursor, header, coordinates = nul
   });
 }
 
+function probeTooltipRow(label, value, score) {
+  return (
+    `<div class="probe-tooltip__row">` +
+    `<span class="probe-tooltip__label">${label}</span>` +
+    `<span class="probe-tooltip__value">${value}</span>` +
+    `<span class="probe-tooltip__metric">${scoreSpan(score)}</span>` +
+    `</div>`
+  );
+}
+
+function probeTooltipHeader(cityHeader, overallScore) {
+  if (!cityHeader) {
+    return `<div class="probe-tooltip__header"><span class="probe-tooltip__header-score">${scoreSpan(overallScore)}</span></div>`;
+  }
+
+  const cityName = cityHeader.replace(/^\S+\s+/, "");
+  const cityFlag = cityHeader.match(/^\S+/)?.[0] ?? "";
+  return (
+    `<div class="probe-tooltip__header">` +
+    `<span class="probe-tooltip__header-score">${scoreSpan(overallScore)}</span>` +
+    `<span class="probe-tooltip__header-city">` +
+    `<span class="probe-tooltip__header-name">${escapeHtml(cityName)}</span>` +
+    `<span class="probe-tooltip__header-flag">${escapeHtml(cityFlag)}</span>` +
+    `</span>` +
+    `</div>`
+  );
+}
+
 function showTooltip(data, x, y, cityHeader = null, { hideDelayMs = null } = {}) {
   if (!tooltip || !data.found) {
     if (tooltip) tooltip.hidden = true;
@@ -601,26 +629,12 @@ function showTooltip(data, x, y, cityHeader = null, { hideDelayMs = null } = {})
   const temp = `${data.avg_temp_c > 0 ? "+" : ""}${data.avg_temp_c.toFixed(1)}°C`.padStart(8);
   const rain = `${Math.round(data.avg_precip_mm)}mm/mo`.padStart(8);
   const sun  = `${Math.round(100 - data.avg_cloud_pct)}% sun`.padStart(8);
-  const line = (label, value, score) => (
-    `<div class="probe-tooltip__row">` +
-    `<span class="probe-tooltip__label">${label}</span>` +
-    `<span class="probe-tooltip__value">${value}</span>` +
-    `<span class="probe-tooltip__metric">${scoreSpan(score)}</span>` +
-    `</div>`
-  );
-  const cityName = cityHeader ? cityHeader.replace(/^\S+\s+/, "") : "";
-  const cityFlag = cityHeader ? cityHeader.match(/^\S+/)?.[0] ?? "" : "";
-
-  // Score always left so it doesn't jump when entering/leaving a city marker.
-  const header = cityHeader
-    ? `<div class="probe-tooltip__header"><span class="probe-tooltip__header-score">${scoreSpan(overall)}</span><span class="probe-tooltip__header-city"><span class="probe-tooltip__header-name">${escapeHtml(cityName)}</span><span class="probe-tooltip__header-flag">${escapeHtml(cityFlag)}</span></span></div>`
-    : `<div class="probe-tooltip__header"><span class="probe-tooltip__header-score">${scoreSpan(overall)}</span></div>`;
 
   tooltip.innerHTML =
-    header +
-    line("temp", temp, data.temp_score) +
-    line("rain", rain, data.rain_score) +
-    line("sun", sun, data.cloud_score);
+    probeTooltipHeader(cityHeader, overall) +
+    probeTooltipRow("temp", temp, data.temp_score) +
+    probeTooltipRow("rain", rain, data.rain_score) +
+    probeTooltipRow("sun", sun, data.cloud_score);
 
   tooltip.hidden = false;
   positionTooltip(x, y);
