@@ -133,8 +133,8 @@ function initializeMap() {
         },
       ],
     },
-    center: [17.268, 25.661],
-    zoom: 0.73,
+    center: [14.78, 34.252],
+    zoom: 1.35,
   });
 
   map.addControl(new window.maplibregl.NavigationControl({ showCompass: false }), "top-right");
