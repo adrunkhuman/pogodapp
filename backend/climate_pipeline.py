@@ -39,13 +39,15 @@ WORLDCLIM_ARCHIVES: Final[dict[str, str]] = {
     "prec": "https://geodata.ucdavis.edu/climate/worldclim/2_1/base/wc2.1_10m_prec.zip",
     "srad": "https://geodata.ucdavis.edu/climate/worldclim/2_1/base/wc2.1_10m_srad.zip",
 }
-TARGET_GRID_DEGREES: Final[float] = 0.5
-SOURCE_GRID_DEGREES: Final[float] = 10 / 60
-AGGREGATION_FACTOR: Final[int] = int(TARGET_GRID_DEGREES / SOURCE_GRID_DEGREES)
+GRID_DEGREES: Final[float] = 10 / 60
+# WorldClim stores ocean pixels as ≈ -3.4e38 (np.finfo(np.float32).min).
+# Any value below this cutoff is nodata; no real climate measurement comes close to -1e20.
 NODATA_CUTOFF: Final[float] = -1e20
-SOURCE_RASTER_SHAPE: Final[tuple[int, int]] = (1080, 2160)
+RASTER_SHAPE: Final[tuple[int, int]] = (1080, 2160)
 MONTHS_PER_YEAR: Final[int] = 12
-ROUGH_PROTOTYPE_ROW_COUNT_RANGE: Final[tuple[int, int]] = (90_000, 100_000)
+# WorldClim 10' land coverage (including coastal pixels) is ~808k cells — more than the
+# ~29% dry-land-area fraction because small islands and coastal strips are included.
+ROUGH_ROW_COUNT_RANGE: Final[tuple[int, int]] = (780_000, 840_000)
 TEMPERATURE_COLUMNS: Final[tuple[str, ...]] = tuple(f"t_{month_name}" for month_name in MONTH_NAMES)
 PRECIPITATION_COLUMNS: Final[tuple[str, ...]] = tuple(f"prec_{month_name}" for month_name in MONTH_NAMES)
 CLOUD_COLUMNS: Final[tuple[str, ...]] = tuple(f"cloud_{month_name}" for month_name in MONTH_NAMES)
@@ -77,25 +79,6 @@ class ValidationSummary:
     columns: tuple[str, ...]
 
 
-def aggregate_raster_to_half_degree(raster: NDArray[np.float32]) -> NDArray[np.float64]:
-    """Average 3x3 source pixels into 0.5-degree cells, skipping WorldClim nodata."""
-    if raster.shape != SOURCE_RASTER_SHAPE:
-        msg = f"Unexpected WorldClim raster shape: {raster.shape}"
-        raise ValueError(msg)
-
-    valid_mask = raster > NODATA_CUTOFF
-    reshaped_values = raster.astype(np.float64).reshape(360, AGGREGATION_FACTOR, 720, AGGREGATION_FACTOR)
-    reshaped_valid = valid_mask.reshape(360, AGGREGATION_FACTOR, 720, AGGREGATION_FACTOR)
-    block_counts = reshaped_valid.sum(axis=(1, 3))
-    block_sums = np.where(reshaped_valid, reshaped_values, 0.0).sum(axis=(1, 3))
-    return np.divide(
-        block_sums,
-        block_counts,
-        out=np.full((360, 720), np.nan, dtype=np.float64),
-        where=block_counts > 0,
-    )
-
-
 def solar_radiation_to_cloud_proxy(monthly_solar_radiation: NDArray[np.float64]) -> NDArray[np.int16]:
     """Invert solar radiation into a temporary 0..100 cloud proxy until a direct cloud source is chosen."""
     valid_values = monthly_solar_radiation[np.isfinite(monthly_solar_radiation)]
@@ -108,9 +91,10 @@ def solar_radiation_to_cloud_proxy(monthly_solar_radiation: NDArray[np.float64])
 
 
 def build_coordinate_grids() -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Return lat/lon center coordinates for the 0.5-degree output grid."""
-    latitudes = np.linspace(90 - TARGET_GRID_DEGREES / 2, -90 + TARGET_GRID_DEGREES / 2, num=360, dtype=np.float64)
-    longitudes = np.linspace(-180 + TARGET_GRID_DEGREES / 2, 180 - TARGET_GRID_DEGREES / 2, num=720, dtype=np.float64)
+    """Return lat/lon center coordinates for the native 10-arcminute grid."""
+    half = GRID_DEGREES / 2
+    latitudes = np.linspace(90 - half, -90 + half, num=RASTER_SHAPE[0], dtype=np.float64)
+    longitudes = np.linspace(-180 + half, 180 - half, num=RASTER_SHAPE[1], dtype=np.float64)
     return np.meshgrid(latitudes, longitudes, indexing="ij")
 
 
@@ -153,28 +137,30 @@ def extract_worldclim_archives(archive_paths: dict[str, Path], extracted_dir: Pa
     return extracted_paths
 
 
-def load_aggregated_monthly_rasters(
-    extracted_paths: dict[str, tuple[Path, ...]],
-) -> dict[str, tuple[NDArray[np.float64], ...]]:
-    """Read source GeoTIFFs and aggregate them onto the prototype grid."""
-    aggregated: dict[str, tuple[NDArray[np.float64], ...]] = {}
-    for variable_name, tif_paths in extracted_paths.items():
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            aggregated[variable_name] = tuple(executor.map(load_and_aggregate_raster, tif_paths))
-    return aggregated
+def load_raster(path: Path) -> NDArray[np.float64]:
+    """Read one WorldClim GeoTIFF, converting ocean nodata pixels to NaN.
 
-
-def load_raster(path: Path) -> NDArray[np.float32]:
-    """Read one WorldClim GeoTIFF into memory."""
+    tifffile does not honour TIFF nodata metadata, so ocean pixels arrive as
+    ≈ -3.4e38 (np.finfo(np.float32).min). Masking them here lets the rest of
+    the pipeline use np.isfinite as a clean land filter.
+    """
     logging.getLogger("tifffile").setLevel(logging.CRITICAL)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return tifffile.imread(path)
+        raw = tifffile.imread(path).astype(np.float64)
+    raw[raw <= NODATA_CUTOFF] = np.nan
+    return raw
 
 
-def load_and_aggregate_raster(path: Path) -> NDArray[np.float64]:
-    """Read one source raster and aggregate it onto the prototype grid."""
-    return aggregate_raster_to_half_degree(load_raster(path))
+def load_monthly_rasters(
+    extracted_paths: dict[str, tuple[Path, ...]],
+) -> dict[str, tuple[NDArray[np.float64], ...]]:
+    """Read source GeoTIFFs at native 10-arcminute resolution."""
+    monthly: dict[str, tuple[NDArray[np.float64], ...]] = {}
+    for variable_name, tif_paths in extracted_paths.items():
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            monthly[variable_name] = tuple(executor.map(load_raster, tif_paths))
+    return monthly
 
 
 def build_insert_rows(
@@ -270,11 +256,11 @@ def copy_rows_into_climate_table(connection: duckdb.DuckDBPyConnection, rows: li
 
 
 def build_worldclim_database(output_path: Path, cache_dir: Path) -> BuildSummary:
-    """Download, aggregate, and persist the prototype climate dataset."""
+    """Download and persist the 10-arcminute climate dataset."""
     archive_paths = ensure_worldclim_archives(cache_dir)
     extracted_paths = extract_worldclim_archives(archive_paths, cache_dir / "extracted")
-    aggregated = load_aggregated_monthly_rasters(extracted_paths)
-    rows = build_insert_rows(aggregated["tavg"], aggregated["prec"], aggregated["srad"])
+    monthly = load_monthly_rasters(extracted_paths)
+    rows = build_insert_rows(monthly["tavg"], monthly["prec"], monthly["srad"])
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.exists():
         output_path.unlink()
@@ -288,7 +274,7 @@ def build_worldclim_database(output_path: Path, cache_dir: Path) -> BuildSummary
 
 def validate_climate_database(database_path: Path) -> ValidationSummary:
     """Check that the built artifact matches the expected prototype contract."""
-    return validate_climate_database_with_row_range(database_path, ROUGH_PROTOTYPE_ROW_COUNT_RANGE)
+    return validate_climate_database_with_row_range(database_path, ROUGH_ROW_COUNT_RANGE)
 
 
 def validate_climate_database_with_row_range(

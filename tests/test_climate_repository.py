@@ -99,7 +99,7 @@ def test_app_can_use_an_injected_climate_repository() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == [{"lat": 1.0, "lon": 2.0, "score": 1.0}]
+    assert response.json()["scores"] == [{"lat": 1.0, "lon": 2.0, "score": 1.0}]
 
 
 def test_app_returns_clear_503_when_climate_repository_fails() -> None:
@@ -153,7 +153,7 @@ def test_app_scores_from_duckdb(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == [{"lat": 1.0, "lon": 2.0, "score": 1.0}]
+    assert response.json()["scores"] == [{"lat": 1.0, "lon": 2.0, "score": 1.0}]
 
 
 def test_app_uses_duckdb_automatically_when_default_database_exists(
@@ -190,7 +190,7 @@ def test_app_uses_duckdb_automatically_when_default_database_exists(
     )
 
     assert response.status_code == 200
-    assert response.json() == [{"lat": 1.0, "lon": 2.0, "score": 1.0}]
+    assert response.json()["scores"] == [{"lat": 1.0, "lon": 2.0, "score": 1.0}]
 
 
 def test_duckdb_climate_repository_raises_clear_error_for_bad_row_values(tmp_path: Path) -> None:
@@ -218,9 +218,9 @@ def test_duckdb_climate_repository_raises_clear_error_for_bad_row_values(tmp_pat
 def test_duckdb_climate_repository_loads_rows_built_in_pipeline_shape(tmp_path: Path) -> None:
     database_path = tmp_path / "climate.duckdb"
 
-    monthly_temperature = tuple(np.full((360, 720), np.nan, dtype=np.float64) for _ in range(12))
-    monthly_precipitation = tuple(np.full((360, 720), np.nan, dtype=np.float64) for _ in range(12))
-    monthly_solar_radiation = tuple(np.full((360, 720), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_temperature = tuple(np.full((1080, 2160), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_precipitation = tuple(np.full((1080, 2160), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_solar_radiation = tuple(np.full((1080, 2160), np.nan, dtype=np.float64) for _ in range(12))
 
     for month_index, month in enumerate(monthly_temperature, start=1):
         month[0, 0] = float(month_index)
@@ -241,8 +241,8 @@ def test_duckdb_climate_repository_loads_rows_built_in_pipeline_shape(tmp_path: 
 
     assert cells == (
         ClimateCell(
-            lat=89.75,
-            lon=-179.75,
+            lat=89.9167,
+            lon=-179.9167,
             temperature_c=tuple(float(month_index) for month_index in range(1, 13)),
             precipitation_mm=tuple(float(month_index * 10) for month_index in range(1, 13)),
             cloud_cover_pct=(50,) * 12,

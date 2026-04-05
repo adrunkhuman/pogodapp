@@ -37,9 +37,9 @@ Pogodapp is a climate preference search tool, not a weather app. The user descri
 ## Data Model Direction
 
 - Source: WorldClim monthly climate normals
-- Prototype resolution: `0.5deg` grid
-- Likely later target: `10'` grid
-- Planned row shape: one row per grid cell
+- Resolution: `10'` (~18km) grid — native WorldClim resolution, no aggregation
+- Land mask: ocean pixels are identified by WorldClim's nodata sentinel (~-3.4e38) and excluded; only land cells enter the DB
+- Planned row shape: one row per grid cell (~675k land cells)
 - Planned schema: `lat`, `lon`, `t_jan..t_dec`, `prec_jan..prec_dec`, `cloud_jan..cloud_dec`
 - Distribution policy for `climate.duckdb` is still open: direct git, Git LFS, or build-time download
 

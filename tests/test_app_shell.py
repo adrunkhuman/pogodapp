@@ -92,20 +92,15 @@ def test_map_script_initializes_maplibre_score_layer() -> None:
     assert response.status_code == 200
     assert "new window.maplibregl.Map" in response.text
     assert "data: WORLD_BACKDROP_URL" in response.text
-    assert "CLIMATE_CELL_DEGREES = 0.5" in response.text
     assert "id: LAND_LAYER_ID" in response.text
     assert "id: BORDER_LAYER_ID" in response.text
-    assert "map.addSource(SCORE_POINT_SOURCE_ID" in response.text
-    assert "map.addSource(SCORE_SURFACE_SOURCE_ID" in response.text
-    assert "map.addLayer({" in response.text
-    assert "id: SCORE_SURFACE_LAYER_ID" in response.text
-    assert 'type: "fill"' in response.text
-    assert '"fill-color"' in response.text
-    assert "toScoreSurfaceCollection" in response.text
+    assert "HEATMAP_SOURCE_ID" in response.text
+    assert 'type: "image"' in response.text
+    assert 'type: "raster"' in response.text
+    assert "WORLD_CORNERS" in response.text
+    assert "updateImage" in response.text
     assert 'setMapStatus("Map backdrop ready.");' in response.text
-    assert "renderScoreList(collection);" in response.text
     assert 'setMapStatus("Map library failed to load.");' in response.text
-    assert ".slice(0, 20)" in response.text
 
 
 def test_map_contract_does_not_depend_on_remote_basemap_assets() -> None:
@@ -139,14 +134,26 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
     assert response.headers["content-type"].startswith("application/json")
     payload = response.json()
 
-    assert isinstance(payload, list)
-    assert payload
+    assert isinstance(payload, dict)
+    assert "scores" in payload
+    assert "heatmap" in payload
 
-    for item in payload:
+    scores = payload["scores"]
+    assert isinstance(scores, list)
+    assert scores
+
+    score_values = [item["score"] for item in scores]
+    for item in scores:
         assert set(item) == {"lat", "lon", "score"}
         assert isinstance(item["lat"], float)
         assert isinstance(item["lon"], float)
         assert 0 <= item["score"] <= 1
+    # Scores are normalized so the best cell is always 1.0
+    assert max(score_values) == 1.0
+    # List capped at top 20 for the text panel
+    assert len(scores) <= 20
+    # Heatmap is a PNG data URL
+    assert payload["heatmap"].startswith("data:image/png;base64,")
 
 
 def test_score_endpoint_is_deterministic_for_the_same_preferences() -> None:
@@ -163,7 +170,8 @@ def test_score_endpoint_is_deterministic_for_the_same_preferences() -> None:
 
     assert first_response.status_code == 200
     assert second_response.status_code == 200
-    assert first_response.json() == second_response.json()
+    assert first_response.json()["scores"] == second_response.json()["scores"]
+    assert first_response.json()["heatmap"] == second_response.json()["heatmap"]
 
 
 def test_rain_sensitivity_penalizes_rainier_cells() -> None:

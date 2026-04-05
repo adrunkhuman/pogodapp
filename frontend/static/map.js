@@ -5,16 +5,25 @@ const BACKDROP_SOURCE_ID = "world-backdrop";
 const OCEAN_LAYER_ID = "world-ocean";
 const LAND_LAYER_ID = "world-land";
 const BORDER_LAYER_ID = "world-borders";
-const SCORE_POINT_SOURCE_ID = "score-points";
-const SCORE_SURFACE_SOURCE_ID = "score-surface";
-const SCORE_SURFACE_LAYER_ID = "score-surface";
-const CLIMATE_CELL_DEGREES = 0.5;
-const CLIMATE_CELL_HALF_DEGREES = CLIMATE_CELL_DEGREES / 2;
-const EMPTY_FEATURE_COLLECTION = { type: "FeatureCollection", features: [] };
+const HEATMAP_SOURCE_ID = "score-heatmap";
+const HEATMAP_LAYER_ID = "score-heatmap";
+
+// World extent corners for the image source: [lon, lat] for TL, TR, BR, BL.
+// Must use ±85.051129 (Web Mercator max latitude) — lat ±90 maps to ±Infinity
+// in the Mercator y formula, causing WebGL to discard the image triangles.
+const WORLD_CORNERS = [[-180, 85.051129], [180, 85.051129], [180, -85.051129], [-180, -85.051129]];
+
+// 1×1 transparent PNG — used to clear the heatmap when a response has no results.
+const EMPTY_IMAGE =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
 let map;
-let pendingPointScores = EMPTY_FEATURE_COLLECTION;
-let pendingSurfaceScores = EMPTY_FEATURE_COLLECTION;
+// Set to true once map.on("load") has fired and all layers are registered.
+// isStyleLoaded() is unreliable after addSource() — it stays false while the
+// GeoJSON worker tiles the backdrop, so the load event is the correct signal.
+let mapLoaded = false;
+// Holds a response that arrived before mapLoaded was set.
+let pendingResponse = null;
 
 function setMapStatus(message) {
   const status = document.getElementById("map-status");
@@ -24,7 +33,7 @@ function setMapStatus(message) {
   }
 }
 
-function renderScoreList(collection) {
+function renderScoreList(scores) {
   const results = document.getElementById("score-results-list");
 
   if (!results) {
@@ -33,108 +42,46 @@ function renderScoreList(collection) {
 
   results.replaceChildren();
 
-  if (collection.features.length === 0) {
+  if (scores.length === 0) {
     const item = document.createElement("li");
     item.textContent = "No scored locations available yet.";
     results.append(item);
     return;
   }
 
-  const top = collection.features
-    .slice()
-    .sort((a, b) => b.properties.score - a.properties.score)
-    .slice(0, 20);
-
-  for (const feature of top) {
+  for (const point of scores) {
     const item = document.createElement("li");
-    const [lon, lat] = feature.geometry.coordinates;
-    const score = feature.properties.score;
-
-    item.textContent = `${Math.round(score * 100)}% match at ${lat}, ${lon}`;
+    item.textContent = `${Math.round(point.score * 100)}% match at ${point.lat}, ${point.lon}`;
     results.append(item);
   }
 }
 
-function toScorePointCollection(scores) {
-  if (!Array.isArray(scores)) {
-    return EMPTY_FEATURE_COLLECTION;
-  }
+// Adds the heatmap source+layer on the first call; updates the image URL on subsequent calls.
+function applyHeatmap(heatmap) {
+  const source = map.getSource(HEATMAP_SOURCE_ID);
 
-  const features = [];
-
-  for (const point of scores) {
-    if (
-      typeof point?.lat !== "number" ||
-      typeof point?.lon !== "number" ||
-      typeof point?.score !== "number"
-    ) {
-      continue;
-    }
-
-    features.push({
-      type: "Feature",
-      geometry: {
-        type: "Point",
-        coordinates: [point.lon, point.lat],
-      },
-      properties: {
-        score: point.score,
-        label: `${Math.round(point.score * 100)}%`,
-      },
-    });
-  }
-
-  return { type: "FeatureCollection", features };
-}
-
-function toScoreSurfaceCollection(pointCollection) {
-  return {
-    type: "FeatureCollection",
-    features: pointCollection.features.map((feature) => {
-      const [lon, lat] = feature.geometry.coordinates;
-
-      return {
-        type: "Feature",
-        geometry: {
-          type: "Polygon",
-          coordinates: [[
-            [lon - CLIMATE_CELL_HALF_DEGREES, lat - CLIMATE_CELL_HALF_DEGREES],
-            [lon + CLIMATE_CELL_HALF_DEGREES, lat - CLIMATE_CELL_HALF_DEGREES],
-            [lon + CLIMATE_CELL_HALF_DEGREES, lat + CLIMATE_CELL_HALF_DEGREES],
-            [lon - CLIMATE_CELL_HALF_DEGREES, lat + CLIMATE_CELL_HALF_DEGREES],
-            [lon - CLIMATE_CELL_HALF_DEGREES, lat - CLIMATE_CELL_HALF_DEGREES],
-          ]],
-        },
-        properties: feature.properties,
-      };
-    }),
-  };
-}
-
-function applyScores(collection) {
-  pendingPointScores = collection;
-  pendingSurfaceScores = toScoreSurfaceCollection(collection);
-  renderScoreList(collection);
-
-  if (collection.features.length === 0) {
-    setMapStatus("No scored locations available.");
+  if (source) {
+    source.updateImage({ url: heatmap });
   } else {
-    setMapStatus(`${collection.features.length} scored locations rendered on the map.`);
-  }
+    map.addSource(HEATMAP_SOURCE_ID, {
+      type: "image",
+      url: heatmap,
+      coordinates: WORLD_CORNERS,
+    });
 
-  if (!map || !map.isStyleLoaded()) {
-    return;
-  }
-
-  const pointSource = map.getSource(SCORE_POINT_SOURCE_ID);
-  const surfaceSource = map.getSource(SCORE_SURFACE_SOURCE_ID);
-
-  if (pointSource) {
-    pointSource.setData(pendingPointScores);
-  }
-
-  if (surfaceSource) {
-    surfaceSource.setData(pendingSurfaceScores);
+    // Insert before BORDER_LAYER_ID so borders render on top of the heatmap.
+    map.addLayer(
+      {
+        id: HEATMAP_LAYER_ID,
+        type: "raster",
+        source: HEATMAP_SOURCE_ID,
+        paint: {
+          "raster-opacity": 0.85,
+          "raster-fade-duration": 200,
+        },
+      },
+      BORDER_LAYER_ID,
+    );
   }
 }
 
@@ -208,62 +155,37 @@ function initializeMap() {
       },
     });
 
-    map.addSource(SCORE_POINT_SOURCE_ID, {
-      type: "geojson",
-      data: pendingPointScores,
-    });
-
-    map.addSource(SCORE_SURFACE_SOURCE_ID, {
-      type: "geojson",
-      data: pendingSurfaceScores,
-    });
-
-    map.addLayer({
-      id: SCORE_SURFACE_LAYER_ID,
-      type: "fill",
-      source: SCORE_SURFACE_SOURCE_ID,
-      paint: {
-        "fill-color": [
-          "interpolate",
-          ["linear"],
-          ["get", "score"],
-          0,
-          "rgba(53, 92, 125, 0.16)",
-          0.45,
-          "rgba(127, 179, 213, 0.35)",
-          0.65,
-          "rgba(248, 182, 90, 0.58)",
-          0.82,
-          "rgba(234, 95, 137, 0.8)",
-          1,
-          "rgba(121, 40, 202, 0.9)",
-        ],
-        "fill-opacity": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          0,
-          0.28,
-          1,
-          0.34,
-          2,
-          0.42,
-          4,
-          0.56,
-          6,
-          0.74,
-        ],
-        "fill-outline-color": "rgba(255, 250, 243, 0.06)",
-      },
-    });
-
+    mapLoaded = true;
     setMapStatus("Map backdrop ready.");
-    applyScores(pendingPointScores);
+
+    if (pendingResponse) {
+      const { scores, heatmap } = pendingResponse;
+      applyHeatmap(heatmap);
+      setMapStatus(heatmap !== EMPTY_IMAGE ? `${scores.length} top matches shown.` : "No matches found.");
+      pendingResponse = null;
+    }
   });
 }
 
-window.renderScores = function renderScores(scores) {
-  applyScores(toScorePointCollection(scores));
+window.renderScores = function renderScores(response) {
+  const { scores, heatmap } = response;
+
+  renderScoreList(scores ?? []);
+
+  if (!map) {
+    return;
+  }
+
+  // Clear the previous heatmap when results are empty so the layers stay in sync.
+  const imageUrl = heatmap || EMPTY_IMAGE;
+
+  if (mapLoaded) {
+    applyHeatmap(imageUrl);
+    setMapStatus(heatmap ? `${scores.length} top matches shown.` : "No matches found.");
+  } else {
+    // Response arrived before map.on("load") fired — defer until layers exist.
+    pendingResponse = { ...response, heatmap: imageUrl };
+  }
 };
 
 if (document.readyState === "loading") {
@@ -272,4 +194,4 @@ if (document.readyState === "loading") {
   initializeMap();
 }
 
-renderScoreList(EMPTY_FEATURE_COLLECTION);
+renderScoreList([]);
