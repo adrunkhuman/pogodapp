@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from backend.cities import (
     STUB_CITY_CANDIDATES,
     CityCandidate,
@@ -8,6 +12,9 @@ from backend.cities import (
     snap_city_to_cell_key,
 )
 from backend.config import CITY_DIVERSITY_DECAY_KM
+
+if TYPE_CHECKING:
+    from backend.scoring import CellScorePoint
 
 
 def test_stub_city_candidates_match_stub_climate_fixture_order() -> None:
@@ -34,7 +41,7 @@ def test_rank_city_scores_prefers_the_highest_scoring_nearby_city_cells() -> Non
         CityCandidate(name="Medellin", country_code="CO", lat=6.2442, lon=-75.5812, cell_lat=6.25, cell_lon=-75.5833),
         CityCandidate(name="Quito", country_code="EC", lat=-0.1807, lon=-78.4678, cell_lat=-0.25, cell_lon=-78.4167),
     )
-    scores = [
+    scores: list[CellScorePoint] = [
         {"lat": 4.75, "lon": -74.0833, "score": 1.0},
         {"lat": 6.25, "lon": -75.5833, "score": 0.82},
         {"lat": -0.25, "lon": -78.4167, "score": 0.91},
@@ -53,7 +60,7 @@ def test_rank_city_scores_penalizes_nearby_duplicates_after_strong_regional_cent
         CityCandidate(name="Medellin", country_code="CO", lat=6.2442, lon=-75.5812, cell_lat=6.25, cell_lon=-75.5833),
         CityCandidate(name="Lima", country_code="PE", lat=-12.0464, lon=-77.0428, cell_lat=-12.0833, cell_lon=-77.0833),
     )
-    scores = [
+    scores: list[CellScorePoint] = [
         {"lat": 4.75, "lon": -74.0833, "score": 1.0},
         {"lat": 6.25, "lon": -75.5833, "score": 0.97},
         {"lat": -12.0833, "lon": -77.0833, "score": 0.88},
@@ -77,7 +84,7 @@ def test_rank_city_scores_uses_configured_decay_radius() -> None:
         CityCandidate(name="Bogota", country_code="CO", lat=4.711, lon=-74.0721, cell_lat=4.75, cell_lon=-74.0833),
         CityCandidate(name="Medellin", country_code="CO", lat=6.2442, lon=-75.5812, cell_lat=6.25, cell_lon=-75.5833),
     )
-    scores = [
+    scores: list[CellScorePoint] = [
         {"lat": 4.75, "lon": -74.0833, "score": 1.0},
         {"lat": 6.25, "lon": -75.5833, "score": 0.97},
     ]
