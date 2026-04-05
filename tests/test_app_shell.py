@@ -124,6 +124,20 @@ def test_static_files_are_served() -> None:
     assert "font-family" in response.text
 
 
+def test_styles_lock_desktop_shell_to_viewport_height() -> None:
+    response = client.get("/static/styles.css")
+
+    assert response.status_code == 200
+    assert "html {" in response.text
+    assert "height: 100vh;" in response.text
+    assert "overflow: hidden;" in response.text
+    assert "#preferences {" in response.text
+    assert "align-content: start;" in response.text
+    assert "overflow: auto;" in response.text
+    assert "width: 100%;" in response.text
+    assert "justify-self: stretch;" in response.text
+
+
 def test_local_map_assets_are_served() -> None:
     css_response = client.get("/static/vendor/maplibre-gl.css")
     js_response = client.get("/static/vendor/maplibre-gl.js")
