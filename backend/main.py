@@ -45,6 +45,7 @@ class ProbeResponse(BaseModel):
     temp_score: float = 0.0
     rain_score: float = 0.0
     cloud_score: float = 0.0
+    overall_score: float = 0.0
 
 
 def build_index_context() -> dict[str, object]:

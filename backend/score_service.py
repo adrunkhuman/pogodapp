@@ -8,7 +8,14 @@ from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
 
-from backend.cities import CityRankingCache, CityScorePoint, continent_of, rank_city_scores, rank_indexed_city_scores
+from backend.cities import (
+    CityCandidate,
+    CityRankingCache,
+    CityScorePoint,
+    continent_of,
+    rank_city_scores,
+    rank_indexed_city_scores,
+)
 from backend.config import RANKING_MIN_POPULATION
 from backend.heatmap import render_heatmap_png, render_heatmap_png_from_arrays, render_heatmap_png_from_projection
 from backend.scoring import (
@@ -24,10 +31,13 @@ if TYPE_CHECKING:
 
     from backend.climate_repository import ClimateRepository
 
-TOP_CITY_RESULTS = 30
-# Diversity-suppressed pool built before trimming to TOP_CITY_RESULTS.
-# Larger pool means continent fill draws from already-spread candidates, not raw clusters.
-RANKING_POOL_SIZE = TOP_CITY_RESULTS * 5
+INITIAL_CITY_RESULTS = 30
+SIDEBAR_CONTINENT_RESERVE = 30
+CONTINENT_COUNT = 6
+# Diversity-suppressed pool built before trimming for the sidebar reserve.
+# Larger pool means each continent can keep a deeper bench without falling back
+# to raw clustered score ordering.
+RANKING_POOL_SIZE = SIDEBAR_CONTINENT_RESERVE * CONTINENT_COUNT * 3
 logger = logging.getLogger(__name__)
 
 
@@ -111,6 +121,73 @@ def _ensure_continent_coverage(
             break
 
     return ranked
+
+
+def _build_sidebar_scores(ranked_pool: list[CityScorePoint]) -> list[CityScorePoint]:
+    """Keep a deeper reserve per continent so the UI can progressively reveal cities."""
+    continent_counts: dict[str, int] = {}
+    sidebar_scores: list[CityScorePoint] = []
+
+    for city in ranked_pool:
+        continent = continent_of(city["country_code"])
+        if continent == "Other":
+            continue
+        if continent_counts.get(continent, 0) >= SIDEBAR_CONTINENT_RESERVE:
+            continue
+        sidebar_scores.append(city)
+        continent_counts[continent] = continent_counts.get(continent, 0) + 1
+
+    return sidebar_scores
+
+
+def _city_identity(city: CityScorePoint) -> tuple[str, str, float, float]:
+    return (city["name"], city["country_code"], city["lat"], city["lon"])
+
+
+def _rescore_city_points_from_cache(
+    city_catalog: CityRankingCache,
+    ranked_cities: list[CityScorePoint],
+    raw_scores: NDArray[np.float32],
+) -> list[CityScorePoint]:
+    """Replace shortlist scores with each city's own nearest-cell score and re-sort by it."""
+    score_by_city = {
+        (city.name, city.country_code, city.lat, city.lon): round(float(raw_scores[climate_index]), 4)
+        for city, climate_index in zip(city_catalog.cities, city_catalog.climate_indexes, strict=True)
+    }
+    rescored = [
+        {
+            **city,
+            "score": score_by_city.get(_city_identity(city), city["score"]),
+        }
+        for city in ranked_cities
+    ]
+    return sorted(rescored, key=lambda city: city["score"], reverse=True)
+
+
+def _rescore_city_points_from_cells(
+    city_catalog: tuple[CityCandidate, ...],
+    ranked_cities: list[CityScorePoint],
+    raw_scores: list[CellScorePoint],
+) -> list[CityScorePoint]:
+    """Replace shortlist scores with each city's snapped-cell score and re-sort by it."""
+    score_by_cell = {
+        (round(score_point["lat"], 4), round(score_point["lon"], 4)): round(score_point["score"], 4)
+        for score_point in raw_scores
+    }
+    score_by_city = {
+        (city.name, city.country_code, city.lat, city.lon): score_by_cell.get(
+            (round(city.cell_lat, 4), round(city.cell_lon, 4)), 0.0
+        )
+        for city in city_catalog
+    }
+    rescored = [
+        {
+            **city,
+            "score": score_by_city.get(_city_identity(city), city["score"]),
+        }
+        for city in ranked_cities
+    ]
+    return sorted(rescored, key=lambda city: city["score"], reverse=True)
 
 
 def _log_score_timings(
@@ -203,8 +280,10 @@ def _build_score_response_from_matrix(
     # Build a large diversity-suppressed pool so the continent fill draws from
     # already-spread candidates rather than raw score clusters.
     diverse_pool = rank_indexed_city_scores(ranking_catalog, normalized_scores, limit=RANKING_POOL_SIZE)
-    top_cities = list(diverse_pool[:TOP_CITY_RESULTS])
-    top_cities = _ensure_continent_coverage(top_cities, diverse_pool[TOP_CITY_RESULTS:])
+    initial_cities = list(diverse_pool[:INITIAL_CITY_RESULTS])
+    initial_cities = _ensure_continent_coverage(initial_cities, diverse_pool[INITIAL_CITY_RESULTS:])
+    top_cities = _build_sidebar_scores(initial_cities + diverse_pool[INITIAL_CITY_RESULTS:])
+    top_cities = _rescore_city_points_from_cache(ranking_catalog, top_cities, raw_scores)
     markers = list(top_cities)
     timings.ranking_ms = _elapsed_ms(ranking_started)
 
@@ -289,7 +368,8 @@ def _build_score_response_from_cells(
     timings.normalize_ms = _elapsed_ms(normalize_started)
 
     ranking_started = perf_counter()
-    top_cities = rank_city_scores(cities, normalized_scores, limit=TOP_CITY_RESULTS)
+    top_cities = _build_sidebar_scores(rank_city_scores(cities, normalized_scores, limit=RANKING_POOL_SIZE))
+    top_cities = _rescore_city_points_from_cells(cities, top_cities, raw_scores)
     # Cells path has no CityRankingCache; use top_cities itself as markers (already has lat/lon).
     markers = top_cities
     timings.ranking_ms = _elapsed_ms(ranking_started)

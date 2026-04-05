@@ -270,8 +270,12 @@ def score_matrix_row_breakdown(
 
     for month in range(MONTHS_PER_YEAR):
         temp_scores.append(temperature_score(float(climate_matrix.temperature_c[row_index, month]), preferences))
-        rain_scores.append(rain_score(float(climate_matrix.precipitation_mm[row_index, month]), preferences.rain_sensitivity))
-        cloud_scores.append(cloud_score(int(climate_matrix.cloud_cover_pct[row_index, month]), preferences.sun_preference))
+        rain_scores.append(
+            rain_score(float(climate_matrix.precipitation_mm[row_index, month]), preferences.rain_sensitivity)
+        )
+        cloud_scores.append(
+            cloud_score(int(climate_matrix.cloud_cover_pct[row_index, month]), preferences.sun_preference)
+        )
 
     return {
         "avg_temp_c": round(float(np.mean(climate_matrix.temperature_c[row_index])), 1),
@@ -280,6 +284,7 @@ def score_matrix_row_breakdown(
         "temp_score": round(sum(temp_scores) / MONTHS_PER_YEAR, 3),
         "rain_score": round(sum(rain_scores) / MONTHS_PER_YEAR, 3),
         "cloud_score": round(sum(cloud_scores) / MONTHS_PER_YEAR, 3),
+        "overall_score": round((sum(temp_scores) + sum(rain_scores) + sum(cloud_scores)) / (3 * MONTHS_PER_YEAR), 4),
     }
 
 
