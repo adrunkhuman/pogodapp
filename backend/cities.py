@@ -13,10 +13,10 @@ if TYPE_CHECKING:
 
     from backend.scoring import CellScorePoint
 
-GRID_DEGREES = 10 / 60
+GRID_DEGREES = 5 / 60
 GRID_HALF_DEGREES = GRID_DEGREES / 2
-MAX_LATITUDE_INDEX = 1079
-MAX_LONGITUDE_INDEX = 2159
+MAX_LATITUDE_INDEX = 2159
+MAX_LONGITUDE_INDEX = 4319
 EARTH_RADIUS_KM = 6371.0
 
 
@@ -247,16 +247,19 @@ def _haversine_distance_vector_km(
     return (2.0 * EARTH_RADIUS_KM * np.arcsin(np.sqrt(half_chord))).astype(np.float32, copy=False)
 
 
-def snap_city_to_cell_key(city: CityCandidate) -> tuple[float, float]:
-    """Snap a city location to the nearest native 10-arcminute WorldClim cell center."""
-    latitude_index = round((90 - GRID_HALF_DEGREES - city.lat) / GRID_DEGREES)
-    longitude_index = round((city.lon - (-180 + GRID_HALF_DEGREES)) / GRID_DEGREES)
-    latitude_index = min(max(latitude_index, 0), MAX_LATITUDE_INDEX)
-    longitude_index = min(max(longitude_index, 0), MAX_LONGITUDE_INDEX)
+def snap_city_to_cell_key(city: CityCandidate, *, grid_degrees: float = GRID_DEGREES) -> tuple[float, float]:
+    """Snap a city location to the nearest WorldClim cell center for one grid size."""
+    grid_half_degrees = grid_degrees / 2
+    max_latitude_index = round(180 / grid_degrees) - 1
+    max_longitude_index = round(360 / grid_degrees) - 1
+    latitude_index = round((90 - grid_half_degrees - city.lat) / grid_degrees)
+    longitude_index = round((city.lon - (-180 + grid_half_degrees)) / grid_degrees)
+    latitude_index = min(max(latitude_index, 0), max_latitude_index)
+    longitude_index = min(max(longitude_index, 0), max_longitude_index)
 
     return (
-        round(90 - GRID_HALF_DEGREES - latitude_index * GRID_DEGREES, 4),
-        round(-180 + GRID_HALF_DEGREES + longitude_index * GRID_DEGREES, 4),
+        round(90 - grid_half_degrees - latitude_index * grid_degrees, 4),
+        round(-180 + grid_half_degrees + longitude_index * grid_degrees, 4),
     )
 
 

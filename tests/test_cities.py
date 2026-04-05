@@ -36,7 +36,16 @@ def test_snap_city_to_cell_key_matches_native_worldclim_centers() -> None:
         CityCandidate(name="Bogota", country_code="CO", lat=4.711, lon=-74.0721, cell_lat=0.0, cell_lon=0.0)
     )
 
-    assert snapped == (4.75, -74.0833)
+    assert snapped == (4.7083, -74.0417)
+
+
+def test_snap_city_to_cell_key_supports_finer_worldclim_grids() -> None:
+    snapped = snap_city_to_cell_key(
+        CityCandidate(name="Bogota", country_code="CO", lat=4.711, lon=-74.0721, cell_lat=0.0, cell_lon=0.0),
+        grid_degrees=2.5 / 60,
+    )
+
+    assert snapped == (4.7292, -74.0625)
 
 
 def test_rank_city_scores_prefers_the_highest_scoring_nearby_city_cells() -> None:

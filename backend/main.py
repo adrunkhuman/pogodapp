@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Annotated
 
@@ -24,6 +25,7 @@ FRONTEND_DIR = ROOT_DIR / "frontend"
 STATIC_DIR = FRONTEND_DIR / "static"
 TEMPLATES_DIR = FRONTEND_DIR / "templates"
 CLIMATE_DATABASE_PATH = ROOT_DIR / "data" / "climate.duckdb"
+CLIMATE_DATABASE_ENV_VAR = "POGODAPP_CLIMATE_DB"
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 logger = logging.getLogger(__name__)
@@ -32,6 +34,12 @@ logger = logging.getLogger(__name__)
 def build_index_context() -> dict[str, object]:
     """Return template context for the initial page render."""
     return {"preferences": DEFAULT_PREFERENCES, "map_projection": MAP_PROJECTION}
+
+
+def resolve_climate_database_path() -> Path:
+    """Resolve the runtime climate database path from env or the default location."""
+    configured_path = os.getenv(CLIMATE_DATABASE_ENV_VAR)
+    return Path(configured_path) if configured_path else CLIMATE_DATABASE_PATH
 
 
 def preload_repository(repository: ClimateRepository) -> None:
@@ -61,7 +69,7 @@ def create_app(
     """
     configure_backend_logging()
     app = FastAPI(title="Pogodapp")
-    repository = climate_repository or build_default_climate_repository(CLIMATE_DATABASE_PATH)
+    repository = climate_repository or build_default_climate_repository(resolve_climate_database_path())
     preload_repository(repository)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

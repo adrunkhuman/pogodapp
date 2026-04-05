@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from backend.cities import CityCandidate, CityRankingCache
 from backend.climate_pipeline import (
+    DEFAULT_WORLDCLIM_RESOLUTION,
     build_insert_rows,
     copy_rows_into_cities_table,
     copy_rows_into_climate_table,
@@ -570,10 +571,11 @@ def test_duckdb_climate_repository_raises_clear_error_for_bad_row_values(tmp_pat
 
 def test_duckdb_climate_repository_loads_rows_built_in_pipeline_shape(tmp_path: Path) -> None:
     database_path = tmp_path / "climate.duckdb"
+    raster_height, raster_width = DEFAULT_WORLDCLIM_RESOLUTION.raster_shape
 
-    monthly_temperature = tuple(np.full((1080, 2160), np.nan, dtype=np.float64) for _ in range(12))
-    monthly_precipitation = tuple(np.full((1080, 2160), np.nan, dtype=np.float64) for _ in range(12))
-    monthly_solar_radiation = tuple(np.full((1080, 2160), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_temperature = tuple(np.full((raster_height, raster_width), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_precipitation = tuple(np.full((raster_height, raster_width), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_solar_radiation = tuple(np.full((raster_height, raster_width), np.nan, dtype=np.float64) for _ in range(12))
 
     for month_index, month in enumerate(monthly_temperature, start=1):
         month[0, 0] = float(month_index)
@@ -584,7 +586,12 @@ def test_duckdb_climate_repository_loads_rows_built_in_pipeline_shape(tmp_path: 
     for month_index, month in enumerate(monthly_solar_radiation, start=1):
         month[0, 0] = float(month_index * 100)
 
-    rows = build_insert_rows(monthly_temperature, monthly_precipitation, monthly_solar_radiation)
+    rows = build_insert_rows(
+        monthly_temperature,
+        monthly_precipitation,
+        monthly_solar_radiation,
+        DEFAULT_WORLDCLIM_RESOLUTION,
+    )
 
     with duckdb.connect(str(database_path)) as connection:
         create_climate_cells_table(connection)
@@ -592,7 +599,7 @@ def test_duckdb_climate_repository_loads_rows_built_in_pipeline_shape(tmp_path: 
         create_cities_table(connection)
         copy_rows_into_cities_table(
             connection,
-            [("North Pole Test City", "NO", 89.9, -179.9, 89.9167, -179.9167)],
+            [("North Pole Test City", "NO", 89.9, -179.9, 89.9583, -179.9583)],
         )
 
     cells = DuckDbClimateRepository(database_path).list_cells()
@@ -600,8 +607,8 @@ def test_duckdb_climate_repository_loads_rows_built_in_pipeline_shape(tmp_path: 
 
     assert cells == (
         ClimateCell(
-            lat=89.9167,
-            lon=-179.9167,
+            lat=89.9583,
+            lon=-179.9583,
             temperature_c=tuple(float(month_index) for month_index in range(1, 13)),
             precipitation_mm=tuple(float(month_index * 10) for month_index in range(1, 13)),
             cloud_cover_pct=(50,) * 12,
@@ -613,7 +620,54 @@ def test_duckdb_climate_repository_loads_rows_built_in_pipeline_shape(tmp_path: 
             country_code="NO",
             lat=89.9,
             lon=-179.9,
-            cell_lat=89.9167,
-            cell_lon=-179.9167,
+            cell_lat=89.9583,
+            cell_lon=-179.9583,
         ),
     )
+
+
+def test_create_app_reads_climate_database_path_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    database_path = tmp_path / "climate-5m.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(
+            """
+            CREATE TABLE climate_cells AS
+            SELECT
+                1.0 AS lat,
+                2.0 AS lon,
+                22.0 AS t_jan, 22.0 AS t_feb, 22.0 AS t_mar, 22.0 AS t_apr, 22.0 AS t_may, 22.0 AS t_jun,
+                22.0 AS t_jul, 22.0 AS t_aug, 22.0 AS t_sep, 22.0 AS t_oct, 22.0 AS t_nov, 22.0 AS t_dec,
+                0.0 AS prec_jan, 0.0 AS prec_feb, 0.0 AS prec_mar, 0.0 AS prec_apr, 0.0 AS prec_may, 0.0 AS prec_jun,
+                0.0 AS prec_jul, 0.0 AS prec_aug, 0.0 AS prec_sep, 0.0 AS prec_oct, 0.0 AS prec_nov, 0.0 AS prec_dec,
+                15 AS cloud_jan, 15 AS cloud_feb, 15 AS cloud_mar, 15 AS cloud_apr, 15 AS cloud_may, 15 AS cloud_jun,
+                15 AS cloud_jul, 15 AS cloud_aug, 15 AS cloud_sep, 15 AS cloud_oct, 15 AS cloud_nov, 15 AS cloud_dec
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE cities AS
+            SELECT
+                'Env Test City' AS name,
+                'CO' AS country_code,
+                1.0 AS lat,
+                2.0 AS lon,
+                1.0 AS cell_lat,
+                2.0 AS cell_lon
+            """
+        )
+
+    monkeypatch.setenv("POGODAPP_CLIMATE_DB", str(database_path))
+
+    response = TestClient(create_app()).post(
+        "/score",
+        data={
+            "ideal_temperature": "22",
+            "cold_tolerance": "7",
+            "heat_tolerance": "5",
+            "rain_sensitivity": "55",
+            "sun_preference": "60",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["scores"] == [{"name": "Env Test City", "country_code": "CO", "flag": "🇨🇴", "score": 1.0}]
