@@ -261,6 +261,7 @@ class CityScorePoint(TypedDict):
     """JSON score payload for the ranked city list and map markers."""
 
     name: str
+    continent: str
     country_code: str
     flag: str
     score: float
@@ -412,6 +413,7 @@ def rank_city_scores(
         ranked.append(
             {
                 "name": winner.city.name,
+                "continent": continent_of(winner.city.country_code, winner.city.lon),
                 "country_code": winner.city.country_code,
                 "flag": country_flag(winner.city.country_code),
                 "score": round(winner.score, 4),
@@ -461,6 +463,7 @@ def rank_indexed_city_scores(
         ranked.append(
             {
                 "name": winner_city.name,
+                "continent": continent_of(winner_city.country_code, winner_city.lon),
                 "country_code": winner_city.country_code,
                 "flag": city_catalog.flags[winner_index],
                 "score": round(winner_score, 4),

@@ -8,14 +8,7 @@ from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
 
-from backend.cities import (
-    CityCandidate,
-    CityRankingCache,
-    CityScorePoint,
-    continent_of,
-    rank_city_scores,
-    rank_indexed_city_scores,
-)
+from backend.cities import CityCandidate, CityRankingCache, CityScorePoint, rank_city_scores, rank_indexed_city_scores
 from backend.config import RANKING_MIN_POPULATION
 from backend.heatmap import render_heatmap_png, render_heatmap_png_from_arrays, render_heatmap_png_from_projection
 from backend.scoring import (
@@ -83,6 +76,14 @@ def _filter_ranking_catalog(city_catalog: CityRankingCache) -> CityRankingCache:
     return CityRankingCache.from_cities(filtered_cities, filtered_indexes)
 
 
+def _filter_city_candidates(city_catalog: tuple[CityCandidate, ...]) -> tuple[CityCandidate, ...]:
+    """Return sidebar-eligible cities for the fallback ranking path."""
+    if RANKING_MIN_POPULATION == 0 or not city_catalog:
+        return city_catalog
+
+    return tuple(city for city in city_catalog if city.population >= RANKING_MIN_POPULATION or city.population == 0)
+
+
 def _ensure_continent_coverage(
     ranked: list[CityScorePoint],
     fill_pool: list[CityScorePoint],
@@ -97,18 +98,18 @@ def _ensure_continent_coverage(
     present: set[tuple[str, str, float, float]] = set()
     for entry in ranked:
         present.add(_city_identity(entry))
-        cont = continent_of(entry["country_code"], entry["lon"])
+        cont = entry["continent"]
         if cont != "Other":
             continent_counts[cont] = continent_counts.get(cont, 0) + 1
 
-    all_continents = {continent_of(c["country_code"], c["lon"]) for c in fill_pool} - {"Other"}
+    all_continents = {city["continent"] for city in fill_pool} - {"Other"}
     needs_fill = {c for c in all_continents if continent_counts.get(c, 0) < min_per_continent}
 
     if not needs_fill:
         return ranked
 
     for city in fill_pool:
-        cont = continent_of(city["country_code"], city["lon"])
+        cont = city["continent"]
         if cont not in needs_fill or _city_identity(city) in present:
             continue
         ranked.append(city)
@@ -128,7 +129,7 @@ def _build_sidebar_scores(ranked_pool: list[CityScorePoint]) -> list[CityScorePo
     sidebar_scores: list[CityScorePoint] = []
 
     for city in ranked_pool:
-        continent = continent_of(city["country_code"], city["lon"])
+        continent = city["continent"]
         if continent == "Other":
             continue
         if continent_counts.get(continent, 0) >= SIDEBAR_CONTINENT_RESERVE:
@@ -137,6 +138,13 @@ def _build_sidebar_scores(ranked_pool: list[CityScorePoint]) -> list[CityScorePo
         continent_counts[continent] = continent_counts.get(continent, 0) + 1
 
     return sidebar_scores
+
+
+def _build_ranked_sidebar_scores(ranked_pool: list[CityScorePoint]) -> list[CityScorePoint]:
+    """Apply continent backfill and reserve trimming to one ranked candidate pool."""
+    initial_cities = list(ranked_pool[:INITIAL_CITY_RESULTS])
+    initial_cities = _ensure_continent_coverage(initial_cities, ranked_pool[INITIAL_CITY_RESULTS:])
+    return _build_sidebar_scores(initial_cities + ranked_pool[INITIAL_CITY_RESULTS:])
 
 
 def _city_identity(city: CityScorePoint) -> tuple[str, str, float, float]:
@@ -160,6 +168,7 @@ def _deduplicate_city_points(cities: list[CityScorePoint]) -> list[CityScorePoin
 def _with_city_score(city: CityScorePoint, score: float) -> CityScorePoint:
     return {
         "name": city["name"],
+        "continent": city["continent"],
         "country_code": city["country_code"],
         "flag": city["flag"],
         "score": score,
@@ -298,9 +307,7 @@ def _build_score_response_from_matrix(
     # Build a large diversity-suppressed pool so the continent fill draws from
     # already-spread candidates rather than raw score clusters.
     diverse_pool = rank_indexed_city_scores(ranking_catalog, normalized_scores, limit=RANKING_POOL_SIZE)
-    initial_cities = list(diverse_pool[:INITIAL_CITY_RESULTS])
-    initial_cities = _ensure_continent_coverage(initial_cities, diverse_pool[INITIAL_CITY_RESULTS:])
-    top_cities = _build_sidebar_scores(initial_cities + diverse_pool[INITIAL_CITY_RESULTS:])
+    top_cities = _build_ranked_sidebar_scores(diverse_pool)
     top_cities = _rescore_city_points_from_cache(ranking_catalog, top_cities, raw_scores)
     timings.ranking_ms = _elapsed_ms(ranking_started)
 
@@ -384,8 +391,10 @@ def _build_score_response_from_cells(
     timings.normalize_ms = _elapsed_ms(normalize_started)
 
     ranking_started = perf_counter()
-    top_cities = _build_sidebar_scores(rank_city_scores(cities, normalized_scores, limit=RANKING_POOL_SIZE))
-    top_cities = _rescore_city_points_from_cells(cities, top_cities, raw_scores)
+    ranking_catalog = _filter_city_candidates(cities)
+    diverse_pool = rank_city_scores(ranking_catalog, normalized_scores, limit=RANKING_POOL_SIZE)
+    top_cities = _build_ranked_sidebar_scores(diverse_pool)
+    top_cities = _rescore_city_points_from_cells(ranking_catalog, top_cities, raw_scores)
     timings.ranking_ms = _elapsed_ms(ranking_started)
 
     heatmap_started = perf_counter()

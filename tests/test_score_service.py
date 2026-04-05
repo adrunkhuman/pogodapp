@@ -160,6 +160,7 @@ def test_deduplicate_city_points_removes_duplicate_substituted_cities() -> None:
     cities: list[CityScorePoint] = [
         {
             "name": "Bogota",
+            "continent": "South America",
             "country_code": "CO",
             "flag": "🇨🇴",
             "score": 0.91,
@@ -170,6 +171,7 @@ def test_deduplicate_city_points_removes_duplicate_substituted_cities() -> None:
         },
         {
             "name": "Bogota",
+            "continent": "South America",
             "country_code": "CO",
             "flag": "🇨🇴",
             "score": 0.9,
@@ -180,6 +182,7 @@ def test_deduplicate_city_points_removes_duplicate_substituted_cities() -> None:
         },
         {
             "name": "Medellin",
+            "continent": "South America",
             "country_code": "CO",
             "flag": "🇨🇴",
             "score": 0.89,
@@ -195,3 +198,72 @@ def test_deduplicate_city_points_removes_duplicate_substituted_cities() -> None:
         cities[0],
         cities[2],
     ]
+
+
+def test_build_score_response_includes_backend_continent_labels() -> None:
+    response = build_score_response(
+        StubClimateRepository(),
+        PreferenceInputs(
+            ideal_temperature=22,
+            cold_tolerance=7,
+            heat_tolerance=5,
+            rain_sensitivity=55,
+            sun_preference=60,
+        ),
+    )
+
+    assert response["scores"]
+    assert all(city["continent"] != "Other" for city in response["scores"])
+
+
+def test_build_score_response_keeps_fallback_ranking_behavior_aligned_with_matrix_path() -> None:
+    climate_cells = (
+        ClimateCell(
+            lat=1.0,
+            lon=2.0,
+            temperature_c=(22.0,) * 12,
+            precipitation_mm=(0.0,) * 12,
+            cloud_cover_pct=(15,) * 12,
+        ),
+        ClimateCell(
+            lat=10.0,
+            lon=11.0,
+            temperature_c=(22.0,) * 12,
+            precipitation_mm=(0.0,) * 12,
+            cloud_cover_pct=(15,) * 12,
+        ),
+    )
+    cities = (
+        CityCandidate(
+            name="Capital", country_code="CO", lat=1.0, lon=2.0, cell_lat=1.0, cell_lon=2.0, population=100_000
+        ),
+        CityCandidate(
+            name="Small Town", country_code="CO", lat=10.0, lon=11.0, cell_lat=10.0, cell_lon=11.0, population=5_000
+        ),
+    )
+    preferences = PreferenceInputs(
+        ideal_temperature=22,
+        cold_tolerance=7,
+        heat_tolerance=5,
+        rain_sensitivity=55,
+        sun_preference=60,
+    )
+
+    class CellsRepository:
+        def list_cells(self) -> tuple[ClimateCell, ...]:
+            return climate_cells
+
+        def list_cities(self) -> tuple[CityCandidate, ...]:
+            return cities
+
+    class MatrixRepository(CellsRepository):
+        def get_climate_matrix(self) -> ClimateMatrix:
+            return ClimateMatrix.from_cells(climate_cells)
+
+        def get_indexed_cities(self) -> CityRankingCache:
+            return CityRankingCache.from_cities(cities, np.array([0, 1], dtype=np.int32))
+
+    cells_response = build_score_response(cast("ClimateRepository", CellsRepository()), preferences)
+    matrix_response = build_score_response(cast("ClimateRepository", MatrixRepository()), preferences)
+
+    assert cells_response["scores"] == matrix_response["scores"]

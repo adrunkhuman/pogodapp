@@ -53,27 +53,7 @@ const SCORE_COLOR_EXPR = [
   1.00, "#7928ca",
 ];
 
-// Continent → country code sets for sidebar grouping (mirrors backend/cities.py).
-const _EUROPE = new Set("AD AL AT BA BE BG BY CH CY CZ DE DK EE ES FI FR GB GI GR HR HU IE IS IT LI LT LU LV MC MD ME MK MT NL NO PL PT RO RS RU SE SI SK SM UA VA XK".split(" "));
-const _ASIA   = new Set("AE AF AM AZ BD BH BN BT CN GE ID IL IN IQ IR JO JP KG KH KP KR KW KZ LA LB LK MM MN MO MV MY NP OM PH PK PS QA SA SG SY TH TJ TL TM TR TW UZ VN YE".split(" "));
-const _AFRICA = new Set("AO BF BI BJ BW CD CF CG CI CM CV DJ DZ EG EH ER ET GA GH GM GN GQ GW KE KM LR LS LY MA MG ML MR MU MW MZ NA NE NG RW SC SD SL SN SO SS ST SZ TD TG TN TZ UG ZA ZM ZW".split(" "));
-const _NORTH_AMERICA  = new Set("AG BB BS BZ CA CR CU DM DO GD GT HN HT JM KN LC MX NI PA TT US VC".split(" "));
-const _SOUTH_AMERICA  = new Set("AR BO BR CL CO EC GF GY PE PY SR UY VE".split(" "));
-const _OCEANIA = new Set("AU FJ FM KI MH NR NZ PG PW SB TO TV VU WS".split(" "));
-const EUROPE_ASIA_LONGITUDE_SPLIT = 60;
-
 const CONTINENT_ORDER = ["Europe", "Asia", "Africa", "North America", "South America", "Oceania"];
-
-function continentOf(code, lon = null) {
-  if (code === "RU" && lon != null) return lon >= EUROPE_ASIA_LONGITUDE_SPLIT ? "Asia" : "Europe";
-  if (_EUROPE.has(code))        return "Europe";
-  if (_ASIA.has(code))          return "Asia";
-  if (_AFRICA.has(code))        return "Africa";
-  if (_NORTH_AMERICA.has(code)) return "North America";
-  if (_SOUTH_AMERICA.has(code)) return "South America";
-  if (_OCEANIA.has(code))       return "Oceania";
-  return "Other";
-}
 
 let map;
 const countryNames = typeof Intl.DisplayNames === "function"
@@ -138,7 +118,7 @@ function visibleScoresForList(scores) {
   const groupedCounts = new Map();
 
   for (const point of scores) {
-    const continent = continentOf(point.country_code, point.lon);
+    const continent = point.continent;
     const usedCount = groupedCounts.get(continent) ?? 0;
     if (usedCount >= visibleCountForContinent(continent)) {
       continue;
@@ -319,7 +299,7 @@ function renderScoreList(scores) {
   // Group by continent, preserving score order within each group.
   const groups = new Map(CONTINENT_ORDER.map(c => [c, []]));
   for (const point of scores) {
-    const continent = continentOf(point.country_code, point.lon);
+    const continent = point.continent;
     groups.get(continent)?.push(point);
   }
 
