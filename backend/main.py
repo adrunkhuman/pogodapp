@@ -1,5 +1,8 @@
+from __future__ import annotations
+
+import base64
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, TypedDict
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -12,12 +15,8 @@ from backend.climate_repository import (
     build_default_climate_repository,
 )
 from backend.config import DEFAULT_PREFERENCES
+from backend.heatmap import render_heatmap_png
 from backend.scoring import PreferenceInputs, ScorePoint, score_climate_cells
-
-# Only the top N cells by score are sent to the browser.
-# At world zoom (~68k px of land) a heatmap saturates when N >> 68k / radius².
-# 5000 cells at radius 6px gives ~2x coverage — visible hotspots without a solid blob.
-MAX_SCORE_CELLS: int = 5000
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
@@ -26,6 +25,13 @@ TEMPLATES_DIR = FRONTEND_DIR / "templates"
 CLIMATE_DATABASE_PATH = ROOT_DIR / "data" / "climate.duckdb"
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+class ScoreResponse(TypedDict):
+    """Combined score + heatmap response so cells are only scored once per request."""
+
+    scores: list[ScorePoint]
+    heatmap: str  # data:image/png;base64,... covering the full world extent
 
 
 def build_index_context() -> dict[str, object]:
@@ -48,7 +54,7 @@ def create_app(climate_repository: ClimateRepository | None = None) -> FastAPI:
         )
 
     @app.post("/score")
-    async def score(preferences: Annotated[PreferenceInputs, Form()]) -> list[ScorePoint]:
+    async def score(preferences: Annotated[PreferenceInputs, Form()]) -> ScoreResponse:
         try:
             climate_cells = repository.list_cells()
         except ClimateDataError as error:
@@ -56,17 +62,22 @@ def create_app(climate_repository: ClimateRepository | None = None) -> FastAPI:
 
         raw = score_climate_cells(climate_cells, preferences)
         if not raw:
-            return []
+            return {"scores": [], "heatmap": ""}
 
-        top = sorted(raw, key=lambda p: p["score"], reverse=True)[:MAX_SCORE_CELLS]
-        max_score = top[0]["score"]
+        max_score = max(p["score"] for p in raw)
         if max_score == 0:
-            return []
+            return {"scores": [], "heatmap": ""}
 
-        return [
+        normalized: list[ScorePoint] = [
             {"lat": p["lat"], "lon": p["lon"], "score": round(p["score"] / max_score, 4)}
-            for p in top
+            for p in raw
         ]
+
+        top20 = sorted(normalized, key=lambda p: p["score"], reverse=True)[:20]
+        png = render_heatmap_png(normalized)
+        heatmap_data_url = "data:image/png;base64," + base64.b64encode(png).decode()
+
+        return {"scores": top20, "heatmap": heatmap_data_url}
 
     return app
 

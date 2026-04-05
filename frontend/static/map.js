@@ -5,12 +5,16 @@ const BACKDROP_SOURCE_ID = "world-backdrop";
 const OCEAN_LAYER_ID = "world-ocean";
 const LAND_LAYER_ID = "world-land";
 const BORDER_LAYER_ID = "world-borders";
-const SCORE_SOURCE_ID = "scores";
-const SCORE_HEATMAP_LAYER_ID = "scores-heatmap";
-const EMPTY_FEATURE_COLLECTION = { type: "FeatureCollection", features: [] };
+const HEATMAP_SOURCE_ID = "score-heatmap";
+const HEATMAP_LAYER_ID = "score-heatmap";
+
+// 1x1 transparent PNG — placeholder until the first score response arrives
+const EMPTY_IMAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+// World extent corners for the image source: [lon, lat] for TL, TR, BR, BL
+const WORLD_CORNERS = [[-180, 90], [180, 90], [180, -90], [-180, -90]];
 
 let map;
-let pendingScores = EMPTY_FEATURE_COLLECTION;
 
 function setMapStatus(message) {
   const status = document.getElementById("map-status");
@@ -20,7 +24,7 @@ function setMapStatus(message) {
   }
 }
 
-function renderScoreList(collection) {
+function renderScoreList(scores) {
   const results = document.getElementById("score-results-list");
 
   if (!results) {
@@ -29,78 +33,17 @@ function renderScoreList(collection) {
 
   results.replaceChildren();
 
-  if (collection.features.length === 0) {
+  if (scores.length === 0) {
     const item = document.createElement("li");
     item.textContent = "No scored locations available yet.";
     results.append(item);
     return;
   }
 
-  const top = collection.features
-    .slice()
-    .sort((a, b) => b.properties.score - a.properties.score)
-    .slice(0, 20);
-
-  for (const feature of top) {
-    const item = document.createElement("li");
-    const [lon, lat] = feature.geometry.coordinates;
-    const score = feature.properties.score;
-
-    item.textContent = `${Math.round(score * 100)}% match at ${lat}, ${lon}`;
-    results.append(item);
-  }
-}
-
-function toScoreCollection(scores) {
-  if (!Array.isArray(scores)) {
-    return EMPTY_FEATURE_COLLECTION;
-  }
-
-  const features = [];
-
   for (const point of scores) {
-    if (
-      typeof point?.lat !== "number" ||
-      typeof point?.lon !== "number" ||
-      typeof point?.score !== "number"
-    ) {
-      continue;
-    }
-
-    features.push({
-      type: "Feature",
-      geometry: {
-        type: "Point",
-        coordinates: [point.lon, point.lat],
-      },
-      properties: {
-        score: point.score,
-        label: `${Math.round(point.score * 100)}%`,
-      },
-    });
-  }
-
-  return { type: "FeatureCollection", features };
-}
-
-function applyScores(collection) {
-  pendingScores = collection;
-  renderScoreList(collection);
-
-  if (collection.features.length === 0) {
-    setMapStatus("No scored locations available.");
-  } else {
-    setMapStatus(`${collection.features.length} scored locations rendered on the map.`);
-  }
-
-  if (!map || !map.isStyleLoaded()) {
-    return;
-  }
-
-  const source = map.getSource(SCORE_SOURCE_ID);
-
-  if (source) {
-    source.setData(collection);
+    const item = document.createElement("li");
+    item.textContent = `${Math.round(point.score * 100)}% match at ${point.lat}, ${point.lon}`;
+    results.append(item);
   }
 }
 
@@ -164,6 +107,22 @@ function initializeMap() {
       },
     });
 
+    map.addSource(HEATMAP_SOURCE_ID, {
+      type: "image",
+      url: EMPTY_IMAGE,
+      coordinates: WORLD_CORNERS,
+    });
+
+    map.addLayer({
+      id: HEATMAP_LAYER_ID,
+      type: "raster",
+      source: HEATMAP_SOURCE_ID,
+      paint: {
+        "raster-opacity": 0.85,
+        "raster-fade-duration": 200,
+      },
+    });
+
     map.addLayer({
       id: BORDER_LAYER_ID,
       type: "line",
@@ -174,69 +133,19 @@ function initializeMap() {
       },
     });
 
-    map.addSource(SCORE_SOURCE_ID, {
-      type: "geojson",
-      data: pendingScores,
-    });
-
-    map.addLayer({
-      id: SCORE_HEATMAP_LAYER_ID,
-      type: "heatmap",
-      source: SCORE_SOURCE_ID,
-      paint: {
-        "heatmap-weight": [
-          "interpolate",
-          ["linear"],
-          ["get", "score"],
-          0, 0,
-          1, 1,
-        ],
-        "heatmap-intensity": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          0, 0.6,
-          3, 1.0,
-          6, 1.4,
-        ],
-        "heatmap-radius": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          0, 6,
-          2, 10,
-          4, 16,
-          6, 24,
-        ],
-        "heatmap-color": [
-          "interpolate",
-          ["linear"],
-          ["heatmap-density"],
-          0,    "rgba(53, 92, 125, 0)",
-          0.2,  "rgba(53, 92, 125, 0.35)",
-          0.45, "rgba(127, 179, 213, 0.55)",
-          0.65, "rgba(248, 182, 90, 0.78)",
-          0.82, "rgba(234, 95, 137, 0.88)",
-          1,    "rgba(121, 40, 202, 0.92)",
-        ],
-        "heatmap-opacity": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          0, 0.85,
-          4, 0.78,
-          6, 0.70,
-        ],
-      },
-    });
-
     setMapStatus("Map backdrop ready.");
-    applyScores(pendingScores);
   });
 }
 
-window.renderScores = function renderScores(scores) {
-  applyScores(toScoreCollection(scores));
+window.renderScores = function renderScores(response) {
+  const { scores, heatmap } = response;
+
+  renderScoreList(scores ?? []);
+
+  if (heatmap && map && map.isStyleLoaded()) {
+    map.getSource(HEATMAP_SOURCE_ID)?.updateImage({ url: heatmap });
+    setMapStatus(`${scores.length} top matches shown.`);
+  }
 };
 
 if (document.readyState === "loading") {
@@ -245,4 +154,4 @@ if (document.readyState === "loading") {
   initializeMap();
 }
 
-renderScoreList(EMPTY_FEATURE_COLLECTION);
+renderScoreList([]);
