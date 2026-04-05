@@ -20,6 +20,8 @@ function bindPreferenceControls(form) {
 }
 
 function bindScoreHandoff(form) {
+  // Successful `#preferences` submissions return the raw `/score` JSON payload,
+  // which the split map scripts consume through `window.renderScores`.
   document.body.addEventListener("htmx:afterRequest", (event) => {
     if (event.detail.elt !== form || event.detail.xhr.status !== 200) return;
     window.renderScores(JSON.parse(event.detail.xhr.responseText));

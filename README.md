@@ -26,8 +26,10 @@ It is not a weather app. It scores long-term climate normals against a few user 
 
 - `GET /` renders the page.
 - `POST /score` accepts standard form fields and returns JSON.
-- The response shape is `{"scores": [{"name", "country_code", "flag", "score"}, ...], "heatmap": "data:image/png;base64,..."}`.
+- The response shape is `{"scores": [{"name", "continent", "country_code", "flag", "score", "lat", "lon", "probe_lat", "probe_lon"}, ...], "heatmap": "data:image/png;base64,..."}`.
 - Empty or all-zero results return `{"scores": [], "heatmap": ""}`.
+- `GET /probe` accepts the same preference fields plus `lat` and `lon`, then returns `{"found": bool, "overall_score": 0..1, "metrics": [{"key", "label", "value", "display_value", "score"}, ...]}`.
+- `/probe` returns `{"found": false, "overall_score": 0.0, "metrics": []}` for ocean points, unmapped cells, or repositories without probe support.
 - FastAPI handles HTTP and validation.
 - Scoring, ranking, and heatmap rendering stay out of the route layer.
 - `frontend/static/map.js` only renders. HTMX submits the form and hands the response to the map code.
@@ -46,7 +48,12 @@ It is not a weather app. It scores long-term climate normals against a few user 
 - Rain is one-sided: more rain only hurts the score.
 - Sun preference becomes a cloud-cover tolerance threshold.
 - Scores are normalized per request so the best available match lands at `1.0`.
-- The city list is capped at 20 results and applies a regional diversity penalty so one cluster does not dominate the output.
+- Ranked cities are grouped by continent, apply a regional diversity penalty so one cluster does not dominate the output, and keep a deeper reserve of up to 30 cities per continent for progressive reveal in the sidebar.
+
+Coordinate notes:
+
+- `lat` and `lon` are the display coordinates for the city marker and focused map state.
+- `probe_lat` and `probe_lon` are the snapped climate-cell coordinates used for `/probe` lookups and tooltip scoring.
 
 ## Run Locally
 

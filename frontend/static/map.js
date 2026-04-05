@@ -95,6 +95,8 @@ function initializeMap() {
   });
 }
 
+// Public handoff used by `app.js` after a successful `/score` HTMX response.
+// Expects the raw backend payload and tolerates empty-result heatmaps.
 window.renderScores = function renderScores(response) {
   const { scores, heatmap } = response;
   continentVisibleCounts.clear();

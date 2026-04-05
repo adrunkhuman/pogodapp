@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
     from backend.climate_repository import ClimateRepository
 
-from backend.cities import CityCandidate, CityRankingCache
+from backend.cities import CityCandidate, CityRankingCache, snap_city_to_cell_key
 from backend.climate_pipeline import (
     DEFAULT_WORLDCLIM_RESOLUTION,
     build_insert_rows,
@@ -192,6 +192,55 @@ def test_duckdb_climate_repository_raises_clear_error_for_bad_city_row_values(tm
 
     with pytest.raises(ClimateDataError, match="Failed to map city data"):
         DuckDbClimateRepository(database_path).list_cities()
+
+
+def test_duckdb_climate_repository_probe_nearest_cell_returns_index_for_known_land_cell(tmp_path: Path) -> None:
+    database_path = tmp_path / "climate.duckdb"
+    probe_city = CityCandidate(name="", country_code="", lat=10.5, lon=20.5, cell_lat=0.0, cell_lon=0.0)
+    snapped_lat, snapped_lon = snap_city_to_cell_key(probe_city)
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(
+            """
+            CREATE TABLE climate_cells AS
+            SELECT
+                ? AS lat,
+                ? AS lon,
+                1.0 AS t_jan, 2.0 AS t_feb, 3.0 AS t_mar, 4.0 AS t_apr, 5.0 AS t_may, 6.0 AS t_jun,
+                7.0 AS t_jul, 8.0 AS t_aug, 9.0 AS t_sep, 10.0 AS t_oct, 11.0 AS t_nov, 12.0 AS t_dec,
+                13.0 AS prec_jan, 14.0 AS prec_feb, 15.0 AS prec_mar, 16.0 AS prec_apr, 17.0 AS prec_may, 18.0 AS prec_jun,
+                19.0 AS prec_jul, 20.0 AS prec_aug, 21.0 AS prec_sep, 22.0 AS prec_oct, 23.0 AS prec_nov, 24.0 AS prec_dec,
+                25 AS cloud_jan, 26 AS cloud_feb, 27 AS cloud_mar, 28 AS cloud_apr, 29 AS cloud_may, 30 AS cloud_jun,
+                31 AS cloud_jul, 32 AS cloud_aug, 33 AS cloud_sep, 34 AS cloud_oct, 35 AS cloud_nov, 36 AS cloud_dec
+            """,
+            [snapped_lat, snapped_lon],
+        )
+
+    repository = DuckDbClimateRepository(database_path)
+
+    assert repository.probe_nearest_cell(probe_city.lat, probe_city.lon) == 0
+
+
+def test_duckdb_climate_repository_probe_nearest_cell_returns_none_for_unmapped_coords(tmp_path: Path) -> None:
+    database_path = tmp_path / "climate.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(
+            """
+            CREATE TABLE climate_cells AS
+            SELECT
+                10.5 AS lat,
+                20.5 AS lon,
+                1.0 AS t_jan, 2.0 AS t_feb, 3.0 AS t_mar, 4.0 AS t_apr, 5.0 AS t_may, 6.0 AS t_jun,
+                7.0 AS t_jul, 8.0 AS t_aug, 9.0 AS t_sep, 10.0 AS t_oct, 11.0 AS t_nov, 12.0 AS t_dec,
+                13.0 AS prec_jan, 14.0 AS prec_feb, 15.0 AS prec_mar, 16.0 AS prec_apr, 17.0 AS prec_may, 18.0 AS prec_jun,
+                19.0 AS prec_jul, 20.0 AS prec_aug, 21.0 AS prec_sep, 22.0 AS prec_oct, 23.0 AS prec_nov, 24.0 AS prec_dec,
+                25 AS cloud_jan, 26 AS cloud_feb, 27 AS cloud_mar, 28 AS cloud_apr, 29 AS cloud_may, 30 AS cloud_jun,
+                31 AS cloud_jul, 32 AS cloud_aug, 33 AS cloud_sep, 34 AS cloud_oct, 35 AS cloud_nov, 36 AS cloud_dec
+            """
+        )
+
+    repository = DuckDbClimateRepository(database_path)
+
+    assert repository.probe_nearest_cell(0.0, 0.0) is None
 
 
 def test_app_can_use_an_injected_climate_repository() -> None:

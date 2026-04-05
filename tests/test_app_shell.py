@@ -5,8 +5,8 @@ from backend.cities import CityCandidate, CityRankingCache, continent_of
 from backend.climate_repository import ClimateDataError, StubClimateRepository
 from backend.config import DEFAULT_PREFERENCES, MAP_PROJECTION, PREFERENCE_FIELD_NAMES
 from backend.heatmap import HeatmapProjection
-from backend.main import create_app
-from backend.scoring import ClimateCell, ClimateMatrix, PreferenceInputs, score_preferences
+from backend.main import build_probe_response, create_app
+from backend.scoring import ClimateCell, ClimateMatrix, PreferenceInputs, score_matrix_row_breakdown, score_preferences
 
 client = TestClient(create_app(climate_repository=StubClimateRepository()))
 
@@ -429,6 +429,56 @@ def test_probe_endpoint_returns_scored_breakdown_for_a_valid_cell() -> None:
     assert all(set(metric) == {"key", "label", "value", "display_value", "score"} for metric in payload["metrics"])
 
 
+def test_probe_endpoint_returns_empty_payload_when_repository_has_no_probe_support() -> None:
+    probe_client = TestClient(create_app(climate_repository=StubClimateRepository()))
+
+    response = probe_client.get(
+        "/probe",
+        params={
+            "lat": 37.5,
+            "lon": -122.0,
+            "ideal_temperature": 22,
+            "cold_tolerance": 7,
+            "heat_tolerance": 5,
+            "rain_sensitivity": 55,
+            "sun_preference": 60,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"found": False, "overall_score": 0.0, "metrics": []}
+
+
+def test_probe_endpoint_returns_empty_payload_when_no_cell_is_found() -> None:
+    class MissingProbeRepository(StubClimateRepository):
+        def __init__(self) -> None:
+            self._matrix = ClimateMatrix.from_cells(self.list_cells())
+
+        def get_climate_matrix(self) -> ClimateMatrix:
+            return self._matrix
+
+        def probe_nearest_cell(self, lat: float, lon: float) -> int | None:
+            return None
+
+    probe_client = TestClient(create_app(climate_repository=MissingProbeRepository()))
+
+    response = probe_client.get(
+        "/probe",
+        params={
+            "lat": 37.5,
+            "lon": -122.0,
+            "ideal_temperature": 22,
+            "cold_tolerance": 7,
+            "heat_tolerance": 5,
+            "rain_sensitivity": 55,
+            "sun_preference": 60,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"found": False, "overall_score": 0.0, "metrics": []}
+
+
 def test_probe_endpoint_returns_503_for_repository_failures() -> None:
     class BrokenProbeRepository(StubClimateRepository):
         def probe_nearest_cell(self, lat: float, lon: float) -> int | None:
@@ -483,3 +533,23 @@ def test_map_script_renders_city_labels_instead_of_coordinates() -> None:
     assert "if (!response.ok) throw new Error" in probe_response.text
     assert "metric.display_value" in probe_response.text
     assert "probe_lat" in layers_response.text
+
+
+def test_build_probe_response_preserves_metric_order_and_fields() -> None:
+    response = build_probe_response(
+        score_matrix_row_breakdown(
+            ClimateMatrix.from_cells((StubClimateRepository().list_cells()[0],)),
+            0,
+            PreferenceInputs(
+                ideal_temperature=22,
+                cold_tolerance=7,
+                heat_tolerance=5,
+                rain_sensitivity=55,
+                sun_preference=60,
+            ),
+        )
+    )
+
+    assert response.found is True
+    assert [metric.key for metric in response.metrics] == ["temp", "rain", "sun"]
+    assert [metric.label for metric in response.metrics] == ["temp", "rain", "sun"]

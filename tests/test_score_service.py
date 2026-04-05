@@ -267,3 +267,62 @@ def test_build_score_response_keeps_fallback_ranking_behavior_aligned_with_matri
     matrix_response = build_score_response(cast("ClimateRepository", MatrixRepository()), preferences)
 
     assert cells_response["scores"] == matrix_response["scores"]
+
+
+def test_build_score_response_filters_low_population_but_keeps_legacy_zero_population(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr("backend.score_service.RANKING_MIN_POPULATION", 30_000)
+    climate_cells = (
+        ClimateCell(
+            lat=1.0, lon=2.0, temperature_c=(22.0,) * 12, precipitation_mm=(0.0,) * 12, cloud_cover_pct=(15,) * 12
+        ),
+        ClimateCell(
+            lat=3.0, lon=4.0, temperature_c=(22.0,) * 12, precipitation_mm=(0.0,) * 12, cloud_cover_pct=(15,) * 12
+        ),
+        ClimateCell(
+            lat=5.0, lon=6.0, temperature_c=(22.0,) * 12, precipitation_mm=(0.0,) * 12, cloud_cover_pct=(15,) * 12
+        ),
+    )
+    cities = (
+        CityCandidate(
+            name="Legacy City", country_code="CO", lat=1.0, lon=2.0, cell_lat=1.0, cell_lon=2.0, population=0
+        ),
+        CityCandidate(
+            name="Small Town", country_code="CO", lat=3.0, lon=4.0, cell_lat=3.0, cell_lon=4.0, population=5_000
+        ),
+        CityCandidate(
+            name="Capital", country_code="CO", lat=5.0, lon=6.0, cell_lat=5.0, cell_lon=6.0, population=100_000
+        ),
+    )
+    preferences = PreferenceInputs(
+        ideal_temperature=22,
+        cold_tolerance=7,
+        heat_tolerance=5,
+        rain_sensitivity=55,
+        sun_preference=60,
+    )
+
+    class CellsRepository:
+        def list_cells(self) -> tuple[ClimateCell, ...]:
+            return climate_cells
+
+        def list_cities(self) -> tuple[CityCandidate, ...]:
+            return cities
+
+    class MatrixRepository(CellsRepository):
+        def get_climate_matrix(self) -> ClimateMatrix:
+            return ClimateMatrix.from_cells(climate_cells)
+
+        def get_indexed_cities(self) -> CityRankingCache:
+            return CityRankingCache.from_cities(cities, np.array([0, 1, 2], dtype=np.int32))
+
+    matrix_names = [
+        city["name"]
+        for city in build_score_response(cast("ClimateRepository", MatrixRepository()), preferences)["scores"]
+    ]
+    fallback_names = [
+        city["name"]
+        for city in build_score_response(cast("ClimateRepository", CellsRepository()), preferences)["scores"]
+    ]
+
+    assert set(matrix_names) == {"Legacy City", "Capital"}
+    assert set(fallback_names) == {"Legacy City", "Capital"}

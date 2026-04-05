@@ -13,7 +13,6 @@ if TYPE_CHECKING:
 
     from backend.scoring import CellScorePoint
 
-# Sets of ISO 3166-1 alpha-2 codes by continent for sidebar grouping and marker selection.
 _EUROPE = frozenset(
     [
         "AD",
@@ -258,7 +257,11 @@ class CityCandidate:
 
 
 class CityScorePoint(TypedDict):
-    """JSON score payload for the ranked city list and map markers."""
+    """JSON score payload for the ranked city list and map markers.
+
+    `lat`/`lon` place the city marker and focus ring. `probe_lat`/`probe_lon`
+    point at the snapped climate cell used for `/probe` scoring.
+    """
 
     name: str
     continent: str

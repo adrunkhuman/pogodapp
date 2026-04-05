@@ -27,9 +27,7 @@ if TYPE_CHECKING:
 INITIAL_CITY_RESULTS = 30
 SIDEBAR_CONTINENT_RESERVE = 30
 CONTINENT_COUNT = 6
-# Diversity-suppressed pool built before trimming for the sidebar reserve.
-# Larger pool means each continent can keep a deeper bench without falling back
-# to raw clustered score ordering.
+# Keep a larger diversified pool so continent backfill doesn't fall back to clustered raw-score picks.
 RANKING_POOL_SIZE = SIDEBAR_CONTINENT_RESERVE * CONTINENT_COUNT * 3
 logger = logging.getLogger(__name__)
 

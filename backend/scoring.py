@@ -279,10 +279,7 @@ def score_matrix_row_breakdown(
     row_index: int,
     preferences: PreferenceInputs,
 ) -> ProbeBreakdown:
-    """Return per-attribute annual averages for one climate-matrix row.
-
-    Used by the /probe endpoint to show what drives the score at a given location.
-    """
+    """Break one climate-matrix row into probe-ready averages and per-metric scores."""
     temp_scores = []
     rain_scores = []
     cloud_scores = []
