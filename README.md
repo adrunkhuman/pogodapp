@@ -1,119 +1,82 @@
 # Pogodapp
 
-Pogodapp is a climate preference search tool, not a weather app. The user describes an ideal climate profile and the app scores places around the world against long-term climate normals, then shows the result as an interactive world map.
+Pogodapp helps people search for climates they like.
 
-## Goal
+It is not a weather app. The user sets a few climate preferences, the backend scores long-term climate normals across the world, and the UI returns a ranked list of cities plus a map overlay.
 
-- Let the user tune climate preferences with simple controls
-- Score global grid cells against those preferences
-- Render scored matches on a world map so stronger results stand out clearly
+## What It Does
+
+- Accepts climate preferences through one form.
+- Scores global land cells against those preferences.
+- Returns a ranked city shortlist and a heatmap image for the map.
+- Keeps the whole interaction on one page.
 
 ## Stack
 
 | Layer | Choice |
 | --- | --- |
-| Backend | FastAPI + DuckDB |
+| Backend | FastAPI, DuckDB, NumPy |
 | Frontend render | Jinja2 |
 | Frontend interaction | HTMX |
-| Map rendering | MapLibre GL + local world backdrop |
-| Hosting | Railway |
-| Tooling | uv, Ruff, ty, pytest |
+| Map | MapLibre GL with local static assets |
+| Heatmap | Server-rendered PNG via Pillow |
+| Tooling | uv, Ruff, ty, pytest, prek |
 
-## Architecture
+## How It Works
 
-- One FastAPI app serves the initial page, static assets, and the scoring API
-- `GET /` renders the page through Jinja2 with default slider values from backend config
-- `POST /score` accepts form-encoded inputs and returns JSON as `{scores, heatmap}` where `scores` is `[{name, country_code, flag, score}, ...]` and `heatmap` is a `data:image/png;base64,...` overlay; out-of-range values fail with `422`
-- Climate data access sits behind a small repository boundary so routing code does not know whether rows come from stubs or DuckDB; DuckDB-backed runtime now reads both climate cells and pre-mapped cities from the same artifact
-- Route handlers stay thin: FastAPI handles validation and HTTP errors, while scoring/ranking/heatmap orchestration lives in backend service code
-- `DEFAULT_PREFERENCES` drives the form control ranges, `PreferenceInputs` enforces the same `/score` bounds, and `tests/test_app_shell.py` guards drift between them
-- HTMX submits form changes to `/score`
-- `htmx:afterRequest` bridges the response into the map update path
-- `frontend/static/map.js` stays focused on rendering, not networking
-- The current map uses MapLibre GL with app-served static assets and a lightweight local GeoJSON world backdrop
-- The score overlay now renders as a colored grid-cell surface on top of that backdrop, and the textual score list now ranks nearby cities instead of raw coordinates
-- DuckDB is the only runtime data store
-- The app uses `data/climate.duckdb` automatically when that file exists; otherwise it falls back to stub climate rows and stub cities until the dataset lands
+- `GET /` renders the app shell with slider defaults and shared map config.
+- `POST /score` accepts standard form fields and returns JSON.
+- The response shape is `{"scores": [{"name", "country_code", "flag", "score"}, ...], "heatmap": "data:image/png;base64,..."}`.
+- Empty or all-zero results return `{"scores": [], "heatmap": ""}`.
+- FastAPI handles HTTP and validation.
+- Scoring, city ranking, and heatmap rendering stay in backend service modules instead of the route layer.
+- `frontend/static/map.js` only renders. HTMX submits the form, and `htmx:afterRequest` hands the JSON payload to the map code.
 
-## Data Model Direction
+## Data
 
-- Source: WorldClim monthly climate normals
-- Resolution: `10'` (~18km) grid — native WorldClim resolution, no aggregation
-- Land mask: ocean pixels are identified by WorldClim's nodata sentinel (~-3.4e38) and excluded; only land cells enter the DB
-- Planned row shape: one row per grid cell (~800k land cells)
-- Runtime tables: `climate_cells(lat, lon, t_jan..t_dec, prec_jan..prec_dec, cloud_jan..cloud_dec)` and `cities(name, country_code, lat, lon, cell_lat, cell_lon)`
-- Distribution policy for `climate.duckdb` is still open: direct git, Git LFS, or build-time download
+- Source: WorldClim 2.1 monthly normals.
+- Current baseline: native `10m` WorldClim grids, meaning 10 arc-minutes per cell.
+- Runtime tables: `climate_cells(...)` and `cities(...)` inside `data/climate.duckdb`.
+- If the database is missing, the app falls back to a small in-repo stub dataset.
+- Cloud cover is currently approximated from solar radiation so the scoring schema can stay stable while the real source is still undecided.
 
-## Scoring Model
+## Scoring
 
-Each grid cell is scored month-by-month, then combined into one annual score.
+- Temperature uses an ideal value plus separate cold and heat tolerance.
+- Rain is one-sided: more rain only hurts the score.
+- Sun preference becomes a cloud-cover tolerance threshold.
+- Scores are normalized per request so the best available match lands at `1.0`.
+- The city list is capped at 20 results and applies a regional diversity penalty so one cluster does not dominate the output.
 
-- Temperature penalty is asymmetric: cold deviations and heat deviations use different slopes, with a comfort band around the ideal temperature
-- Rain is one-sided: higher `rain_sensitivity` increases penalties for wetter months without rewarding rain
-- `sun_preference` maps onto a cloud-cover tolerance threshold and then applies a one-sided misery-style cloud penalty
-- Both stub and DuckDB-backed scoring use one grid-cell record with 12 monthly values per climate signal and average monthly composite scores into one annual score
-- Final scores are normalized to the `0..1` range for map rendering
-- The current prototype renders scores as colored climate cells so stronger matching regions remain readable at world scale
-- Cities are downloaded from GeoNames `cities15000.zip`, filtered onto valid land climate cells at build time, then ranked at request time from the already-scored cells
-
-## Repository Layout
-
-```text
-.
-|-- backend/
-|   |-- config.py
-|   |-- main.py
-|   `-- scoring.py
-|-- data/
-|-- frontend/
-|   |-- static/
-|   |   |-- data/
-|   |   |   `-- world.geojson
-|   |   |-- vendor/
-|   |   |   |-- maplibre-gl.css
-|   |   |   `-- maplibre-gl.js
-|   |   |-- map.js
-|   |   `-- styles.css
-|   `-- templates/
-|       `-- index.html
-|-- tests/
-|-- .github/workflows/ci.yml
-`-- pyproject.toml
-```
-
-## Setup
+## Run Locally
 
 ```bash
 uv sync
-```
-
-## Run
-
-```bash
 uv run pogodapp
 ```
-
-- The app serves its own map assets from `/static`, so local map rendering no longer depends on remote PMTiles, sprite, or glyph hosts
-- When `data/climate.duckdb` is present, app startup eagerly warms the climate matrix, city ranking cache, and heatmap projection so the first `/score` request avoids the cold-load penalty
-- That preload is synchronous and increases steady memory use; if preload hits a climate-data error, startup now logs and skips the warm cache so requests can still surface the existing `503` error path
-
-## Local Testing
-
-```bash
-uv run pogodapp
-```
-
-- Starts the FastAPI app on `http://127.0.0.1:8000`
-- Uses live reload by default for local iteration
-- Still runs with stub climate rows when `data/climate.duckdb` is absent
-- Logs per-request timing for climate cell load, city load, scoring, normalization, ranking, and heatmap rendering so optimization work has a baseline
 
 Optional flags:
 
 ```bash
 uv run pogodapp --port 9000
+uv run pogodapp --host 0.0.0.0
 uv run pogodapp --no-reload
 ```
+
+Notes:
+
+- Default local URL: `http://127.0.0.1:8000`
+- Live reload is on by default.
+- If `data/climate.duckdb` exists, startup warms the climate matrix, city cache, and heatmap projection.
+- If preload fails, startup logs the problem and requests still use the existing `503` path.
+
+## Build Climate Data
+
+```bash
+uv run python scripts/build_climate_db.py
+```
+
+This builds `data/climate.duckdb`, downloads the required WorldClim rasters and GeoNames city source, keeps only valid land cells, and populates both `climate_cells` and `cities`.
 
 ## Quality Checks
 
@@ -124,22 +87,16 @@ uv run ty check
 uv run pytest
 ```
 
-## Data Build
+## Current State
 
-```bash
-uv run python scripts/build_climate_db.py
-```
+- Recent work moved the app onto the native `10m` grid, server-side heatmap rendering, ranked city results, and cached vectorized scoring.
+- MapLibre and the world backdrop are served locally.
+- HTMX is still loaded externally. That policy is not settled yet.
 
-- Builds `data/climate.duckdb` with both `climate_cells` and the pre-mapped `cities` table
-- Downloads and caches GeoNames `cities15000.zip` under `data/worldclim/` by default
-- Downloads WorldClim 2.1 `10m` monthly `tavg`, `prec`, and `srad` rasters into `data/worldclim/`
-- Keeps only land cells with complete monthly coverage across all three variables
-- `cloud_jan..cloud_dec` currently come from an inverted month-wise solar-radiation proxy so the scoring schema stays usable until a direct cloud-cover source is chosen
-- Validates the final schema and checks that the row count stays in the expected rough runtime range
-- If your local `data/climate.duckdb` predates the `cities` table, rebuild it with this command
+## Open Questions
 
-## Status
-
-- The scaffold and tooling are in place
-- Implementation work is tracked in GitHub issues
-- The current backlog lives in `https://github.com/adrunkhuman/pogodapp/issues`
+- `#45`: is `10m` still the right baseline, and are we describing it clearly?
+- `#44`: should frontend runtime assets be fully vendored or intentionally mixed?
+- `#43`: how should the score surface handle local maxima better?
+- `#41`: are the current temperature controls the right product model?
+- `#11`: how should `climate.duckdb` be distributed?
