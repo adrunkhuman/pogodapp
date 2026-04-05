@@ -8,7 +8,7 @@ const BORDER_LAYER_ID = "world-borders";
 const SCORE_POINT_SOURCE_ID = "score-points";
 const SCORE_SURFACE_SOURCE_ID = "score-surface";
 const SCORE_SURFACE_LAYER_ID = "score-surface";
-const CLIMATE_CELL_DEGREES = 0.5;
+const CLIMATE_CELL_DEGREES = 10 / 60;
 const CLIMATE_CELL_HALF_DEGREES = CLIMATE_CELL_DEGREES / 2;
 const EMPTY_FEATURE_COLLECTION = { type: "FeatureCollection", features: [] };
 

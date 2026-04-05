@@ -218,9 +218,9 @@ def test_duckdb_climate_repository_raises_clear_error_for_bad_row_values(tmp_pat
 def test_duckdb_climate_repository_loads_rows_built_in_pipeline_shape(tmp_path: Path) -> None:
     database_path = tmp_path / "climate.duckdb"
 
-    monthly_temperature = tuple(np.full((360, 720), np.nan, dtype=np.float64) for _ in range(12))
-    monthly_precipitation = tuple(np.full((360, 720), np.nan, dtype=np.float64) for _ in range(12))
-    monthly_solar_radiation = tuple(np.full((360, 720), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_temperature = tuple(np.full((1080, 2160), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_precipitation = tuple(np.full((1080, 2160), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_solar_radiation = tuple(np.full((1080, 2160), np.nan, dtype=np.float64) for _ in range(12))
 
     for month_index, month in enumerate(monthly_temperature, start=1):
         month[0, 0] = float(month_index)
@@ -241,8 +241,8 @@ def test_duckdb_climate_repository_loads_rows_built_in_pipeline_shape(tmp_path: 
 
     assert cells == (
         ClimateCell(
-            lat=89.75,
-            lon=-179.75,
+            lat=89.9167,
+            lon=-179.9167,
             temperature_c=tuple(float(month_index) for month_index in range(1, 13)),
             precipitation_mm=tuple(float(month_index * 10) for month_index in range(1, 13)),
             cloud_cover_pct=(50,) * 12,

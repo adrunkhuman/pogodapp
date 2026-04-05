@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import duckdb
 import numpy as np
 import pytest
+import tifffile
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -12,29 +13,30 @@ if TYPE_CHECKING:
 from backend.climate_pipeline import (
     EXPECTED_CLIMATE_COLUMNS,
     INSERT_CLIMATE_CELL_QUERY,
-    aggregate_raster_to_half_degree,
+    NODATA_CUTOFF,
+    load_raster,
     solar_radiation_to_cloud_proxy,
     validate_climate_database,
     validate_climate_database_with_row_range,
 )
 
 
-def test_aggregate_raster_to_half_degree_averages_valid_source_cells() -> None:
-    raster = np.full((1080, 2160), -3.4e38, dtype=np.float32)
-    raster[:3, :3] = np.array(
-        [
-            [1.0, 2.0, 3.0],
-            [4.0, 5.0, 6.0],
-            [7.0, 8.0, 9.0],
-        ],
-        dtype=np.float32,
-    )
+def test_load_raster_converts_nodata_sentinel_to_nan(tmp_path: Path) -> None:
+    sentinel = np.finfo(np.float32).min  # ≈ -3.4e38, WorldClim ocean nodata value
+    raw = np.full((1080, 2160), sentinel, dtype=np.float32)
+    raw[0, 0] = 18.5  # one land pixel
 
-    aggregated = aggregate_raster_to_half_degree(raster)
+    tif_path = tmp_path / "test.tif"
+    tifffile.imwrite(str(tif_path), raw)
 
-    assert aggregated.shape == (360, 720)
-    assert aggregated[0, 0] == pytest.approx(5.0)
-    assert np.isnan(aggregated[0, 1])
+    result = load_raster(tif_path)
+
+    assert result.dtype == np.float64
+    assert result[0, 0] == pytest.approx(18.5)
+    # All other pixels were nodata — they must be NaN, not the raw sentinel
+    assert np.all(np.isnan(result[1:, :]))
+    assert np.all(np.isnan(result[0, 1:]))
+    assert sentinel <= NODATA_CUTOFF  # confirm the sentinel is caught by the cutoff
 
 
 def test_solar_radiation_to_cloud_proxy_inverts_relative_brightness() -> None:
