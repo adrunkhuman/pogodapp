@@ -1,11 +1,57 @@
+import numpy as np
 from fastapi.testclient import TestClient
 
+from backend.cities import CityCandidate, CityRankingCache
 from backend.climate_repository import StubClimateRepository
 from backend.config import DEFAULT_PREFERENCES, MAP_PROJECTION, PREFERENCE_FIELD_NAMES
+from backend.heatmap import HeatmapProjection
 from backend.main import create_app
-from backend.scoring import PreferenceInputs, score_preferences
+from backend.scoring import ClimateCell, ClimateMatrix, PreferenceInputs, score_preferences
 
 client = TestClient(create_app(climate_repository=StubClimateRepository()))
+
+
+class ManyCitiesRepository:
+    def __init__(self) -> None:
+        self._cells = tuple(
+            ClimateCell(
+                lat=float(index),
+                lon=float(index),
+                temperature_c=(22.0,) * 12,
+                precipitation_mm=(0.0,) * 12,
+                cloud_cover_pct=(15,) * 12,
+            )
+            for index in range(25)
+        )
+        self._cities = tuple(
+            CityCandidate(
+                name=f"City {index:02d}",
+                country_code="US",
+                lat=self._cells[index].lat,
+                lon=self._cells[index].lon,
+                cell_lat=self._cells[index].lat,
+                cell_lon=self._cells[index].lon,
+            )
+            for index in range(25)
+        )
+        self._matrix = ClimateMatrix.from_cells(self._cells)
+        self._ranking_cache = CityRankingCache.from_cities(self._cities, np.arange(len(self._cities), dtype=np.int32))
+        self._projection = HeatmapProjection.from_coordinates(self._matrix.latitudes, self._matrix.longitudes)
+
+    def list_cells(self) -> tuple[ClimateCell, ...]:
+        return self._cells
+
+    def list_cities(self) -> tuple[CityCandidate, ...]:
+        return self._cities
+
+    def get_climate_matrix(self) -> ClimateMatrix:
+        return self._matrix
+
+    def get_indexed_cities(self) -> CityRankingCache:
+        return self._ranking_cache
+
+    def get_heatmap_projection(self) -> HeatmapProjection:
+        return self._projection
 
 
 def test_home_page_renders() -> None:
@@ -227,6 +273,72 @@ def test_score_endpoint_rejects_out_of_range_preferences() -> None:
     )
 
     assert response.status_code == 422
+    detail = response.json()["detail"]
+
+    assert detail
+    assert any(item["loc"][-1] == "ideal_temperature" for item in detail)
+
+
+def test_score_endpoint_rejects_missing_preferences() -> None:
+    response = client.post(
+        "/score",
+        data={
+            "ideal_temperature": "22",
+            "cold_tolerance": "7",
+            "heat_tolerance": "5",
+            "rain_sensitivity": "55",
+        },
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+
+    assert detail
+    assert any(item["loc"][-1] == "sun_preference" for item in detail)
+
+
+def test_score_endpoint_rejects_non_numeric_preferences() -> None:
+    response = client.post(
+        "/score",
+        data={
+            "ideal_temperature": "warm",
+            "cold_tolerance": "7",
+            "heat_tolerance": "5",
+            "rain_sensitivity": "55",
+            "sun_preference": "60",
+        },
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+
+    assert detail
+    assert any(item["loc"][-1] == "ideal_temperature" for item in detail)
+
+
+def test_score_endpoint_caps_city_results_to_top_twenty() -> None:
+    many_cities_client = TestClient(create_app(climate_repository=ManyCitiesRepository()))
+
+    response = many_cities_client.post(
+        "/score",
+        data={
+            "ideal_temperature": "22",
+            "cold_tolerance": "7",
+            "heat_tolerance": "5",
+            "rain_sensitivity": "55",
+            "sun_preference": "60",
+        },
+    )
+
+    assert response.status_code == 200
+    scores = response.json()["scores"]
+    returned_names = [item["name"] for item in scores]
+    all_names = {f"City {index:02d}" for index in range(25)}
+
+    assert len(scores) == 20
+    assert len(set(returned_names)) == 20
+    assert set(returned_names) <= all_names
+    assert len(all_names - set(returned_names)) == 5
 
 
 def test_home_page_registers_htmx_handoff_script() -> None:
