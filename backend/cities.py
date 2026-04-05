@@ -239,6 +239,9 @@ MAX_LATITUDE_INDEX = 2159
 MAX_LONGITUDE_INDEX = 4319
 EARTH_RADIUS_KM = 6371.0
 POPULATION_TIE_SCORE_WINDOW = 0.015
+FULL_DIVERSITY_RANKS = 15
+DIVERSITY_TAPER_RANKS = 20
+MIN_DIVERSITY_STRENGTH = 0.2
 
 
 @dataclass(frozen=True, slots=True)
@@ -396,6 +399,7 @@ def rank_city_scores(
 
     while remaining and len(ranked) < limit:
         winner = _select_population_biased_winner(remaining)
+        diversity_strength = _diversity_strength_for_rank(len(ranked))
         ranked.append(
             {
                 "name": winner.city.name,
@@ -417,6 +421,7 @@ def rank_city_scores(
                     candidate.city,
                     winner.score,
                     decay_km=diversity_decay_km,
+                    strength=diversity_strength,
                 ),
             )
             for candidate in remaining
@@ -445,6 +450,7 @@ def rank_indexed_city_scores(
         winner_index = _select_population_biased_winner_index(city_catalog, scores, active)
         winner_city = city_catalog.cities[winner_index]
         winner_score = float(scores[winner_index])
+        diversity_strength = _diversity_strength_for_rank(len(ranked))
         ranked.append(
             {
                 "name": winner_city.name,
@@ -459,11 +465,20 @@ def rank_indexed_city_scores(
         )
 
         distance_km = _haversine_distance_vector_km(city_catalog, winner_index)
-        penalty = winner_score * np.exp(-distance_km / diversity_decay_km)
+        penalty = winner_score * diversity_strength * np.exp(-distance_km / diversity_decay_km)
         scores = np.where(active, np.maximum(0.0, scores * (1.0 - penalty)), scores)
         active[winner_index] = False
 
     return ranked
+
+
+def _diversity_strength_for_rank(rank_index: int) -> float:
+    """Taper regional spreading once the shortlist already covers the main hot zones."""
+    if rank_index < FULL_DIVERSITY_RANKS:
+        return 1.0
+
+    taper_progress = min((rank_index - FULL_DIVERSITY_RANKS + 1) / DIVERSITY_TAPER_RANKS, 1.0)
+    return 1.0 - (1.0 - MIN_DIVERSITY_STRENGTH) * taper_progress
 
 
 def apply_regional_penalty(
@@ -473,10 +488,11 @@ def apply_regional_penalty(
     center_score: float,
     *,
     decay_km: float = CITY_DIVERSITY_DECAY_KM,
+    strength: float = 1.0,
 ) -> float:
     """Exponentially suppress cities that cluster too close to a stronger regional center."""
     distance_km = haversine_distance_km(center.lat, center.lon, candidate.lat, candidate.lon)
-    penalty = center_score * math.exp(-distance_km / decay_km)
+    penalty = center_score * strength * math.exp(-distance_km / decay_km)
     return max(0.0, score * (1 - penalty))
 
 

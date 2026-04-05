@@ -5,9 +5,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from backend.cities import (
+    MIN_DIVERSITY_STRENGTH,
     STUB_CITY_CANDIDATES,
     CityCandidate,
     CityRankingCache,
+    _diversity_strength_for_rank,
     apply_regional_penalty,
     continent_of,
     country_flag,
@@ -85,6 +87,25 @@ def test_rank_city_scores_penalizes_nearby_duplicates_after_strong_regional_cent
     assert [city["name"] for city in ranked] == ["Bogota", "Lima"]
     assert ranked[0]["score"] == 1.0
     assert 0.87 < ranked[1]["score"] < 0.88
+
+
+def test_diversity_strength_starts_full_and_tapers_for_deeper_ranks() -> None:
+    assert _diversity_strength_for_rank(0) == 1.0
+    assert _diversity_strength_for_rank(14) == 1.0
+    assert MIN_DIVERSITY_STRENGTH < _diversity_strength_for_rank(20) < 1.0
+    assert abs(_diversity_strength_for_rank(40) - MIN_DIVERSITY_STRENGTH) < 1e-9
+
+
+def test_apply_regional_penalty_relaxes_for_deeper_rank_strength() -> None:
+    bogota = CityCandidate(name="Bogota", country_code="CO", lat=4.711, lon=-74.0721, cell_lat=4.75, cell_lon=-74.0833)
+    medellin = CityCandidate(
+        name="Medellin", country_code="CO", lat=6.2442, lon=-75.5812, cell_lat=6.25, cell_lon=-75.5833
+    )
+
+    strong_penalty = apply_regional_penalty(0.97, bogota, medellin, 1.0, strength=1.0)
+    relaxed_penalty = apply_regional_penalty(0.97, bogota, medellin, 1.0, strength=MIN_DIVERSITY_STRENGTH)
+
+    assert relaxed_penalty > strong_penalty
 
 
 def test_apply_regional_penalty_drops_same_place_to_zero() -> None:
