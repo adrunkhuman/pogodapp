@@ -12,8 +12,8 @@ def test_home_page_renders() -> None:
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "Pogodapp" in response.text
-    assert "Climate preference search" in response.text
+    assert "POGODAPP" in response.text
+    assert "Describe an ideal climate profile" in response.text
     assert 'hx-post="/score"' in response.text
     assert 'hx-trigger="input changed delay:300ms"' in response.text
     assert 'hx-swap="none"' in response.text
@@ -239,3 +239,4 @@ def test_map_script_renders_city_labels_instead_of_coordinates() -> None:
     assert "point.country_code" in response.text
     assert "point.name" in response.text
     assert "point.flag" in response.text
+    assert "score-results__item" in response.text

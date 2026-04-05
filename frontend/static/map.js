@@ -47,6 +47,7 @@ function renderScoreList(scores) {
 
   if (scores.length === 0) {
     const item = document.createElement("li");
+    item.className = "score-results__empty";
     item.textContent = "No scored locations available yet.";
     results.append(item);
     return;
@@ -54,8 +55,21 @@ function renderScoreList(scores) {
 
   for (const point of scores) {
     const item = document.createElement("li");
-    const country = countryNames?.of(point.country_code) ?? point.country_code;
-    item.textContent = `${Math.round(point.score * 100)}% match: ${point.name}, ${country} ${point.flag}`;
+    const score = document.createElement("span");
+    const name = document.createElement("span");
+    const flag = document.createElement("span");
+
+    item.className = "score-results__item";
+    score.className = "score-results__score";
+    name.className = "score-results__name";
+    flag.className = "score-results__flag";
+
+    score.textContent = `${Math.round(point.score * 100)}%`.padStart(4, " ");
+    name.textContent = point.name;
+    flag.textContent = point.flag;
+    flag.title = countryNames?.of(point.country_code) ?? point.country_code;
+
+    item.append(score, name, flag);
     results.append(item);
   }
 }
@@ -112,7 +126,7 @@ function initializeMap() {
           id: OCEAN_LAYER_ID,
           type: "background",
           paint: {
-            "background-color": "#dfeaf0",
+            "background-color": "#101010",
           },
         },
       ],
@@ -144,8 +158,8 @@ function initializeMap() {
       type: "fill",
       source: BACKDROP_SOURCE_ID,
       paint: {
-        "fill-color": "#f7f0df",
-        "fill-opacity": 0.92,
+        "fill-color": "#202020",
+        "fill-opacity": 1,
       },
     });
 
@@ -154,7 +168,7 @@ function initializeMap() {
       type: "line",
       source: BACKDROP_SOURCE_ID,
       paint: {
-        "line-color": "rgba(70, 96, 109, 0.38)",
+        "line-color": "#333333",
         "line-width": 0.6,
       },
     });
