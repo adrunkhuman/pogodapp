@@ -28,17 +28,7 @@ SELECT
 FROM climate_cells
 """
 
-SELECT_CITIES_QUERY = """
-SELECT
-    name,
-    country_code,
-    lat,
-    lon,
-    cell_lat,
-    cell_lon,
-    population
-FROM cities
-"""
+CITY_BASE_COLUMNS = ("name", "country_code", "lat", "lon", "cell_lat", "cell_lon")
 
 
 class ClimateDataError(RuntimeError):
@@ -135,7 +125,7 @@ class DuckDbClimateRepository:
         if self._cities is not None:
             return self._cities
 
-        rows = self._fetch_rows(SELECT_CITIES_QUERY, table_name="cities")
+        rows = self._fetch_rows(self._select_cities_query(), table_name="cities")
 
         try:
             self._cities = tuple(self._row_to_city(row) for row in rows)
@@ -282,6 +272,33 @@ class DuckDbClimateRepository:
             cell_lon=float(cast("int | float", cell_longitude)),
             population=population,
         )
+
+    def _select_cities_query(self) -> str:
+        columns = set(self._fetch_table_columns("cities"))
+        selected_columns = list(CITY_BASE_COLUMNS)
+        if "population" in columns:
+            selected_columns.append("population")
+        return "SELECT\n    " + ",\n    ".join(selected_columns) + "\nFROM cities"
+
+    def _fetch_table_columns(self, table_name: str) -> tuple[str, ...]:
+        if not self.database_path.exists():
+            msg = f"Climate database file not found: {self.database_path}"
+            raise ClimateDataError(msg)
+
+        try:
+            with duckdb.connect(str(self.database_path), read_only=True) as connection:
+                rows = connection.execute(f"PRAGMA table_info('{table_name}')").fetchall()
+        except duckdb.Error as error:
+            if table_name == "cities" and "Table with name cities does not exist" in str(error):
+                msg = (
+                    f"Climate database file is missing the cities table: {self.database_path}. "
+                    "Rebuild it with `uv run python scripts/build_climate_db.py`."
+                )
+                raise ClimateDataError(msg) from error
+            msg = f"Failed to read climate data from {self.database_path}: {error}"
+            raise ClimateDataError(msg) from error
+
+        return tuple(str(cast("str", row[1])) for row in rows)
 
     def _get_sorted_climate_keys(
         self,

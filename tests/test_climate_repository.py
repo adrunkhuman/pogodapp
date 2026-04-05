@@ -116,6 +116,38 @@ def test_duckdb_climate_repository_loads_city_rows(tmp_path: Path) -> None:
     )
 
 
+def test_duckdb_climate_repository_defaults_missing_population_column_to_zero(tmp_path: Path) -> None:
+    database_path = tmp_path / "climate.duckdb"
+
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(
+            """
+            CREATE TABLE cities AS
+            SELECT
+                'Bogota' AS name,
+                'CO' AS country_code,
+                4.711 AS lat,
+                -74.0721 AS lon,
+                4.75 AS cell_lat,
+                -74.0833 AS cell_lon
+            """
+        )
+
+    cities = DuckDbClimateRepository(database_path).list_cities()
+
+    assert cities == (
+        CityCandidate(
+            name="Bogota",
+            country_code="CO",
+            lat=4.711,
+            lon=-74.0721,
+            cell_lat=4.75,
+            cell_lon=-74.0833,
+            population=0,
+        ),
+    )
+
+
 def test_duckdb_climate_repository_raises_clear_error_for_missing_database(tmp_path: Path) -> None:
     missing_path = tmp_path / "missing.duckdb"
 
