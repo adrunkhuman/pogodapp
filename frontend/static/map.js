@@ -619,7 +619,7 @@ function showTooltip(data, x, y, cityHeader = null, { hideDelayMs = null } = {})
 
   // Score always left so it doesn't jump when entering/leaving a city marker.
   const header = cityHeader
-    ? `<div class="probe-tooltip__header"><span class="probe-tooltip__header-score">${scoreSpan(overall)}</span><span class="probe-tooltip__header-name">${escapeHtml(cityName)}</span><span class="probe-tooltip__header-flag">${escapeHtml(cityFlag)}</span></div>`
+    ? `<div class="probe-tooltip__header"><span class="probe-tooltip__header-score">${scoreSpan(overall)}</span><span class="probe-tooltip__header-city"><span class="probe-tooltip__header-name">${escapeHtml(cityName)}</span><span class="probe-tooltip__header-flag">${escapeHtml(cityFlag)}</span></span></div>`
     : `<div class="probe-tooltip__header"><span class="probe-tooltip__header-score">${scoreSpan(overall)}</span></div>`;
 
   tooltip.innerHTML =
@@ -778,6 +778,7 @@ function initializeMap() {
 
 window.renderScores = function renderScores(response) {
   const { scores, heatmap } = response;
+  continentVisibleCounts.clear();
   currentScores = scores ?? [];
 
   renderScoreList(currentScores);

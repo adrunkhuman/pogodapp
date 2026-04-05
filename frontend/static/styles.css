@@ -364,7 +364,7 @@ ul {
 
 .probe-tooltip__header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 2ch;
+  grid-template-columns: auto minmax(0, 1fr);
   column-gap: 0.75rem;
   margin-bottom: 0.3rem;
   white-space: nowrap;
@@ -376,19 +376,28 @@ ul {
   justify-self: start;
 }
 
+.probe-tooltip__header-city {
+  display: inline-flex;
+  justify-self: end;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
 .probe-tooltip__header-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: right;
 }
 
 .probe-tooltip__header-flag {
-  justify-self: end;
+  flex: 0 0 auto;
 }
 
 .probe-tooltip__row {
   display: grid;
-  grid-template-columns: 3ch 8ch auto;
+  grid-template-columns: 3ch 1fr auto;
   column-gap: 0.75rem;
 }
 
@@ -399,10 +408,12 @@ ul {
 
 .probe-tooltip__value {
   color: #d6d6d6;
+  justify-self: end;
 }
 
 .probe-tooltip__metric {
   color: #e0e0e0;
+  justify-self: end;
 }
 
 .score-results__continent {
