@@ -84,6 +84,30 @@ class CityRankingCache:
             msg = "flags must align with cities"
             raise ValueError(msg)
 
+    @classmethod
+    def from_cities(
+        cls,
+        cities: tuple[CityCandidate, ...],
+        climate_indexes: NDArray[np.int32],
+    ) -> CityRankingCache:
+        """Build the vector-friendly ranking cache from resolved cities."""
+        latitude_radians = np.radians(np.array([city.lat for city in cities], dtype=np.float32)).astype(
+            np.float32,
+            copy=False,
+        )
+        longitude_radians = np.radians(np.array([city.lon for city in cities], dtype=np.float32)).astype(
+            np.float32,
+            copy=False,
+        )
+        return cls(
+            cities=cities,
+            climate_indexes=climate_indexes,
+            latitude_radians=latitude_radians,
+            longitude_radians=longitude_radians,
+            cosine_latitudes=np.cos(latitude_radians).astype(np.float32, copy=False),
+            flags=tuple(country_flag(city.country_code) for city in cities),
+        )
+
 
 STUB_CITY_CANDIDATES: tuple[CityCandidate, ...] = (
     CityCandidate(name="San Francisco", country_code="US", lat=37.5, lon=-122.0, cell_lat=37.5, cell_lon=-122.0),

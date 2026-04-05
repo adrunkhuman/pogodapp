@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from typing import TYPE_CHECKING, Protocol, cast
 
 import duckdb
@@ -11,7 +10,6 @@ from backend.cities import (
     CityCandidate,
     CityRankingCache,
     coordinate_key,
-    country_flag,
 )
 from backend.scoring import MONTHS_PER_YEAR, STUB_CLIMATE_CELLS, ClimateCell, ClimateMatrix
 
@@ -73,32 +71,11 @@ class StubClimateRepository:
 
     def get_climate_matrix(self) -> ClimateMatrix:
         """Return the stub dataset in compact array form."""
-        latitudes = np.array([cell.lat for cell in STUB_CLIMATE_CELLS], dtype=np.float32)
-        longitudes = np.array([cell.lon for cell in STUB_CLIMATE_CELLS], dtype=np.float32)
-        temperature_c = np.array([cell.temperature_c for cell in STUB_CLIMATE_CELLS], dtype=np.float32)
-        precipitation_mm = np.array([cell.precipitation_mm for cell in STUB_CLIMATE_CELLS], dtype=np.float32)
-        cloud_cover_pct = np.array([cell.cloud_cover_pct for cell in STUB_CLIMATE_CELLS], dtype=np.uint8)
-        return ClimateMatrix(
-            latitudes=latitudes,
-            longitudes=longitudes,
-            temperature_c=temperature_c,
-            precipitation_mm=precipitation_mm,
-            cloud_cover_pct=cloud_cover_pct,
-        )
+        return ClimateMatrix.from_cells(STUB_CLIMATE_CELLS)
 
     def get_indexed_cities(self) -> CityRankingCache:
         """Return stub cities aligned to the stub matrix rows."""
-        cities = STUB_CITY_CANDIDATES
-        latitudes = np.array([math.radians(city.lat) for city in cities], dtype=np.float32)
-        longitudes = np.array([math.radians(city.lon) for city in cities], dtype=np.float32)
-        return CityRankingCache(
-            cities=cities,
-            climate_indexes=np.arange(len(cities), dtype=np.int32),
-            latitude_radians=latitudes,
-            longitude_radians=longitudes,
-            cosine_latitudes=np.cos(latitudes).astype(np.float32, copy=False),
-            flags=tuple(country_flag(city.country_code) for city in cities),
-        )
+        return CityRankingCache.from_cities(STUB_CITY_CANDIDATES, np.arange(len(STUB_CITY_CANDIDATES), dtype=np.int32))
 
 
 def build_default_climate_repository(database_path: Path) -> ClimateRepository:
@@ -215,16 +192,9 @@ class DuckDbClimateRepository:
             resolved_cities.append(city)
             climate_indexes.append(int(sorted_climate_indexes[position]))
 
-        resolved_city_tuple = tuple(resolved_cities)
-        latitude_radians = np.array([math.radians(city.lat) for city in resolved_city_tuple], dtype=np.float32)
-        longitude_radians = np.array([math.radians(city.lon) for city in resolved_city_tuple], dtype=np.float32)
-        self._indexed_cities = CityRankingCache(
-            cities=resolved_city_tuple,
-            climate_indexes=np.array(climate_indexes, dtype=np.int32),
-            latitude_radians=latitude_radians,
-            longitude_radians=longitude_radians,
-            cosine_latitudes=np.cos(latitude_radians).astype(np.float32, copy=False),
-            flags=tuple(country_flag(city.country_code) for city in resolved_city_tuple),
+        self._indexed_cities = CityRankingCache.from_cities(
+            tuple(resolved_cities),
+            np.array(climate_indexes, dtype=np.int32),
         )
         self._sorted_climate_keys = None
         self._sorted_climate_indexes = None

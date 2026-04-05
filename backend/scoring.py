@@ -80,6 +80,17 @@ class ClimateMatrix:
             msg = "cloud_cover_pct must be shaped (cells, 12)"
             raise ValueError(msg)
 
+    @classmethod
+    def from_cells(cls, climate_cells: tuple[ClimateCell, ...]) -> ClimateMatrix:
+        """Build the compact scoring matrix from cell objects."""
+        return cls(
+            latitudes=np.array([cell.lat for cell in climate_cells], dtype=np.float32),
+            longitudes=np.array([cell.lon for cell in climate_cells], dtype=np.float32),
+            temperature_c=np.array([cell.temperature_c for cell in climate_cells], dtype=np.float32),
+            precipitation_mm=np.array([cell.precipitation_mm for cell in climate_cells], dtype=np.float32),
+            cloud_cover_pct=np.array([cell.cloud_cover_pct for cell in climate_cells], dtype=np.uint8),
+        )
+
 
 class CellScorePoint(TypedDict):
     """Normalized score payload for one climate cell."""
