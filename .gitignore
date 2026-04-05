@@ -9,7 +9,7 @@ dist/
 build/
 *.egg-info/
 PLAN.md
-data/climate.duckdb
+data/*.duckdb
 data/cities.csv
 data/worldclim/
 data/worldclim_probe/
