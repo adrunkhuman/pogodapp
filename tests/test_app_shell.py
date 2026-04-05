@@ -59,14 +59,14 @@ def test_home_page_renders() -> None:
 
     assert response.status_code == 200
     assert "POGODAPP" in response.text
-    assert "Describe an ideal climate profile" in response.text
+    assert "Pick the climate you like and see where it shows up." in response.text
     assert 'hx-post="/score"' in response.text
     assert 'hx-trigger="input changed delay:300ms"' in response.text
     assert 'hx-swap="none"' in response.text
     assert 'id="map-description"' in response.text
     assert 'id="map-status"' in response.text
     assert 'id="map-legend"' in response.text
-    assert "Interactive world map of scored climate matches." in response.text
+    assert "Climate compatibility" in response.text
     assert ">Map</h2>" in response.text
     assert (
         'id="map" role="region" aria-label="Interactive climate score map" aria-describedby="map-description map-legend map-status"'
