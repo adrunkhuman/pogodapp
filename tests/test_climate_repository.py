@@ -124,6 +124,26 @@ def test_duckdb_climate_repository_raises_clear_error_for_missing_cities_table(t
         DuckDbClimateRepository(database_path).list_cities()
 
 
+def test_duckdb_climate_repository_raises_clear_error_for_bad_city_row_values(tmp_path: Path) -> None:
+    database_path = tmp_path / "climate.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(
+            """
+            CREATE TABLE cities AS
+            SELECT
+                'Bogota' AS name,
+                'CO' AS country_code,
+                NULL AS lat,
+                -74.0721 AS lon,
+                4.75 AS cell_lat,
+                -74.0833 AS cell_lon
+            """
+        )
+
+    with pytest.raises(ClimateDataError, match="Failed to map city data"):
+        DuckDbClimateRepository(database_path).list_cities()
+
+
 def test_app_can_use_an_injected_climate_repository() -> None:
     class SingleCellRepository:
         def list_cells(self) -> tuple[ClimateCell, ...]:
@@ -208,6 +228,38 @@ def test_app_returns_clear_503_when_climate_repository_fails() -> None:
 
     assert response.status_code == 503
     assert response.json() == {"detail": "Climate database file not found: data/climate.duckdb"}
+
+
+def test_app_returns_clear_503_when_city_lookup_fails() -> None:
+    class BrokenCityRepository:
+        def list_cells(self) -> tuple[ClimateCell, ...]:
+            return (
+                ClimateCell(
+                    lat=1.0,
+                    lon=2.0,
+                    temperature_c=(22.0,) * 12,
+                    precipitation_mm=(0.0,) * 12,
+                    cloud_cover_pct=(15,) * 12,
+                ),
+            )
+
+        def list_cities(self) -> tuple[CityCandidate, ...]:
+            msg = "Climate database file is missing the cities table: data/climate.duckdb"
+            raise ClimateDataError(msg)
+
+    response = TestClient(create_app(climate_repository=BrokenCityRepository())).post(
+        "/score",
+        data={
+            "ideal_temperature": "22",
+            "cold_tolerance": "7",
+            "heat_tolerance": "5",
+            "rain_sensitivity": "55",
+            "sun_preference": "60",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Climate database file is missing the cities table: data/climate.duckdb"}
 
 
 def test_app_scores_from_duckdb(tmp_path: Path) -> None:

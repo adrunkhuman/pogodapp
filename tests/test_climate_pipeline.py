@@ -91,6 +91,19 @@ def test_validate_climate_database_rejects_unexpected_row_count(tmp_path: Path) 
         validate_climate_database(database_path)
 
 
+def test_validate_climate_database_rejects_zero_city_rows(tmp_path: Path) -> None:
+    database_path = tmp_path / "climate.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        columns = ", ".join(f"{column} DOUBLE" for column in EXPECTED_CLIMATE_COLUMNS[:26])
+        cloud_columns = ", ".join(f"{column} INTEGER" for column in EXPECTED_CLIMATE_COLUMNS[26:])
+        connection.execute(f"CREATE TABLE climate_cells ({columns}, {cloud_columns})")
+        connection.executemany(INSERT_CLIMATE_CELL_QUERY, [tuple(0 for _ in EXPECTED_CLIMATE_COLUMNS)] * 2)
+        create_cities_table(connection)
+
+    with pytest.raises(ValueError, match="City count is zero"):
+        validate_climate_database_with_row_range(database_path, (1, 10))
+
+
 def test_build_city_rows_filters_out_cities_that_snap_to_ocean_cells(tmp_path: Path) -> None:
     city_catalog_path = tmp_path / "cities15000.txt"
     city_catalog_path.write_text(

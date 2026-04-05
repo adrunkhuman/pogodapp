@@ -406,6 +406,9 @@ def validate_climate_database_with_row_range(
     if not isinstance(city_count, int):
         msg = f"Unexpected city count type: {type(city_count)!r}"
         raise TypeError(msg)
+    if city_count == 0:
+        msg = "City count is zero; GeoNames import likely failed"
+        raise ValueError(msg)
 
     minimum_rows, maximum_rows = expected_row_count_range
     if not minimum_rows <= row_count <= maximum_rows:
