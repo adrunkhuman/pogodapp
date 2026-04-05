@@ -614,9 +614,13 @@ function showTooltip(data, x, y, cityHeader = null, { hideDelayMs = null } = {})
     `<span class="probe-tooltip__metric">${scoreSpan(score)}</span>` +
     `</div>`
   );
+  const cityName = cityHeader ? cityHeader.replace(/^\S+\s+/, "") : "";
+  const cityFlag = cityHeader ? cityHeader.match(/^\S+/)?.[0] ?? "" : "";
 
   // Score always left so it doesn't jump when entering/leaving a city marker.
-  const header = `<div class="probe-tooltip__header">${scoreSpan(overall)}${cityHeader ? `  ${escapeHtml(cityHeader)}` : ""}</div>`;
+  const header = cityHeader
+    ? `<div class="probe-tooltip__header"><span class="probe-tooltip__header-score">${scoreSpan(overall)}</span><span class="probe-tooltip__header-name">${escapeHtml(cityName)}</span><span class="probe-tooltip__header-flag">${escapeHtml(cityFlag)}</span></div>`
+    : `<div class="probe-tooltip__header"><span class="probe-tooltip__header-score">${scoreSpan(overall)}</span></div>`;
 
   tooltip.innerHTML =
     header +

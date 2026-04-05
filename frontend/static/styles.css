@@ -363,10 +363,27 @@ ul {
 }
 
 .probe-tooltip__header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 2ch;
+  column-gap: 0.75rem;
   margin-bottom: 0.3rem;
   white-space: nowrap;
   font-weight: 600;
   color: #c0c0c0;
+}
+
+.probe-tooltip__header-score {
+  justify-self: start;
+}
+
+.probe-tooltip__header-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.probe-tooltip__header-flag {
+  justify-self: end;
 }
 
 .probe-tooltip__row {

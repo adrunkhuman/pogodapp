@@ -95,9 +95,9 @@ def _ensure_continent_coverage(
     fill cities are geographically spread — not raw-score clusters.
     """
     continent_counts: dict[str, int] = {}
-    present: set[str] = set()
+    present: set[tuple[str, str, float, float]] = set()
     for entry in ranked:
-        present.add(entry["name"])
+        present.add(_city_identity(entry))
         cont = continent_of(entry["country_code"])
         if cont != "Other":
             continent_counts[cont] = continent_counts.get(cont, 0) + 1
@@ -110,10 +110,10 @@ def _ensure_continent_coverage(
 
     for city in fill_pool:
         cont = continent_of(city["country_code"])
-        if cont not in needs_fill or city["name"] in present:
+        if cont not in needs_fill or _city_identity(city) in present:
             continue
         ranked.append(city)
-        present.add(city["name"])
+        present.add(_city_identity(city))
         continent_counts[cont] = continent_counts.get(cont, 0) + 1
         if continent_counts[cont] >= min_per_continent:
             needs_fill.discard(cont)
@@ -144,6 +144,20 @@ def _city_identity(city: CityScorePoint) -> tuple[str, str, float, float]:
     return (city["name"], city["country_code"], city["lat"], city["lon"])
 
 
+def _deduplicate_city_points(cities: list[CityScorePoint]) -> list[CityScorePoint]:
+    seen: set[tuple[str, str, float, float]] = set()
+    deduplicated: list[CityScorePoint] = []
+
+    for city in cities:
+        identity = _city_identity(city)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        deduplicated.append(city)
+
+    return deduplicated
+
+
 def _rescore_city_points_from_cache(
     city_catalog: CityRankingCache,
     ranked_cities: list[CityScorePoint],
@@ -161,7 +175,7 @@ def _rescore_city_points_from_cache(
         }
         for city in ranked_cities
     ]
-    return sorted(rescored, key=lambda city: city["score"], reverse=True)
+    return _deduplicate_city_points(sorted(rescored, key=lambda city: city["score"], reverse=True))
 
 
 def _rescore_city_points_from_cells(
@@ -187,7 +201,7 @@ def _rescore_city_points_from_cells(
         }
         for city in ranked_cities
     ]
-    return sorted(rescored, key=lambda city: city["score"], reverse=True)
+    return _deduplicate_city_points(sorted(rescored, key=lambda city: city["score"], reverse=True))
 
 
 def _log_score_timings(
