@@ -46,8 +46,8 @@ class ClimateCell:
             raise ValueError(msg)
 
 
-class ScorePoint(TypedDict):
-    """JSON score payload returned to the frontend."""
+class CellScorePoint(TypedDict):
+    """Normalized score payload for one climate cell."""
 
     lat: float
     lon: float
@@ -145,7 +145,7 @@ def annual_score(cell: ClimateCell, preferences: PreferenceInputs) -> float:
     return clamp_score(score_total / MONTHS_PER_YEAR)
 
 
-def score_climate_cells(climate_cells: tuple[ClimateCell, ...], preferences: PreferenceInputs) -> list[ScorePoint]:
+def score_climate_cells(climate_cells: tuple[ClimateCell, ...], preferences: PreferenceInputs) -> list[CellScorePoint]:
     """Score the supplied climate rows without caring where they came from."""
     return [
         {
@@ -157,6 +157,6 @@ def score_climate_cells(climate_cells: tuple[ClimateCell, ...], preferences: Pre
     ]
 
 
-def score_preferences(preferences: PreferenceInputs) -> list[ScorePoint]:
+def score_preferences(preferences: PreferenceInputs) -> list[CellScorePoint]:
     """Retain the stub-backed scoring entry point until routing switches repositories."""
     return score_climate_cells(STUB_CLIMATE_CELLS, preferences)

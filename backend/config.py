@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+CITY_DIVERSITY_DECAY_KM = 200.0
+
 PREFERENCE_FIELD_NAMES: tuple[str, ...] = (
     "ideal_temperature",
     "cold_tolerance",
