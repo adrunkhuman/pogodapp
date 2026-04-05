@@ -211,7 +211,7 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
 
     score_values = [item["score"] for item in scores]
     for item in scores:
-        assert set(item) == {"name", "country_code", "flag", "score", "lat", "lon"}
+        assert set(item) == {"name", "country_code", "flag", "score", "lat", "lon", "probe_lat", "probe_lon"}
         assert isinstance(item["name"], str)
         assert item["name"]
         assert isinstance(item["country_code"], str)

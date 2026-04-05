@@ -277,7 +277,7 @@ function focusCity(point, { withTooltip = false, hideDelayMs = TOOLTIP_HIDE_DELA
 
     const pixel = map.project([point.lon, point.lat]);
     const mapBox = map.getContainer().getBoundingClientRect();
-    fetchProbe(point.lat, point.lon, mapBox.left + pixel.x, mapBox.top + pixel.y, `${point.flag} ${point.name}`, {
+    fetchProbe(point.probe_lat ?? point.lat, point.probe_lon ?? point.lon, mapBox.left + pixel.x, mapBox.top + pixel.y, `${point.flag} ${point.name}`, {
       hideDelayMs,
     });
   };
@@ -417,7 +417,14 @@ function markersToGeoJSON(markers) {
     features: markers.map(m => ({
       type: "Feature",
       geometry: { type: "Point", coordinates: [m.lon, m.lat] },
-      properties: { name: m.name, score: m.score, flag: m.flag, country_code: m.country_code },
+      properties: {
+        name: m.name,
+        score: m.score,
+        flag: m.flag,
+        country_code: m.country_code,
+        probe_lat: m.probe_lat,
+        probe_lon: m.probe_lon,
+      },
     })),
   };
 }
@@ -457,7 +464,7 @@ function applyMarkers(markers) {
     if (probeController) probeController.abort();
     const props = e.features[0].properties;
     fetchProbe(
-      e.lngLat.lat, e.lngLat.lng,
+      Number(props.probe_lat ?? e.lngLat.lat), Number(props.probe_lon ?? e.lngLat.lng),
       e.originalEvent.clientX, e.originalEvent.clientY,
       `${props.flag} ${props.name}`,
       { hideDelayMs: null },

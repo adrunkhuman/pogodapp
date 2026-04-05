@@ -254,6 +254,8 @@ class CityScorePoint(TypedDict):
     score: float
     lat: float
     lon: float
+    probe_lat: float
+    probe_lon: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,6 +395,8 @@ def rank_city_scores(
                 "score": round(winner.score, 4),
                 "lat": winner.city.lat,
                 "lon": winner.city.lon,
+                "probe_lat": winner.city.cell_lat,
+                "probe_lon": winner.city.cell_lon,
             }
         )
         remaining = [
@@ -440,6 +444,8 @@ def rank_indexed_city_scores(
                 "score": round(winner_score, 4),
                 "lat": winner_city.lat,
                 "lon": winner_city.lon,
+                "probe_lat": winner_city.cell_lat,
+                "probe_lon": winner_city.cell_lon,
             }
         )
 
