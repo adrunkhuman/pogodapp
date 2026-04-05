@@ -81,7 +81,7 @@ def test_build_score_response_returns_empty_payload_for_empty_matrix() -> None:
         ),
     )
 
-    assert response == {"scores": [], "heatmap": ""}
+    assert response == {"scores": [], "markers": [], "heatmap": ""}
 
 
 def test_build_score_response_returns_empty_payload_for_all_zero_matrix_scores(monkeypatch: MonkeyPatch) -> None:
@@ -117,7 +117,7 @@ def test_build_score_response_returns_empty_payload_for_all_zero_matrix_scores(m
         ),
     )
 
-    assert response == {"scores": [], "heatmap": ""}
+    assert response == {"scores": [], "markers": [], "heatmap": ""}
 
 
 def test_build_score_response_falls_back_to_array_heatmap_path_when_projection_cache_is_absent() -> None:

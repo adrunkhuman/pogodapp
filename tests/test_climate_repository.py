@@ -351,7 +351,7 @@ def test_app_can_use_an_injected_climate_repository_with_city_catalog() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json()["scores"] == [{"name": "Test City", "country_code": "CO", "flag": "🇨🇴", "score": 1.0}]
+    assert response.json()["scores"] == [{"name": "Test City", "country_code": "CO", "flag": "🇨🇴", "score": 1.0, "lat": 1.0, "lon": 2.0}]
 
 
 def test_app_returns_clear_503_when_climate_repository_fails() -> None:
@@ -452,7 +452,7 @@ def test_app_scores_from_duckdb(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json()["scores"] == [{"name": "Test City", "country_code": "CO", "flag": "🇨🇴", "score": 1.0}]
+    assert response.json()["scores"] == [{"name": "Test City", "country_code": "CO", "flag": "🇨🇴", "score": 1.0, "lat": 1.0, "lon": 2.0}]
 
 
 def test_duckdb_city_cache_aligns_indexes_with_shuffled_climate_rows(tmp_path: Path) -> None:
@@ -544,7 +544,7 @@ def test_app_uses_duckdb_automatically_when_default_database_exists(
     )
 
     assert response.status_code == 200
-    assert response.json()["scores"] == [{"name": "Test City", "country_code": "CO", "flag": "🇨🇴", "score": 1.0}]
+    assert response.json()["scores"] == [{"name": "Test City", "country_code": "CO", "flag": "🇨🇴", "score": 1.0, "lat": 1.0, "lon": 2.0}]
 
 
 def test_duckdb_climate_repository_raises_clear_error_for_bad_row_values(tmp_path: Path) -> None:
@@ -670,4 +670,4 @@ def test_create_app_reads_climate_database_path_from_env(monkeypatch: pytest.Mon
     )
 
     assert response.status_code == 200
-    assert response.json()["scores"] == [{"name": "Env Test City", "country_code": "CO", "flag": "🇨🇴", "score": 1.0}]
+    assert response.json()["scores"] == [{"name": "Env Test City", "country_code": "CO", "flag": "🇨🇴", "score": 1.0, "lat": 1.0, "lon": 2.0}]

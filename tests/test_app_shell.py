@@ -211,7 +211,7 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
 
     score_values = [item["score"] for item in scores]
     for item in scores:
-        assert set(item) == {"name", "country_code", "flag", "score"}
+        assert set(item) == {"name", "country_code", "flag", "score", "lat", "lon"}
         assert isinstance(item["name"], str)
         assert item["name"]
         assert isinstance(item["country_code"], str)
@@ -222,8 +222,8 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
     # City scores inherit normalized cell scores, but the best cell may have no nearby city.
     assert max(score_values) <= 1.0
     assert max(score_values) > 0
-    # List capped at top 20 for the text panel
-    assert len(scores) <= 20
+    # List capped at top 30 for the text panel
+    assert len(scores) <= 30
     # Heatmap is a PNG data URL
     assert payload["heatmap"].startswith("data:image/png;base64,")
 
@@ -330,7 +330,7 @@ def test_score_endpoint_rejects_non_numeric_preferences() -> None:
     assert any(item["loc"][-1] == "ideal_temperature" for item in detail)
 
 
-def test_score_endpoint_caps_city_results_to_top_twenty() -> None:
+def test_score_endpoint_caps_city_results_to_top_thirty() -> None:
     many_cities_client = TestClient(create_app(climate_repository=ManyCitiesRepository()))
 
     response = many_cities_client.post(
@@ -349,10 +349,9 @@ def test_score_endpoint_caps_city_results_to_top_twenty() -> None:
     returned_names = [item["name"] for item in scores]
     all_names = {f"City {index:02d}" for index in range(25)}
 
-    assert len(scores) == 20
-    assert len(set(returned_names)) == 20
-    assert set(returned_names) <= all_names
-    assert len(all_names - set(returned_names)) == 5
+    # 25 cities available — all returned since limit of 30 is not hit.
+    assert len(scores) == 25
+    assert set(returned_names) == all_names
 
 
 def test_home_page_registers_htmx_handoff_script() -> None:

@@ -5,10 +5,11 @@ import os
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
 from backend.climate_repository import (
     ClimateDataError,
@@ -18,7 +19,10 @@ from backend.climate_repository import (
 from backend.config import DEFAULT_PREFERENCES, MAP_PROJECTION
 from backend.logging_config import configure_backend_logging
 from backend.score_service import ScoreResponse, build_score_response
-from backend.scoring import PreferenceInputs  # noqa: TC001 - FastAPI needs the runtime symbol for Form model parsing
+from backend.scoring import (
+    PreferenceInputs,
+    score_matrix_row_breakdown,
+)
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
@@ -29,6 +33,18 @@ CLIMATE_DATABASE_ENV_VAR = "POGODAPP_CLIMATE_DB"
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 logger = logging.getLogger(__name__)
+
+
+class ProbeResponse(BaseModel):
+    """Per-attribute climate breakdown for one hovered map point."""
+
+    found: bool = False
+    avg_temp_c: float = 0.0
+    avg_precip_mm: float = 0.0
+    avg_cloud_pct: float = 0.0
+    temp_score: float = 0.0
+    rain_score: float = 0.0
+    cloud_score: float = 0.0
 
 
 def build_index_context() -> dict[str, object]:
@@ -87,6 +103,35 @@ def create_app(
             return build_score_response(repository, preferences)
         except ClimateDataError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.get("/probe")
+    async def probe(  # noqa: PLR0913
+        lat: Annotated[float, Query(ge=-90, le=90)],
+        lon: Annotated[float, Query(ge=-180, le=180)],
+        ideal_temperature: Annotated[int, Query(ge=-10, le=35)],
+        cold_tolerance: Annotated[int, Query(ge=0, le=15)],
+        heat_tolerance: Annotated[int, Query(ge=0, le=15)],
+        rain_sensitivity: Annotated[int, Query(ge=0, le=100)],
+        sun_preference: Annotated[int, Query(ge=0, le=100)],
+    ) -> ProbeResponse:
+        if not hasattr(repository, "probe_nearest_cell"):
+            return ProbeResponse()
+        row_index = repository.probe_nearest_cell(lat, lon)  # type: ignore[union-attr]
+        if row_index is None:
+            return ProbeResponse()
+        try:
+            climate_matrix = repository.get_climate_matrix()
+        except ClimateDataError:
+            return ProbeResponse()
+        preferences = PreferenceInputs(
+            ideal_temperature=ideal_temperature,
+            cold_tolerance=cold_tolerance,
+            heat_tolerance=heat_tolerance,
+            rain_sensitivity=rain_sensitivity,
+            sun_preference=sun_preference,
+        )
+        breakdown = score_matrix_row_breakdown(climate_matrix, row_index, preferences)
+        return ProbeResponse(found=True, **breakdown)
 
     return app
 

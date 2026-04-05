@@ -10,6 +10,7 @@ from backend.cities import (
     CityCandidate,
     CityRankingCache,
     coordinate_key,
+    snap_city_to_cell_key,
 )
 from backend.heatmap import HeatmapProjection
 from backend.scoring import MONTHS_PER_YEAR, STUB_CLIMATE_CELLS, ClimateCell, ClimateMatrix
@@ -206,9 +207,6 @@ class DuckDbClimateRepository:
             tuple(resolved_cities),
             np.array(climate_indexes, dtype=np.int32),
         )
-        # These arrays only help build the persistent ranking cache once.
-        self._sorted_climate_keys = None
-        self._sorted_climate_indexes = None
         return self._indexed_cities
 
     def get_heatmap_projection(self) -> HeatmapProjection:
@@ -221,6 +219,20 @@ class DuckDbClimateRepository:
             climate_matrix.latitudes, climate_matrix.longitudes
         )
         return self._heatmap_projection
+
+    def probe_nearest_cell(self, lat: float, lon: float) -> int | None:
+        """Return the climate-matrix index of the land cell nearest to (lat, lon).
+
+        Returns None when the coordinates fall on ocean or outside the grid.
+        """
+        probe_city = CityCandidate(name="", country_code="", lat=lat, lon=lon, cell_lat=0.0, cell_lon=0.0)
+        snapped_lat, snapped_lon = snap_city_to_cell_key(probe_city)
+        key = coordinate_key(snapped_lat, snapped_lon)
+        sorted_keys, sorted_indexes = self._get_sorted_climate_keys()
+        pos = int(np.searchsorted(sorted_keys, key))
+        if pos >= len(sorted_keys) or int(sorted_keys[pos]) != key:
+            return None
+        return int(sorted_indexes[pos])
 
     def _fetch_rows(self, query: str, *, table_name: str = "climate_cells") -> list[tuple[object, ...]]:
         if not self.database_path.exists():

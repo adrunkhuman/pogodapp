@@ -255,6 +255,34 @@ def normalize_score_array(scores: NDArray[np.float32]) -> NDArray[np.float32]:
     return np.round(scores / max_score, 4).astype(np.float32, copy=False)
 
 
+def score_matrix_row_breakdown(
+    climate_matrix: ClimateMatrix,
+    row_index: int,
+    preferences: PreferenceInputs,
+) -> dict[str, float]:
+    """Return per-attribute annual averages for one climate-matrix row.
+
+    Used by the /probe endpoint to show what drives the score at a given location.
+    """
+    temp_scores = []
+    rain_scores = []
+    cloud_scores = []
+
+    for month in range(MONTHS_PER_YEAR):
+        temp_scores.append(temperature_score(float(climate_matrix.temperature_c[row_index, month]), preferences))
+        rain_scores.append(rain_score(float(climate_matrix.precipitation_mm[row_index, month]), preferences.rain_sensitivity))
+        cloud_scores.append(cloud_score(int(climate_matrix.cloud_cover_pct[row_index, month]), preferences.sun_preference))
+
+    return {
+        "avg_temp_c": round(float(np.mean(climate_matrix.temperature_c[row_index])), 1),
+        "avg_precip_mm": round(float(np.mean(climate_matrix.precipitation_mm[row_index])), 1),
+        "avg_cloud_pct": round(float(np.mean(climate_matrix.cloud_cover_pct[row_index].astype(np.float32))), 1),
+        "temp_score": round(sum(temp_scores) / MONTHS_PER_YEAR, 3),
+        "rain_score": round(sum(rain_scores) / MONTHS_PER_YEAR, 3),
+        "cloud_score": round(sum(cloud_scores) / MONTHS_PER_YEAR, 3),
+    }
+
+
 def score_preferences(preferences: PreferenceInputs) -> list[CellScorePoint]:
     """Score against the in-repo stub dataset.
 

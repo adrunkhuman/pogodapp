@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import TYPE_CHECKING, TypedDict
 
-from backend.cities import CityScorePoint, rank_city_scores, rank_indexed_city_scores
+import numpy as np
+
+from backend.cities import CityScorePoint, continent_of, rank_city_scores, rank_indexed_city_scores
 from backend.heatmap import render_heatmap_png, render_heatmap_png_from_arrays, render_heatmap_png_from_projection
 from backend.scoring import (
     CellScorePoint,
@@ -17,9 +19,15 @@ from backend.scoring import (
 )
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+    from backend.cities import CityRankingCache
     from backend.climate_repository import ClimateRepository
 
-TOP_CITY_RESULTS = 20
+TOP_CITY_RESULTS = 30
+# Larger unfiltered pool for map markers: top N globally + per-continent fill.
+MARKER_GLOBAL_LIMIT = 80
+MARKER_PER_CONTINENT_MIN = 3
 logger = logging.getLogger(__name__)
 
 
@@ -40,11 +48,60 @@ class ScoreResponse(TypedDict):
     """Backend response contract for one scored user preference request."""
 
     scores: list[CityScorePoint]
+    markers: list[CityScorePoint]
     heatmap: str
 
 
 def _elapsed_ms(start_time: float) -> float:
     return round((perf_counter() - start_time) * 1000, 2)
+
+
+def _select_markers(
+    city_catalog: CityRankingCache,
+    normalized_scores: NDArray[np.float32],
+) -> list[CityScorePoint]:
+    """Return map marker cities: top MARKER_GLOBAL_LIMIT globally plus per-continent fill.
+
+    Uses raw score order (no diversity suppression) so hot regions show cluster density
+    on the map. Continent fill ensures every inhabited region has at least
+    MARKER_PER_CONTINENT_MIN dots even when its climate scores are low.
+    """
+    if not city_catalog.cities:
+        return []
+
+    city_scores = normalized_scores[city_catalog.climate_indexes]
+    # Descending sort order by score.
+    order = np.argsort(city_scores)[::-1]
+
+    markers: list[CityScorePoint] = []
+    continent_counts: dict[str, int] = {}
+    seen: set[int] = set()
+
+    for idx in order:
+        city = city_catalog.cities[idx]
+        continent = continent_of(city.country_code)
+        in_global_top = len(markers) < MARKER_GLOBAL_LIMIT
+
+        if not in_global_top and continent_counts.get(continent, 0) >= MARKER_PER_CONTINENT_MIN:
+            continue
+
+        markers.append(
+            {
+                "name": city.name,
+                "country_code": city.country_code,
+                "flag": city_catalog.flags[idx],
+                "score": round(float(city_scores[idx]), 4),
+                "lat": city.lat,
+                "lon": city.lon,
+            }
+        )
+        continent_counts[continent] = continent_counts.get(continent, 0) + 1
+        seen.add(int(idx))
+
+        if len(markers) >= MARKER_GLOBAL_LIMIT + len(continent_counts) * MARKER_PER_CONTINENT_MIN:
+            break
+
+    return markers
 
 
 def _log_score_timings(
@@ -114,7 +171,7 @@ def _build_score_response_from_matrix(
             ranked_city_count=0,
             outcome="empty",
         )
-        return {"scores": [], "heatmap": ""}
+        return {"scores": [], "markers": [], "heatmap": ""}
 
     max_score = float(raw_scores.max())
     if max_score == 0.0:
@@ -126,7 +183,7 @@ def _build_score_response_from_matrix(
             ranked_city_count=0,
             outcome="all_zero",
         )
-        return {"scores": [], "heatmap": ""}
+        return {"scores": [], "markers": [], "heatmap": ""}
 
     normalize_started = perf_counter()
     normalized_scores = normalize_score_array(raw_scores)
@@ -134,6 +191,7 @@ def _build_score_response_from_matrix(
 
     ranking_started = perf_counter()
     top_cities = rank_indexed_city_scores(indexed_cities, normalized_scores, limit=TOP_CITY_RESULTS)
+    markers = _select_markers(indexed_cities, normalized_scores)
     timings.ranking_ms = _elapsed_ms(ranking_started)
 
     heatmap_started = perf_counter()
@@ -159,6 +217,7 @@ def _build_score_response_from_matrix(
 
     return {
         "scores": top_cities,
+        "markers": markers,
         "heatmap": "data:image/png;base64," + base64.b64encode(heatmap_png).decode(),
     }
 
@@ -191,7 +250,7 @@ def _build_score_response_from_cells(
             ranked_city_count=0,
             outcome="empty",
         )
-        return {"scores": [], "heatmap": ""}
+        return {"scores": [], "markers": [], "heatmap": ""}
 
     max_score = max(point["score"] for point in raw_scores)
     if max_score == 0:
@@ -204,7 +263,7 @@ def _build_score_response_from_cells(
             ranked_city_count=0,
             outcome="all_zero",
         )
-        return {"scores": [], "heatmap": ""}
+        return {"scores": [], "markers": [], "heatmap": ""}
 
     # Re-normalize each response so the best match in the current result set lands
     # at 1.0, which keeps the heatmap visually informative across very different queries.
@@ -217,6 +276,8 @@ def _build_score_response_from_cells(
 
     ranking_started = perf_counter()
     top_cities = rank_city_scores(cities, normalized_scores, limit=TOP_CITY_RESULTS)
+    # Cells path has no CityRankingCache; use top_cities itself as markers (already has lat/lon).
+    markers = top_cities
     timings.ranking_ms = _elapsed_ms(ranking_started)
 
     heatmap_started = perf_counter()
@@ -234,5 +295,6 @@ def _build_score_response_from_cells(
 
     return {
         "scores": top_cities,
+        "markers": markers,
         "heatmap": "data:image/png;base64," + base64.b64encode(heatmap_png).decode(),
     }

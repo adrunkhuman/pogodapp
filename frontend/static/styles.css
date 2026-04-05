@@ -308,6 +308,57 @@ ul {
   filter: invert(1) contrast(0.75);
 }
 
+.map-probe-tooltip {
+  position: fixed;
+  z-index: 10;
+  pointer-events: none;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  padding: 0.5rem 0.75rem;
+  font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.65;
+  white-space: pre;
+  color: #e0e0e0;
+  translate: 12px -50%;
+}
+
+.score-results__continent {
+  width: min(100%, 18.5rem);
+  padding-block: 0.55rem 0.15rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #555555;
+  border-top: 1px solid #222222;
+}
+
+.score-results__continent:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+/* MapLibre popup overrides — keep consistent with the dark monospace theme. */
+#map .maplibregl-popup-content {
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 0;
+  padding: 0.3rem 0.6rem;
+  box-shadow: none;
+}
+
+#map .maplibregl-popup-tip {
+  display: none;
+}
+
+.city-popup {
+  font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  color: #e0e0e0;
+  white-space: nowrap;
+}
+
 @media (max-width: 72rem) {
   .app-shell {
     grid-template-columns: minmax(16rem, 19rem) minmax(0, 1fr);

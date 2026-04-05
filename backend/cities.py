@@ -13,6 +13,37 @@ if TYPE_CHECKING:
 
     from backend.scoring import CellScorePoint
 
+# Sets of ISO 3166-1 alpha-2 codes by continent for sidebar grouping and marker selection.
+_EUROPE = frozenset(
+    ["AD", "AL", "AT", "BA", "BE", "BG", "BY", "CH", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GB", "GI", "GR", "HR", "HU", "IE", "IS", "IT", "LI", "LT", "LU", "LV", "MC", "MD", "ME", "MK", "MT", "NL", "NO", "PL", "PT", "RO", "RS", "RU", "SE", "SI", "SK", "SM", "UA", "VA", "XK"]
+)
+_ASIA = frozenset(
+    ["AE", "AF", "AM", "AZ", "BD", "BH", "BN", "BT", "CN", "GE", "ID", "IL", "IN", "IQ", "IR", "JO", "JP", "KG", "KH", "KP", "KR", "KW", "KZ", "LA", "LB", "LK", "MM", "MN", "MO", "MV", "MY", "NP", "OM", "PH", "PK", "PS", "QA", "SA", "SG", "SY", "TH", "TJ", "TL", "TM", "TR", "TW", "UZ", "VN", "YE"]
+)
+_AFRICA = frozenset(
+    ["AO", "BF", "BI", "BJ", "BW", "CD", "CF", "CG", "CI", "CM", "CV", "DJ", "DZ", "EG", "EH", "ER", "ET", "GA", "GH", "GM", "GN", "GQ", "GW", "KE", "KM", "LR", "LS", "LY", "MA", "MG", "ML", "MR", "MU", "MW", "MZ", "NA", "NE", "NG", "RW", "SC", "SD", "SL", "SN", "SO", "SS", "ST", "SZ", "TD", "TG", "TN", "TZ", "UG", "ZA", "ZM", "ZW"]
+)
+_NORTH_AMERICA = frozenset(["AG", "BB", "BS", "BZ", "CA", "CR", "CU", "DM", "DO", "GD", "GT", "HN", "HT", "JM", "KN", "LC", "MX", "NI", "PA", "TT", "US", "VC"])
+_SOUTH_AMERICA = frozenset(["AR", "BO", "BR", "CL", "CO", "EC", "GF", "GY", "PE", "PY", "SR", "UY", "VE"])
+_OCEANIA = frozenset(["AU", "FJ", "FM", "KI", "MH", "NR", "NZ", "PG", "PW", "SB", "TO", "TV", "VU", "WS"])
+
+_CONTINENT_LOOKUP: tuple[tuple[str, frozenset[str]], ...] = (
+    ("Europe", _EUROPE),
+    ("Asia", _ASIA),
+    ("Africa", _AFRICA),
+    ("North America", _NORTH_AMERICA),
+    ("South America", _SOUTH_AMERICA),
+    ("Oceania", _OCEANIA),
+)
+
+
+def continent_of(country_code: str) -> str:
+    """Map an ISO 3166-1 alpha-2 code to its continent name."""
+    for continent, codes in _CONTINENT_LOOKUP:
+        if country_code in codes:
+            return continent
+    return "Other"
+
 GRID_DEGREES = 5 / 60
 GRID_HALF_DEGREES = GRID_DEGREES / 2
 MAX_LATITUDE_INDEX = 2159
@@ -33,12 +64,14 @@ class CityCandidate:
 
 
 class CityScorePoint(TypedDict):
-    """JSON score payload for the ranked city list."""
+    """JSON score payload for the ranked city list and map markers."""
 
     name: str
     country_code: str
     flag: str
     score: float
+    lat: float
+    lon: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +182,8 @@ def rank_city_scores(
                 "country_code": winner.city.country_code,
                 "flag": country_flag(winner.city.country_code),
                 "score": round(winner.score, 4),
+                "lat": winner.city.lat,
+                "lon": winner.city.lon,
             }
         )
         remaining = [
@@ -194,6 +229,8 @@ def rank_indexed_city_scores(
                 "country_code": winner_city.country_code,
                 "flag": city_catalog.flags[winner_index],
                 "score": round(winner_score, 4),
+                "lat": winner_city.lat,
+                "lon": winner_city.lon,
             }
         )
 
