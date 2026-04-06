@@ -91,6 +91,46 @@ Notes:
 - If `data/climate.duckdb` exists, startup warms the climate matrix, city cache, and heatmap projection.
 - If preload fails, startup logs the problem and requests fall back to the existing `503` path.
 
+## Deployment
+
+The app can bootstrap `climate.duckdb` on startup, but deployment config stays provider-agnostic and env-driven.
+
+Relevant environment variables:
+
+- `POGODAPP_DATA_DIR`: base directory for runtime artifacts. Default: `data`.
+- `POGODAPP_CLIMATE_DB`: explicit DuckDB path. Default: `{POGODAPP_DATA_DIR}/climate.duckdb`.
+- `POGODAPP_CLIMATE_CACHE_DIR`: cache directory for downloaded source archives. Default: `{POGODAPP_DATA_DIR}/worldclim`.
+- `POGODAPP_BUILD_CLIMATE_DB_IF_MISSING`: when `true`, startup builds the climate database before launching the app.
+- `POGODAPP_CLIMATE_RESOLUTION`: WorldClim resolution used by startup bootstrap. Default: `5m`.
+- `POGODAPP_HOST`: bind host override. Default: `127.0.0.1` locally, `0.0.0.0` when a platform injects `PORT`.
+- `PORT`: bind port. Default: `8000`.
+- `POGODAPP_RELOAD`: toggles Uvicorn reload. Default: on for local runs, off when `PORT` is injected.
+
+Generic deployment shape:
+
+1. Mount persistent storage for the data directory.
+2. Set `POGODAPP_DATA_DIR` and `POGODAPP_CLIMATE_DB` to that persistent path.
+3. Set `POGODAPP_BUILD_CLIMATE_DB_IF_MISSING=true` for first-boot bootstrap.
+4. Start the app with `uv run pogodapp`.
+
+Railway example:
+
+1. Attach a volume mounted at `/app/data`.
+2. Set service variables:
+   - `POGODAPP_DATA_DIR=/app/data`
+   - `POGODAPP_CLIMATE_DB=/app/data/climate.duckdb`
+   - `POGODAPP_CLIMATE_CACHE_DIR=/app/data/worldclim`
+   - `POGODAPP_BUILD_CLIMATE_DB_IF_MISSING=true`
+   - `POGODAPP_CLIMATE_RESOLUTION=5m`
+   - `POGODAPP_RELOAD=false`
+3. Use the checked-in `railway.toml`, which starts the service with `uv run pogodapp`.
+
+Railway-specific notes from the platform docs:
+
+- Volumes are mounted only at runtime, not during build or pre-deploy.
+- Variables configured in Railway are exposed to the app as normal environment variables.
+- The first deploy on an empty volume can take a while because the app builds the climate database before Uvicorn starts.
+
 ## Build Climate Data
 
 ```bash

@@ -660,7 +660,7 @@ def test_app_uses_duckdb_automatically_when_default_database_exists(
             """
         )
 
-    monkeypatch.setattr("backend.main.CLIMATE_DATABASE_PATH", database_path)
+    monkeypatch.setenv("POGODAPP_CLIMATE_DB", str(database_path))
 
     response = TestClient(create_app()).post(
         "/score",
