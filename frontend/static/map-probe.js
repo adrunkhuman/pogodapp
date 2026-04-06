@@ -150,6 +150,7 @@ function fetchProbe(lat, lon, clientX, clientY, cityHeader = null, { hideDelayMs
 
   abortActiveProbe();
   probeController = new AbortController();
+  probeTimeoutId = setTimeout(() => probeController.abort(), PROBE_TIMEOUT_MS);
   const params = new URLSearchParams({ lat, lon, ...prefs });
 
   fetch(`/probe?${params}`, { signal: probeController.signal })
@@ -161,7 +162,8 @@ function fetchProbe(lat, lon, clientX, clientY, cityHeader = null, { hideDelayMs
       probeCache.set(cacheKey, data);
       showTooltip(data, clientX, clientY, cityHeader, { hideDelayMs });
     })
-    .catch(() => {});
+    .catch(() => {})
+    .finally(() => clearTimeout(probeTimeoutId));
 }
 
 function scheduleHoverProbe(event) {

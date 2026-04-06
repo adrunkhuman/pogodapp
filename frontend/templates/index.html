@@ -21,6 +21,7 @@
           hx-post="/score"
           hx-trigger="input changed delay:300ms"
           hx-swap="none"
+          hx-request='{"timeout": 30000}'
         >
           {% for preference in preferences %}
           <label class="control" for="{{ preference.name }}">
