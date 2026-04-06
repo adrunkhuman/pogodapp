@@ -141,6 +141,64 @@ def test_annual_score_penalizes_a_single_too_hot_month() -> None:
     assert annual_score(hot_peak_cell, preferences) < annual_score(mild_cell, preferences)
 
 
+def test_annual_score_penalizes_wet_season_spikes() -> None:
+    steady_cell = ClimateCell(
+        lat=0.0,
+        lon=0.0,
+        temperature_c=(18.0,) * 12,
+        temperature_min_c=(12.0,) * 12,
+        temperature_max_c=(22.0,) * 12,
+        precipitation_mm=(40.0,) * 12,
+        cloud_cover_pct=(20,) * 12,
+    )
+    monsoon_cell = ClimateCell(
+        lat=1.0,
+        lon=1.0,
+        temperature_c=(18.0,) * 12,
+        temperature_min_c=(12.0,) * 12,
+        temperature_max_c=(22.0,) * 12,
+        precipitation_mm=(20.0,) * 11 + (320.0,),
+        cloud_cover_pct=(20,) * 12,
+    )
+
+    assert annual_score(monsoon_cell, make_preferences(dryness_preference=90)) < annual_score(
+        steady_cell,
+        make_preferences(dryness_preference=90),
+    )
+
+
+def test_extreme_dryness_preference_increases_rain_impact() -> None:
+    baseline_cell = ClimateCell(
+        lat=0.0,
+        lon=0.0,
+        temperature_c=(18.0,) * 12,
+        temperature_min_c=(12.0,) * 12,
+        temperature_max_c=(22.0,) * 12,
+        precipitation_mm=(40.0,) * 12,
+        cloud_cover_pct=(20,) * 12,
+    )
+    wetter_cell = ClimateCell(
+        lat=1.0,
+        lon=1.0,
+        temperature_c=(18.0,) * 12,
+        temperature_min_c=(12.0,) * 12,
+        temperature_max_c=(22.0,) * 12,
+        precipitation_mm=(120.0,) * 12,
+        cloud_cover_pct=(20,) * 12,
+    )
+
+    neutral_gap = annual_score(baseline_cell, make_preferences(dryness_preference=50)) - annual_score(
+        wetter_cell,
+        make_preferences(dryness_preference=50),
+    )
+    extreme_gap = annual_score(baseline_cell, make_preferences(dryness_preference=100)) - annual_score(
+        wetter_cell,
+        make_preferences(dryness_preference=100),
+    )
+
+    assert extreme_gap > neutral_gap
+
+
 @pytest.mark.parametrize(
     ("field_name", "temperature_c", "precipitation_mm", "cloud_cover_pct"),
     [
