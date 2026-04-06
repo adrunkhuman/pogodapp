@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 
 from backend.cities import CityCandidate, snap_city_to_cell_key
 
+logger = logging.getLogger(__name__)
+
 MONTH_NAMES: Final[tuple[str, ...]] = (
     "jan",
     "feb",
@@ -339,11 +341,11 @@ def _write_climate_csv(
     """Write all climate columns to a temp CSV loading one raster at a time.
 
     Uses a numpy array (~8 bytes/element) instead of a Python list of tuples
-    (~32 bytes/element), cutting the in-memory data representation by ~4×.
+    (~32 bytes/element), cutting the in-memory data representation by ~4x.
     The last 12 columns (cloud cover) are written as integers; the rest as floats.
     """
     n_cells = len(flat_indices)
-    n_cols = 2 + len(extracted_paths) * MONTHS_PER_YEAR  # lat + lon + 5 vars × 12
+    n_cols = 2 + len(extracted_paths) * MONTHS_PER_YEAR  # lat + lon + 5 vars x 12
     data = np.empty((n_cells, n_cols), dtype=np.float64)
     data[:, 0] = lat_col
     data[:, 1] = lon_col
@@ -362,9 +364,8 @@ def _write_climate_csv(
     n_float_cols = n_cols - MONTHS_PER_YEAR
     fmt = ["%.4f"] * n_float_cols + ["%d"] * MONTHS_PER_YEAR
 
-    tmp = tempfile.NamedTemporaryFile("w", newline="", delete=False, suffix=".csv")
-    csv_path = Path(tmp.name)
-    tmp.close()
+    with tempfile.NamedTemporaryFile("w", newline="", delete=False, suffix=".csv") as tmp:
+        csv_path = Path(tmp.name)
     np.savetxt(csv_path, data, delimiter=",", fmt=fmt)
     return csv_path
 
@@ -556,7 +557,7 @@ def build_worldclim_database(
     del flat_indices
 
     # Phase 4: city rows — derived from lat/lon vectors, no full rows list needed.
-    valid_cells = set(zip(lat_col.tolist(), lon_col.tolist()))
+    valid_cells = set(zip(lat_col.tolist(), lon_col.tolist(), strict=True))
     del lat_col, lon_col
     city_rows = _build_city_rows_from_valid_cells(cities_txt_path, valid_cells, resolution)
 
@@ -570,7 +571,7 @@ def build_worldclim_database(
         with duckdb.connect(str(output_path)) as connection:
             connection.execute("SET memory_limit='4GB'")
             create_climate_cells_table(connection)
-            connection.execute(f"COPY climate_cells FROM '{climate_csv_path.as_posix()}'")  # noqa: S608
+            connection.execute(f"COPY climate_cells FROM '{climate_csv_path.as_posix()}'")  # path is a tempfile we created
             create_cities_table(connection)
             copy_rows_into_cities_table(connection, city_rows)
     finally:
