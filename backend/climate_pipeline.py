@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 
 from backend.cities import CityCandidate, snap_city_to_cell_key
 
+logger = logging.getLogger(__name__)
+
 MONTH_NAMES: Final[tuple[str, ...]] = (
     "jan",
     "feb",
@@ -312,6 +314,77 @@ def build_insert_rows(monthly: MonthlyClimateRasters, resolution: WorldClimResol
     return list(zip(*column_vectors, strict=True))
 
 
+def _build_finite_mask(extracted_paths: dict[str, tuple[Path, ...]]) -> NDArray[np.bool_]:
+    """Build the land-cell mask by loading one raster at a time and freeing it immediately.
+
+    Peak memory: one raster + the accumulated boolean mask — a fraction of loading all 60 at once.
+    """
+    mask: NDArray[np.bool_] | None = None
+    for tif_paths in extracted_paths.values():
+        for path in tif_paths:
+            raster = load_raster(path)
+            finite = np.isfinite(raster)
+            del raster
+            mask = finite if mask is None else np.logical_and(mask, finite, out=mask)
+    if mask is None:
+        msg = "No rasters found in extracted paths"
+        raise ValueError(msg)
+    return mask
+
+
+def _write_climate_csv(
+    extracted_paths: dict[str, tuple[Path, ...]],
+    flat_indices: NDArray[np.intp],
+    lat_col: NDArray[np.float64],
+    lon_col: NDArray[np.float64],
+) -> Path:
+    """Write all climate columns to a temp CSV loading one raster at a time.
+
+    Uses a numpy array (~8 bytes/element) instead of a Python list of tuples
+    (~32 bytes/element), cutting the in-memory data representation by ~4x.
+    The last 12 columns (cloud cover) are written as integers; the rest as floats.
+    """
+    n_cells = len(flat_indices)
+    n_cols = 2 + len(extracted_paths) * MONTHS_PER_YEAR  # lat + lon + 5 vars x 12
+    data = np.empty((n_cells, n_cols), dtype=np.float64)
+    data[:, 0] = lat_col
+    data[:, 1] = lon_col
+
+    col = 2
+    for variable_name, tif_paths in extracted_paths.items():
+        for path in tif_paths:
+            raster = load_raster(path)
+            if variable_name == "srad":
+                data[:, col] = solar_radiation_to_cloud_proxy(raster).ravel()[flat_indices]
+            else:
+                data[:, col] = np.round(raster.ravel()[flat_indices], 4)
+            col += 1
+            del raster
+
+    n_float_cols = n_cols - MONTHS_PER_YEAR
+    fmt = ["%.4f"] * n_float_cols + ["%d"] * MONTHS_PER_YEAR
+
+    with tempfile.NamedTemporaryFile("w", newline="", delete=False, suffix=".csv") as tmp:
+        csv_path = Path(tmp.name)
+    np.savetxt(csv_path, data, delimiter=",", fmt=fmt)
+    return csv_path
+
+
+def _build_city_rows_from_valid_cells(
+    cities_txt_path: Path,
+    valid_cells: set[tuple[float, float]],
+    resolution: WorldClimResolution,
+) -> list[tuple[str | float, ...]]:
+    """Build city rows from a pre-computed set of valid (lat, lon) cell keys."""
+    city_rows: list[tuple[str | float, ...]] = []
+    for city in load_city_catalog(cities_txt_path):
+        cell_lat, cell_lon = snap_city_to_cell_key(city, grid_degrees=resolution.grid_degrees)
+        if (cell_lat, cell_lon) not in valid_cells:
+            continue
+        city_rows.append((city.name, city.country_code, city.lat, city.lon, cell_lat, cell_lon, city.population))
+    return city_rows
+
+
 def create_climate_cells_table(connection: duckdb.DuckDBPyConnection) -> None:
     """Create the normalized monthly climate table expected by runtime scoring."""
     connection.execute("DROP TABLE IF EXISTS climate_cells")
@@ -453,25 +526,60 @@ def build_worldclim_database(
 
     This performs network I/O, writes cache files under `cache_dir`, and
     replaces `output_path` if it already exists.
+
+    Memory strategy: processes one raster at a time and uses a numpy array for
+    the intermediate CSV (8 bytes/element) instead of a Python list of tuples
+    (~32 bytes/element), keeping peak RSS well under 4 GB for 5m resolution.
     """
     resolution_cache_dir = cache_dir / resolution.name
     archive_paths = ensure_worldclim_archives(resolution_cache_dir, resolution)
     cities_txt_path = ensure_geonames_cities(cache_dir)
     extracted_paths = extract_worldclim_archives(archive_paths, resolution_cache_dir / "extracted")
-    monthly = load_monthly_rasters(extracted_paths)
-    rows = build_insert_rows(monthly, resolution)
-    city_rows = build_city_rows(cities_txt_path, rows, resolution)
+
+    # Phase 1: land-cell mask — one raster at a time, freed immediately after use.
+    logger.info("startup_bootstrap phase=mask resolution=%s", resolution.name)
+    finite_mask = _build_finite_mask(extracted_paths)
+    flat_indices = np.where(finite_mask.ravel())[0]
+    del finite_mask
+
+    row_count = len(flat_indices)
+    logger.info("startup_bootstrap phase=mask_done cells=%d", row_count)
+
+    # Phase 2: coordinates.
+    latitudes, longitudes = build_coordinate_grids(resolution)
+    lat_col = latitudes.ravel()[flat_indices].round(4)
+    lon_col = longitudes.ravel()[flat_indices].round(4)
+    del latitudes, longitudes
+
+    # Phase 3: write climate CSV variable-by-variable, one raster in memory at a time.
+    logger.info("startup_bootstrap phase=csv_build cells=%d", row_count)
+    climate_csv_path = _write_climate_csv(extracted_paths, flat_indices, lat_col, lon_col)
+    del flat_indices
+
+    # Phase 4: city rows — derived from lat/lon vectors, no full rows list needed.
+    valid_cells = set(zip(lat_col.tolist(), lon_col.tolist(), strict=True))
+    del lat_col, lon_col
+    city_rows = _build_city_rows_from_valid_cells(cities_txt_path, valid_cells, resolution)
+
+    # Phase 5: load into DuckDB with a memory cap.
+    logger.info("startup_bootstrap phase=db_load cells=%d cities=%d", row_count, len(city_rows))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.exists():
         output_path.unlink()
 
-    with duckdb.connect(str(output_path)) as connection:
-        create_climate_cells_table(connection)
-        copy_rows_into_climate_table(connection, rows)
-        create_cities_table(connection)
-        copy_rows_into_cities_table(connection, city_rows)
+    try:
+        with duckdb.connect(str(output_path)) as connection:
+            connection.execute("SET memory_limit='4GB'")
+            create_climate_cells_table(connection)
+            connection.execute(
+                f"COPY climate_cells FROM '{climate_csv_path.as_posix()}'"
+            )  # path is a tempfile we created
+            create_cities_table(connection)
+            copy_rows_into_cities_table(connection, city_rows)
+    finally:
+        climate_csv_path.unlink(missing_ok=True)
 
-    return BuildSummary(output_path=output_path, row_count=len(rows))
+    return BuildSummary(output_path=output_path, row_count=row_count)
 
 
 def validate_climate_database(
