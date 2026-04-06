@@ -1,0 +1,9 @@
+[build]
+builder = "RAILPACK"
+
+[deploy]
+startCommand = "uv run pogodapp"
+healthcheckPath = "/health"
+healthcheckTimeout = 900
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

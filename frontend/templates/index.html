@@ -79,6 +79,9 @@
     <script src="/static/map-probe.js"></script>
     <script src="/static/map-layers.js"></script>
     <script src="/static/map.js"></script>
+    {% if initial_scores %}
+    <script>window.POGODAPP_INITIAL_SCORES = {{ initial_scores | tojson }};</script>
+    {% endif %}
     <script src="/static/app.js"></script>
   </body>
 </html>

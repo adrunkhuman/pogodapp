@@ -84,6 +84,9 @@ function initializeAppShell() {
   if (!form) return;
   bindPreferenceControls(form);
   bindScoreHandoff(form);
+  if (window.POGODAPP_INITIAL_SCORES) {
+    window.renderScores(window.POGODAPP_INITIAL_SCORES);
+  }
 }
 
 if (document.readyState === "loading") {

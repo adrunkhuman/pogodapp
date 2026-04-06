@@ -340,7 +340,8 @@ def test_create_app_preloads_optimized_repository() -> None:
 
     create_app(climate_repository=cast("ClimateRepository", repository))
 
-    assert repository.preload_calls == ["matrix", "cities", "heatmap"]
+    # Preload warms all three caches first; default score precompute may add further calls after.
+    assert repository.preload_calls[:3] == ["matrix", "cities", "heatmap"]
 
 
 def test_create_app_preload_is_best_effort_for_data_errors() -> None:
@@ -660,7 +661,7 @@ def test_app_uses_duckdb_automatically_when_default_database_exists(
             """
         )
 
-    monkeypatch.setattr("backend.main.CLIMATE_DATABASE_PATH", database_path)
+    monkeypatch.setenv("POGODAPP_CLIMATE_DB", str(database_path))
 
     response = TestClient(create_app()).post(
         "/score",

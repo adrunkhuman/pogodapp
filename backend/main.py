@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Protocol, cast
@@ -20,6 +19,7 @@ from backend.climate_repository import (
 )
 from backend.config import DEFAULT_PREFERENCES, MAP_PROJECTION
 from backend.logging_config import configure_backend_logging
+from backend.runtime import resolve_climate_database_path
 from backend.score_service import ScoreResponse, build_score_response
 from backend.scoring import (
     PreferenceInputs,
@@ -34,8 +34,6 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
 STATIC_DIR = FRONTEND_DIR / "static"
 TEMPLATES_DIR = FRONTEND_DIR / "templates"
-CLIMATE_DATABASE_PATH = ROOT_DIR / "data" / "climate.duckdb"
-CLIMATE_DATABASE_ENV_VAR = "POGODAPP_CLIMATE_DB"
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 logger = logging.getLogger(__name__)
@@ -77,12 +75,6 @@ def build_probe_response(breakdown: ProbeBreakdown) -> ProbeResponse:
 def build_index_context() -> dict[str, object]:
     """Return template context for the initial page render."""
     return {"preferences": DEFAULT_PREFERENCES, "map_projection": MAP_PROJECTION}
-
-
-def resolve_climate_database_path() -> Path:
-    """Resolve the runtime climate database path from env or the default location."""
-    configured_path = os.getenv(CLIMATE_DATABASE_ENV_VAR)
-    return Path(configured_path) if configured_path else CLIMATE_DATABASE_PATH
 
 
 def preload_repository(repository: ClimateRepository) -> None:
@@ -134,14 +126,26 @@ def create_app(
     app = FastAPI(title="Pogodapp")
     repository = climate_repository or build_default_climate_repository(resolve_climate_database_path())
     preload_repository(repository)
+
+    initial_scores: ScoreResponse | None = None
+    try:
+        default_prefs = PreferenceInputs(**{f.name: f.value for f in DEFAULT_PREFERENCES})
+        initial_scores = build_score_response(repository, default_prefs)
+    except ClimateDataError:
+        logger.warning("default_score_precompute outcome=skipped")
+
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    @app.get("/health")
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(
             request=request,
             name="index.html",
-            context=build_index_context(),
+            context={**build_index_context(), "initial_scores": initial_scores},
         )
 
     @app.post("/score")

@@ -1,5 +1,11 @@
 "use strict";
 
+const probeCache = new Map();
+
+document.addEventListener("input", (event) => {
+  if (event.target.closest("#preferences")) probeCache.clear();
+}, { passive: true });
+
 function getCurrentPreferences() {
   const form = document.getElementById("preferences");
   if (!form) return null;
@@ -134,6 +140,14 @@ function fetchProbe(lat, lon, clientX, clientY, cityHeader = null, { hideDelayMs
   const prefs = getCurrentPreferences();
   if (!prefs) return;
 
+  const cacheKey = `${lat},${lon},${new URLSearchParams(prefs)}`;
+  const cached = probeCache.get(cacheKey);
+  if (cached) {
+    abortActiveProbe();
+    showTooltip(cached, clientX, clientY, cityHeader, { hideDelayMs });
+    return;
+  }
+
   abortActiveProbe();
   probeController = new AbortController();
   const params = new URLSearchParams({ lat, lon, ...prefs });
@@ -143,7 +157,10 @@ function fetchProbe(lat, lon, clientX, clientY, cityHeader = null, { hideDelayMs
       if (!response.ok) throw new Error(`Probe request failed with ${response.status}`);
       return response.json();
     })
-    .then((data) => showTooltip(data, clientX, clientY, cityHeader, { hideDelayMs }))
+    .then((data) => {
+      probeCache.set(cacheKey, data);
+      showTooltip(data, clientX, clientY, cityHeader, { hideDelayMs });
+    })
     .catch(() => {});
 }
 
