@@ -116,6 +116,10 @@ def probe_preferences_dependency(
         raise RequestValidationError(error.errors()) from error
 
 
+async def _rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse({"detail": "Too many requests"}, status_code=429)
+
+
 def create_app(
     climate_repository: ClimateRepository | None = None,
 ) -> FastAPI:
@@ -130,10 +134,6 @@ def create_app(
     app = FastAPI(title="Pogodapp")
     limiter = Limiter(key_func=get_remote_address)
     app.state.limiter = limiter
-
-    async def _rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
-        return JSONResponse({"detail": "Too many requests"}, status_code=429)
-
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
     repository = climate_repository or build_default_climate_repository(resolve_climate_database_path())
     preload_repository(repository)
