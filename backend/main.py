@@ -131,7 +131,7 @@ def create_app(
     try:
         default_prefs = PreferenceInputs(**{f.name: f.value for f in DEFAULT_PREFERENCES})
         initial_scores = build_score_response(repository, default_prefs)
-    except Exception:
+    except ClimateDataError:
         logger.warning("default_score_precompute outcome=skipped")
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
