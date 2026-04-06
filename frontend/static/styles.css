@@ -51,9 +51,29 @@ ul {
 .app-header {
   grid-column: 1 / -1;
   display: grid;
+  position: relative;
   gap: 0.5rem;
   padding: clamp(1.5rem, 2vw, 2rem);
   border-bottom: 1px solid #2a2a2a;
+}
+
+.github-link {
+  position: absolute;
+  top: clamp(1rem, 1.5vw, 1.5rem);
+  right: clamp(1rem, 1.5vw, 1.5rem);
+  color: #888;
+  transition: color 0.15s;
+}
+
+.github-link:hover {
+  color: #e0e0e0;
+}
+
+.github-link svg {
+  display: block;
+  width: 1.5rem;
+  height: 1.5rem;
+  fill: currentColor;
 }
 
 .app-header h1 {
