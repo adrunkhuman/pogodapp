@@ -225,11 +225,11 @@ def preference_extremity(preference: int) -> float:
     return abs(preference - 50) / 50
 
 
-def weighted_product_score(*components: tuple[float, float]) -> float:
+def weighted_product_score(*components: tuple[float, float], floor: float = 0.0) -> float:
     """Combine 0..1 criteria multiplicatively without letting one miss force exact zero."""
     score = 1.0
     for value, weight in components:
-        score *= max(value, MULTIPLICATIVE_SCORE_FLOOR) ** weight
+        score *= max(value, floor) ** weight
     return clamp_score(score)
 
 
@@ -298,6 +298,7 @@ def rain_profile_score(monthly_precipitation_mm: tuple[float, ...], dryness_pref
     return weighted_product_score(
         (typical_rain_score, PRECIPITATION_PROFILE_MEDIAN_WEIGHT),
         (wettest_month_score, PRECIPITATION_PROFILE_PEAK_WEIGHT),
+        floor=MULTIPLICATIVE_SCORE_FLOOR,
     )
 
 
@@ -323,6 +324,7 @@ def sunshine_profile_score(monthly_cloud_cover_pct: tuple[int, ...], sunshine_pr
     return weighted_product_score(
         (average_sun_score, SUN_PROFILE_AVERAGE_WEIGHT),
         (gloomiest_month_score, SUN_PROFILE_GLOOM_WEIGHT),
+        floor=MULTIPLICATIVE_SCORE_FLOOR,
     )
 
 
@@ -391,9 +393,9 @@ def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceI
     cold_excess = np.maximum(winter_cold_limit - coldest_month_lows, 0.0)
     cold_scores = np.clip(1.0 - (cold_excess / TEMPERATURE_LIMIT_SLOPE_C), 0.0, 1.0)
     temperature_scores = (
-        np.maximum(ideal_scores, MULTIPLICATIVE_SCORE_FLOOR) ** TEMPERATURE_IDEAL_WEIGHT
-        * np.maximum(heat_scores, MULTIPLICATIVE_SCORE_FLOOR) ** TEMPERATURE_HEAT_WEIGHT
-        * np.maximum(cold_scores, MULTIPLICATIVE_SCORE_FLOOR) ** TEMPERATURE_COLD_WEIGHT
+        ideal_scores**TEMPERATURE_IDEAL_WEIGHT
+        * heat_scores**TEMPERATURE_HEAT_WEIGHT
+        * cold_scores**TEMPERATURE_COLD_WEIGHT
     ).astype(np.float32, copy=False)
 
     median_precipitation = np.median(climate_matrix.precipitation_mm, axis=1)
@@ -431,13 +433,9 @@ def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceI
         copy=False,
     )
 
-    preference_scores = (
-        np.maximum(rain_scores, MULTIPLICATIVE_SCORE_FLOOR) ** rain_weight
-        * np.maximum(sun_scores, MULTIPLICATIVE_SCORE_FLOOR) ** sun_weight
-    ).astype(np.float32, copy=False)
+    preference_scores = (rain_scores**rain_weight * sun_scores**sun_weight).astype(np.float32, copy=False)
     return np.clip(
-        np.maximum(temperature_scores, MULTIPLICATIVE_SCORE_FLOOR) ** temperature_weight
-        * np.maximum(preference_scores, MULTIPLICATIVE_SCORE_FLOOR) ** (1 - temperature_weight),
+        temperature_scores**temperature_weight * preference_scores ** (1 - temperature_weight),
         0.0,
         1.0,
     ).astype(np.float32, copy=False)

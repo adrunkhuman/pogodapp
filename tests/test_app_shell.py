@@ -407,6 +407,40 @@ def test_score_endpoint_rejects_typical_day_below_winter_limit() -> None:
     assert any("winter_cold_limit" in item["msg"] for item in detail)
 
 
+def test_probe_endpoint_rejects_typical_day_above_summer_limit() -> None:
+    response = client.get(
+        "/probe",
+        params={
+            **default_query_params(),
+            "preferred_day_temperature": 31,
+            "summer_heat_limit": 30,
+        },
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+
+    assert detail
+    assert any("summer_heat_limit" in item["msg"] for item in detail)
+
+
+def test_probe_endpoint_rejects_typical_day_below_winter_limit() -> None:
+    response = client.get(
+        "/probe",
+        params={
+            **default_query_params(),
+            "preferred_day_temperature": 6,
+            "winter_cold_limit": 7,
+        },
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+
+    assert detail
+    assert any("winter_cold_limit" in item["msg"] for item in detail)
+
+
 def test_score_endpoint_returns_all_available_cities_when_under_continent_reserve() -> None:
     many_cities_client = TestClient(create_app(climate_repository=ManyCitiesRepository()))
 

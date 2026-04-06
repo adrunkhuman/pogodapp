@@ -99,16 +99,16 @@ def test_annual_score_stays_normalized_for_extreme_climate_rows() -> None:
         make_preferences(preferred_day_temperature=15, summer_heat_limit=18, winter_cold_limit=15),
     )
 
-    assert 0.0 < score < 1.0
+    assert score == 0.0
 
 
 def test_annual_score_averages_monthly_scores_over_twelve_months() -> None:
     mostly_perfect_cell = ClimateCell(
         lat=0.0,
         lon=0.0,
-        temperature_c=(18.0,) * 11 + (45.0,),
-        temperature_min_c=(14.0,) * 11 + (35.0,),
-        temperature_max_c=(22.0,) * 11 + (50.0,),
+        temperature_c=(18.0,) * 11 + (32.0,),
+        temperature_min_c=(14.0,) * 11 + (24.0,),
+        temperature_max_c=(22.0,) * 11 + (39.0,),
         precipitation_mm=(0.0,) * 11 + (300.0,),
         cloud_cover_pct=(15,) * 11 + (100,),
     )
