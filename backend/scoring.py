@@ -213,13 +213,13 @@ def clamp_score(value: float) -> float:
 
 
 def temperature_score(
-    _observed_average_c: float,
+    observed_average_c: float,
     observed_min_c: float,
     observed_max_c: float,
     preferences: PreferenceInputs,
 ) -> float:
     """Score temperature using daytime highs and nighttime lows, not just monthly means."""
-    ideal_delta = abs(observed_max_c - preferences.preferred_day_temperature)
+    ideal_delta = abs(observed_average_c - preferences.preferred_day_temperature)
     ideal_distance = max(ideal_delta - TEMPERATURE_COMFORT_BAND_C, 0.0)
     ideal_score = clamp_score(1 - ideal_distance / TEMPERATURE_IDEAL_SLOPE_C)
 
@@ -234,6 +234,14 @@ def temperature_score(
         + heat_score * TEMPERATURE_HEAT_WEIGHT
         + cold_score * TEMPERATURE_COLD_WEIGHT
     )
+
+
+def temperature_profile_score(cell: ClimateCell, preferences: PreferenceInputs) -> float:
+    """Score yearly temperature by typical high, hottest month, and coldest month."""
+    typical_high_c = float(np.median(np.array(cell.temperature_max_c, dtype=np.float32)))
+    hottest_month_high_c = max(cell.temperature_max_c)
+    coldest_month_low_c = min(cell.temperature_min_c)
+    return temperature_score(typical_high_c, coldest_month_low_c, hottest_month_high_c, preferences)
 
 
 def rain_score(monthly_precipitation_mm: float, dryness_preference: int) -> float:
@@ -270,9 +278,23 @@ def monthly_score(cell: ClimateCell, month_index: int, preferences: PreferenceIn
 
 
 def annual_score(cell: ClimateCell, preferences: PreferenceInputs) -> float:
-    """Average monthly scores into one normalized annual score."""
-    score_total = sum(monthly_score(cell, month_index, preferences) for month_index in range(MONTHS_PER_YEAR))
-    return clamp_score(score_total / MONTHS_PER_YEAR)
+    """Combine yearly temperature profile with month-averaged rain and cloud scores."""
+    temperature_component = temperature_profile_score(cell, preferences)
+    rain_component = (
+        sum(
+            rain_score(cell.precipitation_mm[month_index], preferences.dryness_preference)
+            for month_index in range(MONTHS_PER_YEAR)
+        )
+        / MONTHS_PER_YEAR
+    )
+    cloud_component = (
+        sum(
+            cloud_score(cell.cloud_cover_pct[month_index], preferences.sunshine_preference)
+            for month_index in range(MONTHS_PER_YEAR)
+        )
+        / MONTHS_PER_YEAR
+    )
+    return clamp_score((temperature_component + rain_component + cloud_component) / 3)
 
 
 def score_climate_cells(climate_cells: tuple[ClimateCell, ...], preferences: PreferenceInputs) -> list[CellScorePoint]:
@@ -297,29 +319,28 @@ def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceI
     winter_cold_limit = np.float32(preferences.winter_cold_limit)
     dryness_ratio = np.float32(preferences.dryness_preference / 100.0)
     cloud_denominator = np.float32(100.0 - tolerated_cloud_cover)
-    annual_scores = np.zeros(climate_matrix.latitudes.shape[0], dtype=np.float32)
+    typical_highs = np.median(climate_matrix.temperature_max_c, axis=1)
+    hottest_month_highs = np.max(climate_matrix.temperature_max_c, axis=1)
+    coldest_month_lows = np.min(climate_matrix.temperature_min_c, axis=1)
+
+    ideal_distance = np.maximum(np.abs(typical_highs - preferred_day_temperature) - TEMPERATURE_COMFORT_BAND_C, 0.0)
+    ideal_scores = np.clip(1.0 - (ideal_distance / TEMPERATURE_IDEAL_SLOPE_C), 0.0, 1.0)
+    heat_excess = np.maximum(hottest_month_highs - summer_heat_limit, 0.0)
+    heat_scores = np.clip(1.0 - (heat_excess / TEMPERATURE_LIMIT_SLOPE_C), 0.0, 1.0)
+    cold_excess = np.maximum(winter_cold_limit - coldest_month_lows, 0.0)
+    cold_scores = np.clip(1.0 - (cold_excess / TEMPERATURE_LIMIT_SLOPE_C), 0.0, 1.0)
+    temperature_scores = (
+        ideal_scores * TEMPERATURE_IDEAL_WEIGHT
+        + heat_scores * TEMPERATURE_HEAT_WEIGHT
+        + cold_scores * TEMPERATURE_COLD_WEIGHT
+    ).astype(np.float32, copy=False)
+
+    rain_totals = np.zeros(climate_matrix.latitudes.shape[0], dtype=np.float32)
+    cloud_totals = np.zeros(climate_matrix.latitudes.shape[0], dtype=np.float32)
 
     for month_index in range(MONTHS_PER_YEAR):
-        monthly_temperature_min = climate_matrix.temperature_min_c[:, month_index]
-        monthly_temperature_max = climate_matrix.temperature_max_c[:, month_index]
         monthly_precipitation = climate_matrix.precipitation_mm[:, month_index]
         monthly_cloud_cover = climate_matrix.cloud_cover_pct[:, month_index].astype(np.float32, copy=False)
-
-        ideal_distance = np.maximum(
-            np.abs(monthly_temperature_max - preferred_day_temperature) - TEMPERATURE_COMFORT_BAND_C,
-            0.0,
-            dtype=np.float32,
-        )
-        ideal_scores = np.clip(1.0 - (ideal_distance / TEMPERATURE_IDEAL_SLOPE_C), 0.0, 1.0)
-        heat_excess = np.maximum(monthly_temperature_max - summer_heat_limit, 0.0, dtype=np.float32)
-        heat_scores = np.clip(1.0 - (heat_excess / TEMPERATURE_LIMIT_SLOPE_C), 0.0, 1.0)
-        cold_excess = np.maximum(winter_cold_limit - monthly_temperature_min, 0.0, dtype=np.float32)
-        cold_scores = np.clip(1.0 - (cold_excess / TEMPERATURE_LIMIT_SLOPE_C), 0.0, 1.0)
-        temperature_scores = (
-            ideal_scores * TEMPERATURE_IDEAL_WEIGHT
-            + heat_scores * TEMPERATURE_HEAT_WEIGHT
-            + cold_scores * TEMPERATURE_COLD_WEIGHT
-        )
 
         rain_scores = np.clip(
             1.0 - (monthly_precipitation / SATURATING_MONTHLY_RAIN_MM) * dryness_ratio,
@@ -334,10 +355,12 @@ def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceI
             np.clip(1.0 - excess_ratio**2, 0.0, 1.0),
         )
 
-        annual_scores += (temperature_scores + rain_scores + cloud_scores) / 3.0
+        rain_totals += rain_scores
+        cloud_totals += cloud_scores
 
-    annual_scores /= MONTHS_PER_YEAR
-    return np.clip(annual_scores, 0.0, 1.0).astype(np.float32, copy=False)
+    rain_totals /= MONTHS_PER_YEAR
+    cloud_totals /= MONTHS_PER_YEAR
+    return np.clip((temperature_scores + rain_totals + cloud_totals) / 3.0, 0.0, 1.0).astype(np.float32, copy=False)
 
 
 def normalize_score_array(scores: NDArray[np.float32]) -> NDArray[np.float32]:
@@ -358,19 +381,10 @@ def score_matrix_row_breakdown(
     preferences: PreferenceInputs,
 ) -> ProbeBreakdown:
     """Break one climate-matrix row into probe-ready averages and per-metric scores."""
-    temp_scores = []
     rain_scores = []
     cloud_scores = []
 
     for month in range(MONTHS_PER_YEAR):
-        temp_scores.append(
-            temperature_score(
-                float(climate_matrix.temperature_c[row_index, month]),
-                float(climate_matrix.temperature_min_c[row_index, month]),
-                float(climate_matrix.temperature_max_c[row_index, month]),
-                preferences,
-            )
-        )
         rain_scores.append(
             rain_score(float(climate_matrix.precipitation_mm[row_index, month]), preferences.dryness_preference)
         )
@@ -378,8 +392,9 @@ def score_matrix_row_breakdown(
             cloud_score(int(climate_matrix.cloud_cover_pct[row_index, month]), preferences.sunshine_preference)
         )
 
-    avg_temp_max_c = round(float(np.mean(climate_matrix.temperature_max_c[row_index])), 1)
-    avg_temp_min_c = round(float(np.mean(climate_matrix.temperature_min_c[row_index])), 1)
+    typical_high_c = round(float(np.median(climate_matrix.temperature_max_c[row_index])), 1)
+    hottest_month_high_c = round(float(np.max(climate_matrix.temperature_max_c[row_index])), 1)
+    coldest_month_low_c = round(float(np.min(climate_matrix.temperature_min_c[row_index])), 1)
     avg_precip_mm = round(float(np.mean(climate_matrix.precipitation_mm[row_index])), 1)
     avg_cloud_pct = round(float(np.mean(climate_matrix.cloud_cover_pct[row_index].astype(np.float32))), 1)
     avg_sun_pct = round(100.0 - avg_cloud_pct, 1)
@@ -387,9 +402,19 @@ def score_matrix_row_breakdown(
         ProbeMetricBreakdown(
             key="temp",
             label="temperature",
-            value=avg_temp_max_c,
-            display_value=f"{avg_temp_max_c:.1f}/{avg_temp_min_c:.1f}°C hi/lo",
-            score=round(sum(temp_scores) / MONTHS_PER_YEAR, 3),
+            value=typical_high_c,
+            display_value=f"{typical_high_c:.1f}C typical, {hottest_month_high_c:.1f}/{coldest_month_low_c:.1f}C extremes",
+            score=round(
+                float(
+                    temperature_score(
+                        typical_high_c,
+                        coldest_month_low_c,
+                        hottest_month_high_c,
+                        preferences,
+                    )
+                ),
+                3,
+            ),
         ),
         ProbeMetricBreakdown(
             key="rain",
@@ -407,7 +432,10 @@ def score_matrix_row_breakdown(
         ),
     )
     return ProbeBreakdown(
-        overall_score=round((sum(temp_scores) + sum(rain_scores) + sum(cloud_scores)) / (3 * MONTHS_PER_YEAR), 4),
+        overall_score=round(
+            (metric_scores[0].score + (sum(rain_scores) / MONTHS_PER_YEAR) + (sum(cloud_scores) / MONTHS_PER_YEAR)) / 3,
+            4,
+        ),
         metrics=metric_scores,
     )
 

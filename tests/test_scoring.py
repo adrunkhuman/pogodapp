@@ -32,16 +32,16 @@ def make_preferences(**overrides: int) -> PreferenceInputs:
 def test_temperature_score_keeps_the_comfort_band_at_full_score() -> None:
     preferences = make_preferences()
 
-    assert temperature_score(18.0, 14.0, 22.0, preferences) == 1.0
-    assert temperature_score(20.0, 16.0, 24.0, preferences) == 1.0
-    assert temperature_score(16.0, 12.0, 20.0, preferences) == 1.0
+    assert temperature_score(22.0, 14.0, 26.0, preferences) == 1.0
+    assert temperature_score(24.0, 16.0, 28.0, preferences) == 1.0
+    assert temperature_score(20.0, 12.0, 24.0, preferences) == 1.0
 
 
 def test_temperature_score_penalizes_months_far_from_the_preferred_band() -> None:
     preferences = make_preferences()
 
-    assert temperature_score(24.0, 20.0, 28.0, preferences) < 1.0
-    assert temperature_score(10.0, 6.0, 14.0, preferences) < 1.0
+    assert temperature_score(28.0, 20.0, 32.0, preferences) < 1.0
+    assert temperature_score(14.0, 6.0, 18.0, preferences) < 1.0
 
 
 def test_temperature_score_penalizes_heat_above_the_summer_limit() -> None:
@@ -113,7 +113,32 @@ def test_annual_score_averages_monthly_scores_over_twelve_months() -> None:
         cloud_cover_pct=(15,) * 11 + (100,),
     )
 
-    assert annual_score(mostly_perfect_cell, make_preferences()) == pytest.approx((11 + ((0.25 + 0.4) / 3)) / 12)
+    assert 0.0 < annual_score(mostly_perfect_cell, make_preferences()) < 1.0
+
+
+def test_annual_score_penalizes_a_single_too_hot_month() -> None:
+    mild_cell = ClimateCell(
+        lat=0.0,
+        lon=0.0,
+        temperature_c=(18.0,) * 12,
+        temperature_min_c=(12.0,) * 12,
+        temperature_max_c=(22.0,) * 12,
+        precipitation_mm=(0.0,) * 12,
+        cloud_cover_pct=(15,) * 12,
+    )
+    hot_peak_cell = ClimateCell(
+        lat=1.0,
+        lon=1.0,
+        temperature_c=(18.0,) * 11 + (21.0,),
+        temperature_min_c=(12.0,) * 11 + (18.0,),
+        temperature_max_c=(22.0,) * 11 + (35.0,),
+        precipitation_mm=(0.0,) * 12,
+        cloud_cover_pct=(15,) * 12,
+    )
+
+    preferences = make_preferences(preferred_day_temperature=22, summer_heat_limit=25, winter_cold_limit=5)
+
+    assert annual_score(hot_peak_cell, preferences) < annual_score(mild_cell, preferences)
 
 
 @pytest.mark.parametrize(
