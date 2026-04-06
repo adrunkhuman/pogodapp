@@ -780,6 +780,50 @@ def test_duckdb_climate_repository_loads_rows_built_in_pipeline_shape(tmp_path: 
     )
 
 
+def test_build_insert_rows_drops_cells_with_nonfinite_tmin_or_tmax() -> None:
+    raster_height, raster_width = DEFAULT_WORLDCLIM_RESOLUTION.raster_shape
+
+    monthly_temperature = tuple(np.full((raster_height, raster_width), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_temperature_min = tuple(np.full((raster_height, raster_width), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_temperature_max = tuple(np.full((raster_height, raster_width), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_precipitation = tuple(np.full((raster_height, raster_width), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_solar_radiation = tuple(np.full((raster_height, raster_width), np.nan, dtype=np.float64) for _ in range(12))
+
+    for month in monthly_temperature:
+        month[0, 0] = 20.0
+        month[0, 1] = 20.0
+    for month in monthly_temperature_min:
+        month[0, 0] = 10.0
+        month[0, 1] = 10.0
+    for month in monthly_temperature_max:
+        month[0, 0] = 25.0
+        month[0, 1] = 25.0
+    for month in monthly_precipitation:
+        month[0, 0] = 50.0
+        month[0, 1] = 50.0
+    for month in monthly_solar_radiation:
+        month[0, 0] = 100.0
+        month[0, 1] = 100.0
+
+    monthly_temperature_min[0][0, 1] = np.nan
+    monthly_temperature_max[1][0, 1] = np.nan
+
+    rows = build_insert_rows(
+        MonthlyClimateRasters(
+            temperature_mean=monthly_temperature,
+            temperature_min=monthly_temperature_min,
+            temperature_max=monthly_temperature_max,
+            precipitation=monthly_precipitation,
+            solar_radiation=monthly_solar_radiation,
+        ),
+        DEFAULT_WORLDCLIM_RESOLUTION,
+    )
+
+    assert len(rows) == 1
+    assert rows[0][0] == pytest.approx(89.9583, abs=1e-4)
+    assert rows[0][1] == pytest.approx(-179.9583, abs=1e-4)
+
+
 def test_create_app_reads_climate_database_path_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     database_path = tmp_path / "climate-5m.duckdb"
     with duckdb.connect(str(database_path)) as connection:

@@ -243,6 +243,42 @@ def test_vectorized_scoring_matches_scalar_scoring_for_stub_cells() -> None:
     assert np.allclose(vectorized_scores, scalar_scores)
 
 
+def test_vectorized_scoring_matches_scalar_scoring_for_extreme_inputs() -> None:
+    extreme_cells = (
+        ClimateCell(
+            lat=0.0,
+            lon=0.0,
+            temperature_c=(35.0,) * 12,
+            temperature_min_c=(25.0,) * 12,
+            temperature_max_c=(45.0,) * 12,
+            precipitation_mm=(400.0,) * 12,
+            cloud_cover_pct=(100,) * 12,
+        ),
+        ClimateCell(
+            lat=1.0,
+            lon=1.0,
+            temperature_c=(5.0,) * 12,
+            temperature_min_c=(-10.0,) * 12,
+            temperature_max_c=(12.0,) * 12,
+            precipitation_mm=(0.0,) * 12,
+            cloud_cover_pct=(0,) * 12,
+        ),
+    )
+    climate_matrix = ClimateMatrix.from_cells(extreme_cells)
+    preferences = make_preferences(
+        preferred_day_temperature=22,
+        summer_heat_limit=25,
+        winter_cold_limit=5,
+        dryness_preference=100,
+        sunshine_preference=100,
+    )
+
+    scalar_scores = np.array([annual_score(cell, preferences) for cell in extreme_cells], dtype=np.float32)
+    vectorized_scores = score_climate_matrix(climate_matrix, preferences)
+
+    assert np.allclose(vectorized_scores, scalar_scores)
+
+
 def test_normalize_score_array_scales_best_match_to_one() -> None:
     normalized = normalize_score_array(np.array([0.25, 0.5, 0.125], dtype=np.float32))
 

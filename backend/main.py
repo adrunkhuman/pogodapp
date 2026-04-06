@@ -161,10 +161,10 @@ def create_app(
         if not hasattr(repository, "probe_nearest_cell"):
             return ProbeResponse()
         probe_repository = cast("_SupportsProbeRepository", repository)
-        row_index = probe_repository.probe_nearest_cell(lat, lon)
-        if row_index is None:
-            return ProbeResponse()
         try:
+            row_index = probe_repository.probe_nearest_cell(lat, lon)
+            if row_index is None:
+                return ProbeResponse()
             climate_matrix = probe_repository.get_climate_matrix()
         except ClimateDataError as error:
             logger.exception("probe_request outcome=error")

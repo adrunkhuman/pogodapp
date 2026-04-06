@@ -8,6 +8,10 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 MONTHS_PER_YEAR = 12
+# These are product-tuning knobs, not source-data constants.
+# Temperature stays dominant because users usually mean temp limits as near-hard
+# constraints, while rain and sun act as refinements whose weight grows only
+# when the user gives more extreme answers.
 TEMPERATURE_COMFORT_BAND_C = 2.0
 TEMPERATURE_IDEAL_SLOPE_C = 8.0
 TEMPERATURE_LIMIT_SLOPE_C = 10.0
@@ -329,7 +333,7 @@ def sunshine_profile_score(monthly_cloud_cover_pct: tuple[int, ...], sunshine_pr
 
 
 def preference_block_weights(dryness_preference: int, sunshine_preference: int) -> tuple[float, float, float]:
-    """Turn rain/sun preference extremity into top-level and intra-block weights."""
+    """Rebalance rain and sun only when the user signals a strong non-temperature preference."""
     dryness_extremity = preference_extremity(dryness_preference)
     sunshine_extremity = preference_extremity(sunshine_preference)
     preference_block_weight = (1 - TEMPERATURE_BLOCK_BASE_WEIGHT) + 0.16 * max(dryness_extremity, sunshine_extremity)
@@ -341,7 +345,7 @@ def preference_block_weights(dryness_preference: int, sunshine_preference: int) 
 
 
 def annual_score(cell: ClimateCell, preferences: PreferenceInputs) -> float:
-    """Combine a gated temperature block with dynamic rain and sun preference blocks."""
+    """Keep temperature limit adherence dominant while letting strong rain/sun opinions matter more."""
     temperature_component = temperature_profile_score(cell, preferences)
     rain_component = rain_profile_score(cell.precipitation_mm, preferences.dryness_preference)
     sun_component = sunshine_profile_score(cell.cloud_cover_pct, preferences.sunshine_preference)
@@ -458,7 +462,7 @@ def score_matrix_row_breakdown(
     row_index: int,
     preferences: PreferenceInputs,
 ) -> ProbeBreakdown:
-    """Break one climate-matrix row into probe-ready averages and per-metric scores."""
+    """Build `/probe` metrics from typical high plus yearly high/low extremes for one cell."""
     row_cell = ClimateCell(
         lat=float(climate_matrix.latitudes[row_index]),
         lon=float(climate_matrix.longitudes[row_index]),
@@ -469,13 +473,16 @@ def score_matrix_row_breakdown(
         cloud_cover_pct=tuple(int(value) for value in climate_matrix.cloud_cover_pct[row_index]),
     )
 
-    typical_high_c = round(float(np.median(climate_matrix.temperature_max_c[row_index])), 1)
-    hottest_month_high_c = round(float(np.max(climate_matrix.temperature_max_c[row_index])), 1)
-    coldest_month_low_c = round(float(np.min(climate_matrix.temperature_min_c[row_index])), 1)
+    typical_high_value = float(np.median(climate_matrix.temperature_max_c[row_index]))
+    hottest_month_high_value = float(np.max(climate_matrix.temperature_max_c[row_index]))
+    coldest_month_low_value = float(np.min(climate_matrix.temperature_min_c[row_index]))
+    typical_high_c = round(typical_high_value, 1)
+    hottest_month_high_c = round(hottest_month_high_value, 1)
+    coldest_month_low_c = round(coldest_month_low_value, 1)
     typical_score, high_score, low_score = temperature_component_scores(
-        typical_high_c,
-        coldest_month_low_c,
-        hottest_month_high_c,
+        typical_high_value,
+        coldest_month_low_value,
+        hottest_month_high_value,
         preferences,
     )
     avg_precip_mm = round(float(np.mean(climate_matrix.precipitation_mm[row_index])), 1)
