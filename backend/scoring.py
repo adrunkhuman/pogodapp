@@ -219,6 +219,27 @@ def temperature_score(
     preferences: PreferenceInputs,
 ) -> float:
     """Score temperature using daytime highs and nighttime lows, not just monthly means."""
+    ideal_score, heat_score, cold_score = temperature_component_scores(
+        observed_average_c,
+        observed_min_c,
+        observed_max_c,
+        preferences,
+    )
+
+    return (
+        ideal_score * TEMPERATURE_IDEAL_WEIGHT
+        + heat_score * TEMPERATURE_HEAT_WEIGHT
+        + cold_score * TEMPERATURE_COLD_WEIGHT
+    )
+
+
+def temperature_component_scores(
+    observed_average_c: float,
+    observed_min_c: float,
+    observed_max_c: float,
+    preferences: PreferenceInputs,
+) -> tuple[float, float, float]:
+    """Return separate scores for typical temperature, yearly high, and yearly low."""
     ideal_delta = abs(observed_average_c - preferences.preferred_day_temperature)
     ideal_distance = max(ideal_delta - TEMPERATURE_COMFORT_BAND_C, 0.0)
     ideal_score = clamp_score(1 - ideal_distance / TEMPERATURE_IDEAL_SLOPE_C)
@@ -228,12 +249,7 @@ def temperature_score(
 
     cold_excess = max(preferences.winter_cold_limit - observed_min_c, 0.0)
     cold_score = clamp_score(1 - cold_excess / TEMPERATURE_LIMIT_SLOPE_C)
-
-    return (
-        ideal_score * TEMPERATURE_IDEAL_WEIGHT
-        + heat_score * TEMPERATURE_HEAT_WEIGHT
-        + cold_score * TEMPERATURE_COLD_WEIGHT
-    )
+    return ideal_score, heat_score, cold_score
 
 
 def temperature_profile_score(cell: ClimateCell, preferences: PreferenceInputs) -> float:
@@ -395,45 +411,67 @@ def score_matrix_row_breakdown(
     typical_high_c = round(float(np.median(climate_matrix.temperature_max_c[row_index])), 1)
     hottest_month_high_c = round(float(np.max(climate_matrix.temperature_max_c[row_index])), 1)
     coldest_month_low_c = round(float(np.min(climate_matrix.temperature_min_c[row_index])), 1)
+    typical_score, high_score, low_score = temperature_component_scores(
+        typical_high_c,
+        coldest_month_low_c,
+        hottest_month_high_c,
+        preferences,
+    )
     avg_precip_mm = round(float(np.mean(climate_matrix.precipitation_mm[row_index])), 1)
     avg_cloud_pct = round(float(np.mean(climate_matrix.cloud_cover_pct[row_index].astype(np.float32))), 1)
     avg_sun_pct = round(100.0 - avg_cloud_pct, 1)
+    rain_score_value = round(sum(rain_scores) / MONTHS_PER_YEAR, 3)
+    sun_score_value = round(sum(cloud_scores) / MONTHS_PER_YEAR, 3)
     metric_scores = (
         ProbeMetricBreakdown(
             key="temp",
-            label="temperature",
+            label="temp",
             value=typical_high_c,
-            display_value=f"{typical_high_c:.1f}C typical, {hottest_month_high_c:.1f}/{coldest_month_low_c:.1f}C extremes",
-            score=round(
-                float(
-                    temperature_score(
-                        typical_high_c,
-                        coldest_month_low_c,
-                        hottest_month_high_c,
-                        preferences,
-                    )
-                ),
-                3,
-            ),
+            display_value=f"{typical_high_c:.1f}C",
+            score=round(typical_score, 3),
+        ),
+        ProbeMetricBreakdown(
+            key="high",
+            label="high",
+            value=hottest_month_high_c,
+            display_value=f"{hottest_month_high_c:.1f}C",
+            score=round(high_score, 3),
+        ),
+        ProbeMetricBreakdown(
+            key="low",
+            label="low",
+            value=coldest_month_low_c,
+            display_value=f"{coldest_month_low_c:.1f}C",
+            score=round(low_score, 3),
         ),
         ProbeMetricBreakdown(
             key="rain",
-            label="dryness",
+            label="rain",
             value=avg_precip_mm,
             display_value=f"{round(avg_precip_mm)}mm/mo",
-            score=round(sum(rain_scores) / MONTHS_PER_YEAR, 3),
+            score=rain_score_value,
         ),
         ProbeMetricBreakdown(
             key="sun",
-            label="sunshine",
+            label="sun",
             value=avg_sun_pct,
             display_value=f"{round(avg_sun_pct)}% sun",
-            score=round(sum(cloud_scores) / MONTHS_PER_YEAR, 3),
+            score=sun_score_value,
         ),
     )
     return ProbeBreakdown(
         overall_score=round(
-            (metric_scores[0].score + (sum(rain_scores) / MONTHS_PER_YEAR) + (sum(cloud_scores) / MONTHS_PER_YEAR)) / 3,
+            (
+                temperature_score(
+                    typical_high_c,
+                    coldest_month_low_c,
+                    hottest_month_high_c,
+                    preferences,
+                )
+                + rain_score_value
+                + sun_score_value
+            )
+            / 3,
             4,
         ),
         metrics=metric_scores,

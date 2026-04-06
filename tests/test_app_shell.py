@@ -448,10 +448,8 @@ def test_probe_endpoint_returns_scored_breakdown_for_a_valid_cell() -> None:
     assert payload["found"] is True
     assert 0 <= payload["overall_score"] <= 1
     assert set(payload) == {"found", "overall_score", "metrics"}
-    assert len(payload["metrics"]) == 3
-    assert payload["metrics"][0]["key"] == "temp"
-    assert payload["metrics"][1]["key"] == "rain"
-    assert payload["metrics"][2]["key"] == "sun"
+    assert len(payload["metrics"]) == 5
+    assert [metric["key"] for metric in payload["metrics"]] == ["temp", "high", "low", "rain", "sun"]
     assert all(set(metric) == {"key", "label", "value", "display_value", "score"} for metric in payload["metrics"])
 
 
@@ -518,6 +516,8 @@ def test_home_page_registers_htmx_handoff_script() -> None:
     assert "/static/app.js" in response.text
     assert "htmx:afterRequest" in app_script.text
     assert "window.renderScores(JSON.parse(event.detail.xhr.responseText));" in app_script.text
+    assert "summerHeatInput.min = preferredDayInput.value" in app_script.text
+    assert "winterColdInput.max = preferredDayInput.value" in app_script.text
 
 
 def test_map_script_renders_city_labels_instead_of_coordinates() -> None:
@@ -534,6 +534,7 @@ def test_map_script_renders_city_labels_instead_of_coordinates() -> None:
     assert "score-results__item" in sidebar_response.text
     assert "if (!response.ok) throw new Error" in probe_response.text
     assert "metric.display_value" in probe_response.text
+    assert "metric.score" in probe_response.text
     assert "probe_lat" in layers_response.text
 
 
@@ -553,5 +554,5 @@ def test_build_probe_response_preserves_metric_order_and_fields() -> None:
     )
 
     assert response.found is True
-    assert [metric.key for metric in response.metrics] == ["temp", "rain", "sun"]
-    assert [metric.label for metric in response.metrics] == ["temperature", "dryness", "sunshine"]
+    assert [metric.key for metric in response.metrics] == ["temp", "high", "low", "rain", "sun"]
+    assert [metric.label for metric in response.metrics] == ["temp", "high", "low", "rain", "sun"]

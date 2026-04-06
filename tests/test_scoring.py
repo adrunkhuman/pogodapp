@@ -197,6 +197,6 @@ def test_score_matrix_row_breakdown_returns_structured_probe_metrics() -> None:
 
     assert isinstance(breakdown, ProbeBreakdown)
     assert 0 <= breakdown.overall_score <= 1
-    assert [metric.key for metric in breakdown.metrics] == ["temp", "rain", "sun"]
-    assert [metric.label for metric in breakdown.metrics] == ["temperature", "dryness", "sunshine"]
+    assert [metric.key for metric in breakdown.metrics] == ["temp", "high", "low", "rain", "sun"]
+    assert [metric.label for metric in breakdown.metrics] == ["temp", "high", "low", "rain", "sun"]
     assert all(metric.display_value for metric in breakdown.metrics)

@@ -22,6 +22,28 @@ function formatControlValue(input) {
   return formatter ? formatter(value) : input.value;
 }
 
+function constrainTemperatureControls(form) {
+  const preferredDayInput = form.elements.namedItem("preferred_day_temperature");
+  const summerHeatInput = form.elements.namedItem("summer_heat_limit");
+  const winterColdInput = form.elements.namedItem("winter_cold_limit");
+
+  if (!(preferredDayInput instanceof HTMLInputElement)) return;
+  if (!(summerHeatInput instanceof HTMLInputElement)) return;
+  if (!(winterColdInput instanceof HTMLInputElement)) return;
+
+  const preferredDayValue = Number(preferredDayInput.value);
+  summerHeatInput.min = preferredDayInput.value;
+  winterColdInput.max = preferredDayInput.value;
+
+  if (Number(summerHeatInput.value) < preferredDayValue) {
+    summerHeatInput.value = preferredDayInput.value;
+  }
+
+  if (Number(winterColdInput.value) > preferredDayValue) {
+    winterColdInput.value = preferredDayInput.value;
+  }
+}
+
 function syncRangeControl(input, output) {
   const minimum = Number(input.min);
   const maximum = Number(input.max);
@@ -33,12 +55,19 @@ function syncRangeControl(input, output) {
 }
 
 function bindPreferenceControls(form) {
+  const syncAllControls = () => {
+    constrainTemperatureControls(form);
+    for (const input of form.querySelectorAll("input[type='range']")) {
+      const output = form.querySelector(`output[for='${input.id}']`);
+      syncRangeControl(input, output);
+    }
+  };
+
   for (const input of form.querySelectorAll("input[type='range']")) {
-    const output = form.querySelector(`output[for='${input.id}']`);
-    const syncControl = () => syncRangeControl(input, output);
-    syncControl();
-    input.addEventListener("input", syncControl);
+    input.addEventListener("input", syncAllControls);
   }
+
+  syncAllControls();
 }
 
 function bindScoreHandoff(form) {
