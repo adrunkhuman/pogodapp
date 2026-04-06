@@ -571,7 +571,9 @@ def build_worldclim_database(
         with duckdb.connect(str(output_path)) as connection:
             connection.execute("SET memory_limit='4GB'")
             create_climate_cells_table(connection)
-            connection.execute(f"COPY climate_cells FROM '{climate_csv_path.as_posix()}'")  # path is a tempfile we created
+            connection.execute(
+                f"COPY climate_cells FROM '{climate_csv_path.as_posix()}'"
+            )  # path is a tempfile we created
             create_cities_table(connection)
             copy_rows_into_cities_table(connection, city_rows)
     finally:
