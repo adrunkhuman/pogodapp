@@ -57,10 +57,17 @@ ul {
   border-bottom: 1px solid #2a2a2a;
 }
 
-.github-link {
+.header-meta {
   position: absolute;
   top: clamp(1rem, 1.5vw, 1.5rem);
   right: clamp(1rem, 1.5vw, 1.5rem);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.github-link {
   color: #888;
   transition: color 0.15s;
 }
@@ -74,6 +81,32 @@ ul {
   width: 1.5rem;
   height: 1.5rem;
   fill: currentColor;
+}
+
+.data-credits {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+}
+
+.data-credits li {
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.data-credits a {
+  color: #444;
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.data-credits a:hover {
+  color: #888;
 }
 
 .app-header h1 {
