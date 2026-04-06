@@ -71,6 +71,8 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "ARG", "PLR2004", "D"]
 "__init__.py" = ["F401"]
+# slowapi requires `request: Request` in route signatures for IP extraction but the arg is unused by our code.
+"backend/main.py" = ["ARG001"]
 
 [tool.ty.environment]
 python-version = "3.14"
