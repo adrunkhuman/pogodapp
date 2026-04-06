@@ -31,6 +31,16 @@ from backend.main import create_app
 from backend.scoring import ClimateCell, ClimateMatrix
 
 
+def default_form_data() -> dict[str, str]:
+    return {
+        "preferred_day_temperature": "22",
+        "summer_heat_limit": "30",
+        "winter_cold_limit": "5",
+        "dryness_preference": "60",
+        "sunshine_preference": "60",
+    }
+
+
 def test_stub_climate_repository_returns_climate_cells() -> None:
     repository = StubClimateRepository()
 
@@ -271,13 +281,7 @@ def test_app_can_use_an_injected_climate_repository() -> None:
 
     response = TestClient(create_app(climate_repository=cast("ClimateRepository", SingleCellRepository()))).post(
         "/score",
-        data={
-            "ideal_temperature": "22",
-            "cold_tolerance": "7",
-            "heat_tolerance": "5",
-            "rain_sensitivity": "55",
-            "sun_preference": "60",
-        },
+        data=default_form_data(),
     )
 
     assert response.status_code == 200
@@ -389,13 +393,7 @@ def test_create_app_preload_warms_caches_without_rebuilding_on_first_request() -
 
     response = client.post(
         "/score",
-        data={
-            "ideal_temperature": "22",
-            "cold_tolerance": "7",
-            "heat_tolerance": "5",
-            "rain_sensitivity": "55",
-            "sun_preference": "60",
-        },
+        data=default_form_data(),
     )
 
     assert response.status_code == 200
@@ -432,13 +430,7 @@ def test_app_can_use_an_injected_climate_repository_with_city_catalog() -> None:
 
     response = TestClient(create_app(climate_repository=cast("ClimateRepository", SingleCellRepository()))).post(
         "/score",
-        data={
-            "ideal_temperature": "22",
-            "cold_tolerance": "7",
-            "heat_tolerance": "5",
-            "rain_sensitivity": "55",
-            "sun_preference": "60",
-        },
+        data=default_form_data(),
     )
 
     assert response.status_code == 200
@@ -468,13 +460,7 @@ def test_app_returns_clear_503_when_climate_repository_fails() -> None:
 
     response = TestClient(create_app(climate_repository=cast("ClimateRepository", BrokenRepository()))).post(
         "/score",
-        data={
-            "ideal_temperature": "22",
-            "cold_tolerance": "7",
-            "heat_tolerance": "5",
-            "rain_sensitivity": "55",
-            "sun_preference": "60",
-        },
+        data=default_form_data(),
     )
 
     assert response.status_code == 503
@@ -500,13 +486,7 @@ def test_app_returns_clear_503_when_city_lookup_fails() -> None:
 
     response = TestClient(create_app(climate_repository=cast("ClimateRepository", BrokenCityRepository()))).post(
         "/score",
-        data={
-            "ideal_temperature": "22",
-            "cold_tolerance": "7",
-            "heat_tolerance": "5",
-            "rain_sensitivity": "55",
-            "sun_preference": "60",
-        },
+        data=default_form_data(),
     )
 
     assert response.status_code == 503
@@ -546,13 +526,7 @@ def test_app_scores_from_duckdb(tmp_path: Path) -> None:
 
     response = TestClient(create_app(climate_repository=DuckDbClimateRepository(database_path))).post(
         "/score",
-        data={
-            "ideal_temperature": "22",
-            "cold_tolerance": "7",
-            "heat_tolerance": "5",
-            "rain_sensitivity": "55",
-            "sun_preference": "60",
-        },
+        data=default_form_data(),
     )
 
     assert response.status_code == 200
@@ -651,13 +625,7 @@ def test_app_uses_duckdb_automatically_when_default_database_exists(
 
     response = TestClient(create_app()).post(
         "/score",
-        data={
-            "ideal_temperature": "22",
-            "cold_tolerance": "7",
-            "heat_tolerance": "5",
-            "rain_sensitivity": "55",
-            "sun_preference": "60",
-        },
+        data=default_form_data(),
     )
 
     assert response.status_code == 200
@@ -790,13 +758,7 @@ def test_create_app_reads_climate_database_path_from_env(monkeypatch: pytest.Mon
 
     response = TestClient(create_app()).post(
         "/score",
-        data={
-            "ideal_temperature": "22",
-            "cold_tolerance": "7",
-            "heat_tolerance": "5",
-            "rain_sensitivity": "55",
-            "sun_preference": "60",
-        },
+        data=default_form_data(),
     )
 
     assert response.status_code == 200

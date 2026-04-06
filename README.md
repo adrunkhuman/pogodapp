@@ -44,9 +44,10 @@ It is not a weather app. It scores long-term climate normals against a few user 
 
 ## Scoring
 
-- Temperature uses an ideal value plus separate cold and heat tolerance.
-- Rain is one-sided: more rain only hurts the score.
-- Sun preference becomes a cloud-cover tolerance threshold.
+- Temperature uses one preferred temperature band plus separate summer and winter guardrails.
+- The current prototype still applies those semantics to monthly mean temperature until the dataset grows dedicated high/low normals.
+- Dryness is one-sided: wetter months only hurt the score.
+- Sunshine preference becomes a cloud-cover tolerance threshold.
 - Scores are normalized per request so the best available match lands at `1.0`.
 - Ranked cities are grouped by continent, apply a regional diversity penalty so one cluster does not dominate the output, and keep a deeper reserve of up to 30 cities per continent for progressive reveal in the sidebar.
 

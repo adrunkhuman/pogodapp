@@ -1,5 +1,27 @@
 "use strict";
 
+const CONTROL_FORMATTERS = {
+  preferred_day_temperature: (value) => `${value}C`,
+  summer_heat_limit: (value) => `too hot above ${value}C`,
+  winter_cold_limit: (value) => `too cold below ${value}C`,
+  dryness_preference: (value) => {
+    if (value >= 75) return "prefer dry";
+    if (value >= 40) return "some rain is fine";
+    return "rain is okay";
+  },
+  sunshine_preference: (value) => {
+    if (value >= 75) return "need sun";
+    if (value >= 40) return "mixed skies";
+    return "clouds are fine";
+  },
+};
+
+function formatControlValue(input) {
+  const formatter = CONTROL_FORMATTERS[input.dataset.field];
+  const value = Number(input.value);
+  return formatter ? formatter(value) : input.value;
+}
+
 function syncRangeControl(input, output) {
   const minimum = Number(input.min);
   const maximum = Number(input.max);
@@ -7,7 +29,7 @@ function syncRangeControl(input, output) {
   const progress = ((value - minimum) / (maximum - minimum)) * 100;
 
   input.style.setProperty("--range-progress", `${progress}%`);
-  if (output) output.value = input.value;
+  if (output) output.value = formatControlValue(input);
 }
 
 function bindPreferenceControls(form) {
