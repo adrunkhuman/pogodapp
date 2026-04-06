@@ -6,6 +6,7 @@ import logging
 import uvicorn
 
 from backend.climate_pipeline import WORLDCLIM_RESOLUTIONS, build_worldclim_database, validate_climate_database
+from backend.logging_config import configure_backend_logging
 from backend.runtime import (
     resolve_build_climate_db_if_missing,
     resolve_climate_cache_dir,
@@ -16,6 +17,7 @@ from backend.runtime import (
     resolve_reload,
 )
 
+configure_backend_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -35,7 +37,11 @@ def parse_args() -> argparse.Namespace:
 def ensure_climate_database() -> None:
     """Optionally build the climate database before the app imports its runtime repository."""
     database_path = resolve_climate_database_path()
-    if database_path.exists() or not resolve_build_climate_db_if_missing():
+    if database_path.exists():
+        logger.info("startup_db outcome=found path=%s", database_path)
+        return
+    if not resolve_build_climate_db_if_missing():
+        logger.info("startup_db outcome=missing_using_stub path=%s bootstrap=disabled", database_path)
         return
 
     resolution_name = resolve_climate_resolution()
@@ -68,8 +74,11 @@ def ensure_climate_database() -> None:
 def main() -> None:
     """Launch the app server after any requested climate bootstrap work."""
     args = parse_args()
+    reload = resolve_reload() and not args.no_reload
+    logger.info("startup phase=begin host=%s port=%s reload=%s", args.host, args.port, reload)
     ensure_climate_database()
-    uvicorn.run("backend.main:app", host=args.host, port=args.port, reload=resolve_reload() and not args.no_reload)
+    logger.info("startup phase=starting_server host=%s port=%s", args.host, args.port)
+    uvicorn.run("backend.main:app", host=args.host, port=args.port, reload=reload)
 
 
 if __name__ == "__main__":

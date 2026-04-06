@@ -11,6 +11,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, ValidationError
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from backend.climate_repository import (
     ClimateDataError,
@@ -88,6 +91,7 @@ def preload_repository(repository: ClimateRepository) -> None:
         repository.get_indexed_cities()
         if hasattr(repository, "get_heatmap_projection"):
             repository.get_heatmap_projection()
+        logger.info("startup_preload outcome=ok repository=%s", type(repository).__name__)
     except ClimateDataError as error:
         logger.warning("startup_preload outcome=skipped detail=%s", error)
 
@@ -124,6 +128,9 @@ def create_app(
     """
     configure_backend_logging()
     app = FastAPI(title="Pogodapp")
+    limiter = Limiter(key_func=get_remote_address)
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     repository = climate_repository or build_default_climate_repository(resolve_climate_database_path())
     preload_repository(repository)
 
@@ -131,8 +138,9 @@ def create_app(
     try:
         default_prefs = PreferenceInputs(**{f.name: f.value for f in DEFAULT_PREFERENCES})
         initial_scores = build_score_response(repository, default_prefs)
+        logger.info("startup_default_scores outcome=ok cities=%d", len(initial_scores.get("scores", [])))
     except ClimateDataError:
-        logger.warning("default_score_precompute outcome=skipped")
+        logger.warning("startup_default_scores outcome=skipped")
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -149,7 +157,8 @@ def create_app(
         )
 
     @app.post("/score")
-    async def score(preferences: Annotated[PreferenceInputs, Form()]) -> ScoreResponse:
+    @limiter.limit("30/minute")
+    async def score(request: Request, preferences: Annotated[PreferenceInputs, Form()]) -> ScoreResponse:
         try:
             return build_score_response(repository, preferences)
         except ClimateDataError as error:
@@ -157,7 +166,9 @@ def create_app(
             raise HTTPException(status_code=503, detail=str(error)) from error
 
     @app.get("/probe")
+    @limiter.limit("120/minute")
     async def probe(
+        request: Request,
         lat: Annotated[float, Query(ge=-90, le=90)],
         lon: Annotated[float, Query(ge=-180, le=180)],
         preferences: Annotated[PreferenceInputs, Depends(probe_preferences_dependency)],
