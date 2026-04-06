@@ -23,6 +23,8 @@ SELECT
     lat,
     lon,
     t_jan, t_feb, t_mar, t_apr, t_may, t_jun, t_jul, t_aug, t_sep, t_oct, t_nov, t_dec,
+    tmin_jan, tmin_feb, tmin_mar, tmin_apr, tmin_may, tmin_jun, tmin_jul, tmin_aug, tmin_sep, tmin_oct, tmin_nov, tmin_dec,
+    tmax_jan, tmax_feb, tmax_mar, tmax_apr, tmax_may, tmax_jun, tmax_jul, tmax_aug, tmax_sep, tmax_oct, tmax_nov, tmax_dec,
     prec_jan, prec_feb, prec_mar, prec_apr, prec_may, prec_jun, prec_jul, prec_aug, prec_sep, prec_oct, prec_nov, prec_dec,
     cloud_jan, cloud_feb, cloud_mar, cloud_apr, cloud_may, cloud_jun, cloud_jul, cloud_aug, cloud_sep, cloud_oct, cloud_nov, cloud_dec
 FROM climate_cells
@@ -145,6 +147,8 @@ class DuckDbClimateRepository:
         latitudes = np.empty(row_count, dtype=np.float32)
         longitudes = np.empty(row_count, dtype=np.float32)
         temperature_c = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.float32)
+        temperature_min_c = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.float32)
+        temperature_max_c = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.float32)
         precipitation_mm = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.float32)
         cloud_cover_pct = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.uint8)
 
@@ -156,12 +160,20 @@ class DuckDbClimateRepository:
                 temperature_c[index] = tuple(
                     float(cast("int | float", value)) for value in monthly_values[:MONTHS_PER_YEAR]
                 )
-                precipitation_mm[index] = tuple(
+                temperature_min_c[index] = tuple(
                     float(cast("int | float", value)) for value in monthly_values[MONTHS_PER_YEAR : MONTHS_PER_YEAR * 2]
+                )
+                temperature_max_c[index] = tuple(
+                    float(cast("int | float", value))
+                    for value in monthly_values[MONTHS_PER_YEAR * 2 : MONTHS_PER_YEAR * 3]
+                )
+                precipitation_mm[index] = tuple(
+                    float(cast("int | float", value))
+                    for value in monthly_values[MONTHS_PER_YEAR * 3 : MONTHS_PER_YEAR * 4]
                 )
                 cloud_cover_pct[index] = tuple(
                     int(cast("int | float", value))
-                    for value in monthly_values[MONTHS_PER_YEAR * 2 : MONTHS_PER_YEAR * 3]
+                    for value in monthly_values[MONTHS_PER_YEAR * 4 : MONTHS_PER_YEAR * 5]
                 )
         except (TypeError, ValueError) as error:
             msg = f"Failed to map climate data from {self.database_path} into climate rows: {error}"
@@ -171,6 +183,8 @@ class DuckDbClimateRepository:
             latitudes=latitudes,
             longitudes=longitudes,
             temperature_c=temperature_c,
+            temperature_min_c=temperature_min_c,
+            temperature_max_c=temperature_max_c,
             precipitation_mm=precipitation_mm,
             cloud_cover_pct=cloud_cover_pct,
         )
@@ -250,11 +264,17 @@ class DuckDbClimateRepository:
             lat=float(cast("int | float", latitude)),
             lon=float(cast("int | float", longitude)),
             temperature_c=tuple(float(cast("int | float", value)) for value in monthly_values[:MONTHS_PER_YEAR]),
-            precipitation_mm=tuple(
+            temperature_min_c=tuple(
                 float(cast("int | float", value)) for value in monthly_values[MONTHS_PER_YEAR : MONTHS_PER_YEAR * 2]
             ),
+            temperature_max_c=tuple(
+                float(cast("int | float", value)) for value in monthly_values[MONTHS_PER_YEAR * 2 : MONTHS_PER_YEAR * 3]
+            ),
+            precipitation_mm=tuple(
+                float(cast("int | float", value)) for value in monthly_values[MONTHS_PER_YEAR * 3 : MONTHS_PER_YEAR * 4]
+            ),
             cloud_cover_pct=tuple(
-                int(cast("int | float", value)) for value in monthly_values[MONTHS_PER_YEAR * 2 : MONTHS_PER_YEAR * 3]
+                int(cast("int | float", value)) for value in monthly_values[MONTHS_PER_YEAR * 4 : MONTHS_PER_YEAR * 5]
             ),
         )
 

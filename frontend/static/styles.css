@@ -105,6 +105,7 @@ ul {
 .control {
   display: grid;
   gap: 0.45rem;
+  padding-bottom: 0.15rem;
 }
 
 .control__header {
@@ -124,9 +125,24 @@ ul {
 }
 
 .control__value {
-  min-width: 3ch;
+  min-width: 11ch;
   text-align: right;
   color: #e0e0e0;
+}
+
+.control__description,
+.control__scale {
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: #666666;
+}
+
+.control__scale {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .control input {
@@ -397,7 +413,7 @@ ul {
 
 .probe-tooltip__row {
   display: grid;
-  grid-template-columns: 3ch 1fr auto;
+  grid-template-columns: 4ch 1fr 4ch;
   column-gap: 0.75rem;
 }
 
@@ -414,6 +430,7 @@ ul {
 .probe-tooltip__metric {
   color: #e0e0e0;
   justify-self: end;
+  text-align: right;
 }
 
 .score-results__continent {

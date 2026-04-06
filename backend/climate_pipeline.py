@@ -42,12 +42,16 @@ GEONAMES_CITIES_URL: Final[str] = "https://download.geonames.org/export/dump/cit
 NODATA_CUTOFF: Final[float] = -1e20
 MONTHS_PER_YEAR: Final[int] = 12
 TEMPERATURE_COLUMNS: Final[tuple[str, ...]] = tuple(f"t_{month_name}" for month_name in MONTH_NAMES)
+TEMPERATURE_MIN_COLUMNS: Final[tuple[str, ...]] = tuple(f"tmin_{month_name}" for month_name in MONTH_NAMES)
+TEMPERATURE_MAX_COLUMNS: Final[tuple[str, ...]] = tuple(f"tmax_{month_name}" for month_name in MONTH_NAMES)
 PRECIPITATION_COLUMNS: Final[tuple[str, ...]] = tuple(f"prec_{month_name}" for month_name in MONTH_NAMES)
 CLOUD_COLUMNS: Final[tuple[str, ...]] = tuple(f"cloud_{month_name}" for month_name in MONTH_NAMES)
 EXPECTED_CLIMATE_COLUMNS: Final[tuple[str, ...]] = (
     "lat",
     "lon",
     *TEMPERATURE_COLUMNS,
+    *TEMPERATURE_MIN_COLUMNS,
+    *TEMPERATURE_MAX_COLUMNS,
     *PRECIPITATION_COLUMNS,
     *CLOUD_COLUMNS,
 )
@@ -61,7 +65,8 @@ EXPECTED_CITY_COLUMNS: Final[tuple[str, ...]] = (
     "population",
 )
 INSERT_CLIMATE_CELL_QUERY: Final[str] = (
-    "INSERT INTO climate_cells VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    # Placeholder count is derived from the checked runtime schema, not user input.
+    "INSERT INTO climate_cells VALUES (" + ", ".join("?" for _ in EXPECTED_CLIMATE_COLUMNS) + ")"  # noqa: S608
 )
 INSERT_CITY_QUERY: Final[str] = "INSERT INTO cities VALUES (?, ?, ?, ?, ?, ?, ?)"
 
@@ -77,10 +82,10 @@ class WorldClimResolution:
 
     @property
     def archive_urls(self) -> dict[str, str]:
-        """Return the three source archives needed for this WorldClim resolution."""
+        """Return the source archives needed for this WorldClim resolution."""
         return {
             variable_name: f"https://geodata.ucdavis.edu/climate/worldclim/2_1/base/wc2.1_{self.name}_{variable_name}.zip"
-            for variable_name in ("tavg", "prec", "srad")
+            for variable_name in ("tavg", "tmin", "tmax", "prec", "srad")
         }
 
 
@@ -129,6 +134,27 @@ class ValidationSummary:
     columns: tuple[str, ...]
     city_count: int
     city_columns: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MonthlyClimateRasters:
+    """One build-time bundle of monthly climate rasters aligned to one grid."""
+
+    temperature_mean: tuple[NDArray[np.float64], ...]
+    temperature_min: tuple[NDArray[np.float64], ...]
+    temperature_max: tuple[NDArray[np.float64], ...]
+    precipitation: tuple[NDArray[np.float64], ...]
+    solar_radiation: tuple[NDArray[np.float64], ...]
+
+    def iter_all(self) -> tuple[NDArray[np.float64], ...]:
+        """Return every monthly raster in runtime row order."""
+        return (
+            *self.temperature_mean,
+            *self.temperature_min,
+            *self.temperature_max,
+            *self.precipitation,
+            *self.solar_radiation,
+        )
 
 
 def ensure_geonames_cities(cache_dir: Path) -> Path:
@@ -189,7 +215,7 @@ def build_coordinate_grids(resolution: WorldClimResolution) -> tuple[NDArray[np.
 
 
 def ensure_worldclim_archives(cache_dir: Path, resolution: WorldClimResolution) -> dict[str, Path]:
-    """Download the three source archives once into the local cache."""
+    """Download the required source archives once into the local cache."""
     cache_dir.mkdir(parents=True, exist_ok=True)
     with ThreadPoolExecutor(max_workers=len(resolution.archive_urls)) as executor:
         archive_paths = executor.map(
@@ -244,34 +270,29 @@ def load_raster(path: Path) -> NDArray[np.float64]:
 
 def load_monthly_rasters(
     extracted_paths: dict[str, tuple[Path, ...]],
-) -> dict[str, tuple[NDArray[np.float64], ...]]:
+) -> MonthlyClimateRasters:
     """Read source GeoTIFFs at the selected native WorldClim resolution."""
     monthly: dict[str, tuple[NDArray[np.float64], ...]] = {}
     for variable_name, tif_paths in extracted_paths.items():
         with ThreadPoolExecutor(max_workers=4) as executor:
             monthly[variable_name] = tuple(executor.map(load_raster, tif_paths))
-    return monthly
+    return MonthlyClimateRasters(
+        temperature_mean=monthly["tavg"],
+        temperature_min=monthly["tmin"],
+        temperature_max=monthly["tmax"],
+        precipitation=monthly["prec"],
+        solar_radiation=monthly["srad"],
+    )
 
 
-def build_insert_rows(
-    monthly_temperature: tuple[NDArray[np.float64], ...],
-    monthly_precipitation: tuple[NDArray[np.float64], ...],
-    monthly_solar_radiation: tuple[NDArray[np.float64], ...],
-    resolution: WorldClimResolution,
-) -> list[tuple[float | int, ...]]:
+def build_insert_rows(monthly: MonthlyClimateRasters, resolution: WorldClimResolution) -> list[tuple[float | int, ...]]:
     """Flatten monthly rasters into the DuckDB row shape.
 
-    Only cells with finite data for every month across all three variables are
+    Only cells with finite data for every month across all climate variables are
     kept. That makes the runtime table a pure land-cell dataset with no partial
     yearly rows to special-case later.
     """
-    finite_mask = np.logical_and.reduce(
-        [
-            *[np.isfinite(month) for month in monthly_temperature],
-            *[np.isfinite(month) for month in monthly_precipitation],
-            *[np.isfinite(month) for month in monthly_solar_radiation],
-        ]
-    )
+    finite_mask = np.logical_and.reduce([np.isfinite(month) for month in monthly.iter_all()])
     latitudes, longitudes = build_coordinate_grids(resolution)
     flat_mask = finite_mask.ravel()
     column_vectors: list[list[float | int]] = [
@@ -279,11 +300,13 @@ def build_insert_rows(
         longitudes.ravel()[flat_mask].round(4).tolist(),
     ]
 
-    column_vectors.extend(month.ravel()[flat_mask].round(4).tolist() for month in monthly_temperature)
-    column_vectors.extend(month.ravel()[flat_mask].round(4).tolist() for month in monthly_precipitation)
+    column_vectors.extend(month.ravel()[flat_mask].round(4).tolist() for month in monthly.temperature_mean)
+    column_vectors.extend(month.ravel()[flat_mask].round(4).tolist() for month in monthly.temperature_min)
+    column_vectors.extend(month.ravel()[flat_mask].round(4).tolist() for month in monthly.temperature_max)
+    column_vectors.extend(month.ravel()[flat_mask].round(4).tolist() for month in monthly.precipitation)
     column_vectors.extend(
         solar_radiation_to_cloud_proxy(month).ravel()[flat_mask].astype(int).tolist()
-        for month in monthly_solar_radiation
+        for month in monthly.solar_radiation
     )
 
     return list(zip(*column_vectors, strict=True))
@@ -309,6 +332,30 @@ def create_climate_cells_table(connection: duckdb.DuckDBPyConnection) -> None:
             t_oct DOUBLE NOT NULL,
             t_nov DOUBLE NOT NULL,
             t_dec DOUBLE NOT NULL,
+            tmin_jan DOUBLE NOT NULL,
+            tmin_feb DOUBLE NOT NULL,
+            tmin_mar DOUBLE NOT NULL,
+            tmin_apr DOUBLE NOT NULL,
+            tmin_may DOUBLE NOT NULL,
+            tmin_jun DOUBLE NOT NULL,
+            tmin_jul DOUBLE NOT NULL,
+            tmin_aug DOUBLE NOT NULL,
+            tmin_sep DOUBLE NOT NULL,
+            tmin_oct DOUBLE NOT NULL,
+            tmin_nov DOUBLE NOT NULL,
+            tmin_dec DOUBLE NOT NULL,
+            tmax_jan DOUBLE NOT NULL,
+            tmax_feb DOUBLE NOT NULL,
+            tmax_mar DOUBLE NOT NULL,
+            tmax_apr DOUBLE NOT NULL,
+            tmax_may DOUBLE NOT NULL,
+            tmax_jun DOUBLE NOT NULL,
+            tmax_jul DOUBLE NOT NULL,
+            tmax_aug DOUBLE NOT NULL,
+            tmax_sep DOUBLE NOT NULL,
+            tmax_oct DOUBLE NOT NULL,
+            tmax_nov DOUBLE NOT NULL,
+            tmax_dec DOUBLE NOT NULL,
             prec_jan DOUBLE NOT NULL,
             prec_feb DOUBLE NOT NULL,
             prec_mar DOUBLE NOT NULL,
@@ -412,7 +459,7 @@ def build_worldclim_database(
     cities_txt_path = ensure_geonames_cities(cache_dir)
     extracted_paths = extract_worldclim_archives(archive_paths, resolution_cache_dir / "extracted")
     monthly = load_monthly_rasters(extracted_paths)
-    rows = build_insert_rows(monthly["tavg"], monthly["prec"], monthly["srad"], resolution)
+    rows = build_insert_rows(monthly, resolution)
     city_rows = build_city_rows(cities_txt_path, rows, resolution)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.exists():

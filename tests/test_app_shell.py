@@ -11,6 +11,28 @@ from backend.scoring import ClimateCell, ClimateMatrix, PreferenceInputs, score_
 client = TestClient(create_app(climate_repository=StubClimateRepository()))
 
 
+def default_form_data() -> dict[str, str]:
+    return {
+        "preferred_day_temperature": "22",
+        "summer_heat_limit": "30",
+        "winter_cold_limit": "5",
+        "dryness_preference": "60",
+        "sunshine_preference": "60",
+    }
+
+
+def default_query_params() -> dict[str, int | float]:
+    return {
+        "lat": 37.5,
+        "lon": -122.0,
+        "preferred_day_temperature": 22,
+        "summer_heat_limit": 30,
+        "winter_cold_limit": 5,
+        "dryness_preference": 60,
+        "sunshine_preference": 60,
+    }
+
+
 class ManyCitiesRepository:
     def __init__(self) -> None:
         self._cells = tuple(
@@ -18,6 +40,8 @@ class ManyCitiesRepository:
                 lat=float(index),
                 lon=float(index),
                 temperature_c=(22.0,) * 12,
+                temperature_min_c=(22.0,) * 12,
+                temperature_max_c=(22.0,) * 12,
                 precipitation_mm=(0.0,) * 12,
                 cloud_cover_pct=(15,) * 12,
             )
@@ -102,11 +126,11 @@ def test_home_page_uses_backend_default_preferences() -> None:
 
 def test_preference_contract_matches_issue_scope() -> None:
     expected_names = (
-        "ideal_temperature",
-        "cold_tolerance",
-        "heat_tolerance",
-        "rain_sensitivity",
-        "sun_preference",
+        "preferred_day_temperature",
+        "summer_heat_limit",
+        "winter_cold_limit",
+        "dryness_preference",
+        "sunshine_preference",
     )
 
     assert expected_names == PREFERENCE_FIELD_NAMES
@@ -207,13 +231,7 @@ def test_map_contract_does_not_depend_on_remote_basemap_assets() -> None:
 def test_score_endpoint_accepts_form_encoded_preferences() -> None:
     response = client.post(
         "/score",
-        data={
-            "ideal_temperature": "22",
-            "cold_tolerance": "7",
-            "heat_tolerance": "5",
-            "rain_sensitivity": "55",
-            "sun_preference": "60",
-        },
+        data=default_form_data(),
         headers={"HX-Request": "true"},
     )
 
@@ -266,13 +284,7 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
 
 
 def test_score_endpoint_is_deterministic_for_the_same_preferences() -> None:
-    form_data = {
-        "ideal_temperature": "22",
-        "cold_tolerance": "7",
-        "heat_tolerance": "5",
-        "rain_sensitivity": "55",
-        "sun_preference": "60",
-    }
+    form_data = default_form_data()
 
     first_response = client.post("/score", data=form_data)
     second_response = client.post("/score", data=form_data)
@@ -283,23 +295,23 @@ def test_score_endpoint_is_deterministic_for_the_same_preferences() -> None:
     assert first_response.json()["heatmap"] == second_response.json()["heatmap"]
 
 
-def test_rain_sensitivity_penalizes_rainier_cells() -> None:
+def test_dryness_preference_penalizes_rainier_cells() -> None:
     dry_tolerant_scores = score_preferences(
         PreferenceInputs(
-            ideal_temperature=22,
-            cold_tolerance=7,
-            heat_tolerance=5,
-            rain_sensitivity=0,
-            sun_preference=60,
+            preferred_day_temperature=22,
+            summer_heat_limit=30,
+            winter_cold_limit=5,
+            dryness_preference=0,
+            sunshine_preference=60,
         )
     )
     rain_sensitive_scores = score_preferences(
         PreferenceInputs(
-            ideal_temperature=22,
-            cold_tolerance=7,
-            heat_tolerance=5,
-            rain_sensitivity=100,
-            sun_preference=60,
+            preferred_day_temperature=22,
+            summer_heat_limit=30,
+            winter_cold_limit=5,
+            dryness_preference=100,
+            sunshine_preference=60,
         )
     )
 
@@ -315,11 +327,8 @@ def test_score_endpoint_rejects_out_of_range_preferences() -> None:
     response = client.post(
         "/score",
         data={
-            "ideal_temperature": "99",
-            "cold_tolerance": "7",
-            "heat_tolerance": "5",
-            "rain_sensitivity": "55",
-            "sun_preference": "60",
+            **default_form_data(),
+            "preferred_day_temperature": "99",
         },
     )
 
@@ -327,17 +336,17 @@ def test_score_endpoint_rejects_out_of_range_preferences() -> None:
     detail = response.json()["detail"]
 
     assert detail
-    assert any(item["loc"][-1] == "ideal_temperature" for item in detail)
+    assert any(item["loc"][-1] == "preferred_day_temperature" for item in detail)
 
 
 def test_score_endpoint_rejects_missing_preferences() -> None:
     response = client.post(
         "/score",
         data={
-            "ideal_temperature": "22",
-            "cold_tolerance": "7",
-            "heat_tolerance": "5",
-            "rain_sensitivity": "55",
+            "preferred_day_temperature": "22",
+            "summer_heat_limit": "30",
+            "winter_cold_limit": "5",
+            "dryness_preference": "60",
         },
     )
 
@@ -345,18 +354,15 @@ def test_score_endpoint_rejects_missing_preferences() -> None:
     detail = response.json()["detail"]
 
     assert detail
-    assert any(item["loc"][-1] == "sun_preference" for item in detail)
+    assert any(item["loc"][-1] == "sunshine_preference" for item in detail)
 
 
 def test_score_endpoint_rejects_non_numeric_preferences() -> None:
     response = client.post(
         "/score",
         data={
-            "ideal_temperature": "warm",
-            "cold_tolerance": "7",
-            "heat_tolerance": "5",
-            "rain_sensitivity": "55",
-            "sun_preference": "60",
+            **default_form_data(),
+            "preferred_day_temperature": "warm",
         },
     )
 
@@ -364,7 +370,75 @@ def test_score_endpoint_rejects_non_numeric_preferences() -> None:
     detail = response.json()["detail"]
 
     assert detail
-    assert any(item["loc"][-1] == "ideal_temperature" for item in detail)
+    assert any(item["loc"][-1] == "preferred_day_temperature" for item in detail)
+
+
+def test_score_endpoint_rejects_typical_day_above_summer_limit() -> None:
+    response = client.post(
+        "/score",
+        data={
+            **default_form_data(),
+            "preferred_day_temperature": "31",
+            "summer_heat_limit": "30",
+        },
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+
+    assert detail
+    assert any("summer_heat_limit" in item["msg"] for item in detail)
+
+
+def test_score_endpoint_rejects_typical_day_below_winter_limit() -> None:
+    response = client.post(
+        "/score",
+        data={
+            **default_form_data(),
+            "preferred_day_temperature": "6",
+            "winter_cold_limit": "7",
+        },
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+
+    assert detail
+    assert any("winter_cold_limit" in item["msg"] for item in detail)
+
+
+def test_probe_endpoint_rejects_typical_day_above_summer_limit() -> None:
+    response = client.get(
+        "/probe",
+        params={
+            **default_query_params(),
+            "preferred_day_temperature": 31,
+            "summer_heat_limit": 30,
+        },
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+
+    assert detail
+    assert any("summer_heat_limit" in item["msg"] for item in detail)
+
+
+def test_probe_endpoint_rejects_typical_day_below_winter_limit() -> None:
+    response = client.get(
+        "/probe",
+        params={
+            **default_query_params(),
+            "preferred_day_temperature": 6,
+            "winter_cold_limit": 7,
+        },
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+
+    assert detail
+    assert any("winter_cold_limit" in item["msg"] for item in detail)
 
 
 def test_score_endpoint_returns_all_available_cities_when_under_continent_reserve() -> None:
@@ -372,13 +446,7 @@ def test_score_endpoint_returns_all_available_cities_when_under_continent_reserv
 
     response = many_cities_client.post(
         "/score",
-        data={
-            "ideal_temperature": "22",
-            "cold_tolerance": "7",
-            "heat_tolerance": "5",
-            "rain_sensitivity": "55",
-            "sun_preference": "60",
-        },
+        data=default_form_data(),
     )
 
     assert response.status_code == 200
@@ -406,15 +474,7 @@ def test_probe_endpoint_returns_scored_breakdown_for_a_valid_cell() -> None:
 
     response = probe_client.get(
         "/probe",
-        params={
-            "lat": 37.5,
-            "lon": -122.0,
-            "ideal_temperature": 22,
-            "cold_tolerance": 7,
-            "heat_tolerance": 5,
-            "rain_sensitivity": 55,
-            "sun_preference": 60,
-        },
+        params=default_query_params(),
     )
 
     assert response.status_code == 200
@@ -422,10 +482,8 @@ def test_probe_endpoint_returns_scored_breakdown_for_a_valid_cell() -> None:
     assert payload["found"] is True
     assert 0 <= payload["overall_score"] <= 1
     assert set(payload) == {"found", "overall_score", "metrics"}
-    assert len(payload["metrics"]) == 3
-    assert payload["metrics"][0]["key"] == "temp"
-    assert payload["metrics"][1]["key"] == "rain"
-    assert payload["metrics"][2]["key"] == "sun"
+    assert len(payload["metrics"]) == 5
+    assert [metric["key"] for metric in payload["metrics"]] == ["temp", "high", "low", "rain", "sun"]
     assert all(set(metric) == {"key", "label", "value", "display_value", "score"} for metric in payload["metrics"])
 
 
@@ -434,15 +492,7 @@ def test_probe_endpoint_returns_empty_payload_when_repository_has_no_probe_suppo
 
     response = probe_client.get(
         "/probe",
-        params={
-            "lat": 37.5,
-            "lon": -122.0,
-            "ideal_temperature": 22,
-            "cold_tolerance": 7,
-            "heat_tolerance": 5,
-            "rain_sensitivity": 55,
-            "sun_preference": 60,
-        },
+        params=default_query_params(),
     )
 
     assert response.status_code == 200
@@ -464,15 +514,7 @@ def test_probe_endpoint_returns_empty_payload_when_no_cell_is_found() -> None:
 
     response = probe_client.get(
         "/probe",
-        params={
-            "lat": 37.5,
-            "lon": -122.0,
-            "ideal_temperature": 22,
-            "cold_tolerance": 7,
-            "heat_tolerance": 5,
-            "rain_sensitivity": 55,
-            "sun_preference": 60,
-        },
+        params=default_query_params(),
     )
 
     assert response.status_code == 200
@@ -492,15 +534,7 @@ def test_probe_endpoint_returns_503_for_repository_failures() -> None:
 
     response = probe_client.get(
         "/probe",
-        params={
-            "lat": 37.5,
-            "lon": -122.0,
-            "ideal_temperature": 22,
-            "cold_tolerance": 7,
-            "heat_tolerance": 5,
-            "rain_sensitivity": 55,
-            "sun_preference": 60,
-        },
+        params=default_query_params(),
     )
 
     assert response.status_code == 503
@@ -516,6 +550,8 @@ def test_home_page_registers_htmx_handoff_script() -> None:
     assert "/static/app.js" in response.text
     assert "htmx:afterRequest" in app_script.text
     assert "window.renderScores(JSON.parse(event.detail.xhr.responseText));" in app_script.text
+    assert "summerHeatInput.min = preferredDayInput.value" in app_script.text
+    assert "winterColdInput.max = preferredDayInput.value" in app_script.text
 
 
 def test_map_script_renders_city_labels_instead_of_coordinates() -> None:
@@ -532,6 +568,7 @@ def test_map_script_renders_city_labels_instead_of_coordinates() -> None:
     assert "score-results__item" in sidebar_response.text
     assert "if (!response.ok) throw new Error" in probe_response.text
     assert "metric.display_value" in probe_response.text
+    assert "metric.score" in probe_response.text
     assert "probe_lat" in layers_response.text
 
 
@@ -541,15 +578,15 @@ def test_build_probe_response_preserves_metric_order_and_fields() -> None:
             ClimateMatrix.from_cells((StubClimateRepository().list_cells()[0],)),
             0,
             PreferenceInputs(
-                ideal_temperature=22,
-                cold_tolerance=7,
-                heat_tolerance=5,
-                rain_sensitivity=55,
-                sun_preference=60,
+                preferred_day_temperature=22,
+                summer_heat_limit=30,
+                winter_cold_limit=5,
+                dryness_preference=60,
+                sunshine_preference=60,
             ),
         )
     )
 
     assert response.found is True
-    assert [metric.key for metric in response.metrics] == ["temp", "rain", "sun"]
-    assert [metric.label for metric in response.metrics] == ["temp", "rain", "sun"]
+    assert [metric.key for metric in response.metrics] == ["temp", "high", "low", "rain", "sun"]
+    assert [metric.label for metric in response.metrics] == ["temp", "high", "low", "rain", "sun"]

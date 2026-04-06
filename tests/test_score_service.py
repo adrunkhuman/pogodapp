@@ -18,14 +18,20 @@ if TYPE_CHECKING:
     from backend.climate_repository import ClimateRepository
 
 
+def make_preferences(**overrides: int) -> PreferenceInputs:
+    base = {
+        "preferred_day_temperature": 22,
+        "summer_heat_limit": 30,
+        "winter_cold_limit": 5,
+        "dryness_preference": 60,
+        "sunshine_preference": 60,
+    }
+    base.update(overrides)
+    return PreferenceInputs(**base)
+
+
 def test_build_score_response_logs_step_timings(caplog: LogCaptureFixture) -> None:
-    preferences = PreferenceInputs(
-        ideal_temperature=22,
-        cold_tolerance=7,
-        heat_tolerance=5,
-        rain_sensitivity=55,
-        sun_preference=60,
-    )
+    preferences = make_preferences()
 
     configure_backend_logging()
     backend_logger = logging.getLogger("backend")
@@ -68,6 +74,8 @@ def test_build_score_response_returns_empty_payload_for_empty_matrix() -> None:
                 latitudes=np.array([], dtype=np.float32),
                 longitudes=np.array([], dtype=np.float32),
                 temperature_c=np.empty((0, 12), dtype=np.float32),
+                temperature_min_c=np.empty((0, 12), dtype=np.float32),
+                temperature_max_c=np.empty((0, 12), dtype=np.float32),
                 precipitation_mm=np.empty((0, 12), dtype=np.float32),
                 cloud_cover_pct=np.empty((0, 12), dtype=np.uint8),
             )
@@ -77,9 +85,7 @@ def test_build_score_response_returns_empty_payload_for_empty_matrix() -> None:
 
     response = build_score_response(
         cast("ClimateRepository", EmptyMatrixRepository()),
-        PreferenceInputs(
-            ideal_temperature=22, cold_tolerance=7, heat_tolerance=5, rain_sensitivity=55, sun_preference=60
-        ),
+        make_preferences(),
     )
 
     assert response == {"scores": [], "heatmap": ""}
@@ -100,6 +106,8 @@ def test_build_score_response_returns_empty_payload_for_all_zero_matrix_scores(m
                         lat=1.0,
                         lon=2.0,
                         temperature_c=(22.0,) * 12,
+                        temperature_min_c=(22.0,) * 12,
+                        temperature_max_c=(22.0,) * 12,
                         precipitation_mm=(0.0,) * 12,
                         cloud_cover_pct=(15,) * 12,
                     ),
@@ -113,9 +121,7 @@ def test_build_score_response_returns_empty_payload_for_all_zero_matrix_scores(m
 
     response = build_score_response(
         cast("ClimateRepository", SingleCellRepository()),
-        PreferenceInputs(
-            ideal_temperature=22, cold_tolerance=7, heat_tolerance=5, rain_sensitivity=55, sun_preference=60
-        ),
+        make_preferences(),
     )
 
     assert response == {"scores": [], "heatmap": ""}
@@ -136,6 +142,8 @@ def test_build_score_response_falls_back_to_array_heatmap_path_when_projection_c
                         lat=1.0,
                         lon=2.0,
                         temperature_c=(22.0,) * 12,
+                        temperature_min_c=(22.0,) * 12,
+                        temperature_max_c=(22.0,) * 12,
                         precipitation_mm=(0.0,) * 12,
                         cloud_cover_pct=(15,) * 12,
                     ),
@@ -147,9 +155,7 @@ def test_build_score_response_falls_back_to_array_heatmap_path_when_projection_c
 
     response = build_score_response(
         cast("ClimateRepository", MatrixOnlyRepository()),
-        PreferenceInputs(
-            ideal_temperature=22, cold_tolerance=7, heat_tolerance=5, rain_sensitivity=55, sun_preference=60
-        ),
+        make_preferences(),
     )
 
     assert response["scores"] == []
@@ -203,13 +209,7 @@ def test_deduplicate_city_points_removes_duplicate_substituted_cities() -> None:
 def test_build_score_response_includes_backend_continent_labels() -> None:
     response = build_score_response(
         StubClimateRepository(),
-        PreferenceInputs(
-            ideal_temperature=22,
-            cold_tolerance=7,
-            heat_tolerance=5,
-            rain_sensitivity=55,
-            sun_preference=60,
-        ),
+        make_preferences(),
     )
 
     assert response["scores"]
@@ -222,6 +222,8 @@ def test_build_score_response_keeps_fallback_ranking_behavior_aligned_with_matri
             lat=1.0,
             lon=2.0,
             temperature_c=(22.0,) * 12,
+            temperature_min_c=(22.0,) * 12,
+            temperature_max_c=(22.0,) * 12,
             precipitation_mm=(0.0,) * 12,
             cloud_cover_pct=(15,) * 12,
         ),
@@ -229,6 +231,8 @@ def test_build_score_response_keeps_fallback_ranking_behavior_aligned_with_matri
             lat=10.0,
             lon=11.0,
             temperature_c=(22.0,) * 12,
+            temperature_min_c=(22.0,) * 12,
+            temperature_max_c=(22.0,) * 12,
             precipitation_mm=(0.0,) * 12,
             cloud_cover_pct=(15,) * 12,
         ),
@@ -241,13 +245,7 @@ def test_build_score_response_keeps_fallback_ranking_behavior_aligned_with_matri
             name="Small Town", country_code="CO", lat=10.0, lon=11.0, cell_lat=10.0, cell_lon=11.0, population=5_000
         ),
     )
-    preferences = PreferenceInputs(
-        ideal_temperature=22,
-        cold_tolerance=7,
-        heat_tolerance=5,
-        rain_sensitivity=55,
-        sun_preference=60,
-    )
+    preferences = make_preferences()
 
     class CellsRepository:
         def list_cells(self) -> tuple[ClimateCell, ...]:
@@ -273,13 +271,31 @@ def test_build_score_response_filters_low_population_but_keeps_legacy_zero_popul
     monkeypatch.setattr("backend.score_service.RANKING_MIN_POPULATION", 30_000)
     climate_cells = (
         ClimateCell(
-            lat=1.0, lon=2.0, temperature_c=(22.0,) * 12, precipitation_mm=(0.0,) * 12, cloud_cover_pct=(15,) * 12
+            lat=1.0,
+            lon=2.0,
+            temperature_c=(22.0,) * 12,
+            temperature_min_c=(22.0,) * 12,
+            temperature_max_c=(22.0,) * 12,
+            precipitation_mm=(0.0,) * 12,
+            cloud_cover_pct=(15,) * 12,
         ),
         ClimateCell(
-            lat=3.0, lon=4.0, temperature_c=(22.0,) * 12, precipitation_mm=(0.0,) * 12, cloud_cover_pct=(15,) * 12
+            lat=3.0,
+            lon=4.0,
+            temperature_c=(22.0,) * 12,
+            temperature_min_c=(22.0,) * 12,
+            temperature_max_c=(22.0,) * 12,
+            precipitation_mm=(0.0,) * 12,
+            cloud_cover_pct=(15,) * 12,
         ),
         ClimateCell(
-            lat=5.0, lon=6.0, temperature_c=(22.0,) * 12, precipitation_mm=(0.0,) * 12, cloud_cover_pct=(15,) * 12
+            lat=5.0,
+            lon=6.0,
+            temperature_c=(22.0,) * 12,
+            temperature_min_c=(22.0,) * 12,
+            temperature_max_c=(22.0,) * 12,
+            precipitation_mm=(0.0,) * 12,
+            cloud_cover_pct=(15,) * 12,
         ),
     )
     cities = (
@@ -293,13 +309,7 @@ def test_build_score_response_filters_low_population_but_keeps_legacy_zero_popul
             name="Capital", country_code="CO", lat=5.0, lon=6.0, cell_lat=5.0, cell_lon=6.0, population=100_000
         ),
     )
-    preferences = PreferenceInputs(
-        ideal_temperature=22,
-        cold_tolerance=7,
-        heat_tolerance=5,
-        rain_sensitivity=55,
-        sun_preference=60,
-    )
+    preferences = make_preferences()
 
     class CellsRepository:
         def list_cells(self) -> tuple[ClimateCell, ...]:

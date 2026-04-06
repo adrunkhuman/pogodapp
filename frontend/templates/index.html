@@ -28,6 +28,7 @@
               <span class="control__label">{{ preference.label }}</span>
               <output class="control__value" for="{{ preference.name }}">{{ preference.value }}</output>
             </span>
+            <span class="control__description">{{ preference.description }}</span>
             <input
               id="{{ preference.name }}"
               name="{{ preference.name }}"
@@ -38,6 +39,10 @@
               step="{{ preference.step }}"
               value="{{ preference.value }}"
             />
+            <span class="control__scale" aria-hidden="true">
+              <span>{{ preference.low_label }}</span>
+              <span>{{ preference.high_label }}</span>
+            </span>
           </label>
           {% endfor %}
         </form>

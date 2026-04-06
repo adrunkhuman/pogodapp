@@ -6,11 +6,12 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Protocol, cast
 
-from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from backend.climate_repository import (
     ClimateDataError,
@@ -99,6 +100,26 @@ def preload_repository(repository: ClimateRepository) -> None:
         logger.warning("startup_preload outcome=skipped detail=%s", error)
 
 
+def probe_preferences_dependency(
+    preferred_day_temperature: Annotated[int, Query(ge=5, le=35)],
+    summer_heat_limit: Annotated[int, Query(ge=18, le=42)],
+    winter_cold_limit: Annotated[int, Query(ge=-15, le=20)],
+    dryness_preference: Annotated[int, Query(ge=0, le=100)],
+    sunshine_preference: Annotated[int, Query(ge=0, le=100)],
+) -> PreferenceInputs:
+    """Validate `/probe` query preferences through the same model as `/score`."""
+    try:
+        return PreferenceInputs(
+            preferred_day_temperature=preferred_day_temperature,
+            summer_heat_limit=summer_heat_limit,
+            winter_cold_limit=winter_cold_limit,
+            dryness_preference=dryness_preference,
+            sunshine_preference=sunshine_preference,
+        )
+    except ValidationError as error:
+        raise RequestValidationError(error.errors()) from error
+
+
 def create_app(
     climate_repository: ClimateRepository | None = None,
 ) -> FastAPI:
@@ -132,33 +153,22 @@ def create_app(
             raise HTTPException(status_code=503, detail=str(error)) from error
 
     @app.get("/probe")
-    async def probe(  # noqa: PLR0913
+    async def probe(
         lat: Annotated[float, Query(ge=-90, le=90)],
         lon: Annotated[float, Query(ge=-180, le=180)],
-        ideal_temperature: Annotated[int, Query(ge=-10, le=35)],
-        cold_tolerance: Annotated[int, Query(ge=0, le=15)],
-        heat_tolerance: Annotated[int, Query(ge=0, le=15)],
-        rain_sensitivity: Annotated[int, Query(ge=0, le=100)],
-        sun_preference: Annotated[int, Query(ge=0, le=100)],
+        preferences: Annotated[PreferenceInputs, Depends(probe_preferences_dependency)],
     ) -> ProbeResponse:
         if not hasattr(repository, "probe_nearest_cell"):
             return ProbeResponse()
         probe_repository = cast("_SupportsProbeRepository", repository)
-        row_index = probe_repository.probe_nearest_cell(lat, lon)
-        if row_index is None:
-            return ProbeResponse()
         try:
+            row_index = probe_repository.probe_nearest_cell(lat, lon)
+            if row_index is None:
+                return ProbeResponse()
             climate_matrix = probe_repository.get_climate_matrix()
         except ClimateDataError as error:
             logger.exception("probe_request outcome=error")
             raise HTTPException(status_code=503, detail=str(error)) from error
-        preferences = PreferenceInputs(
-            ideal_temperature=ideal_temperature,
-            cold_tolerance=cold_tolerance,
-            heat_tolerance=heat_tolerance,
-            rain_sensitivity=rain_sensitivity,
-            sun_preference=sun_preference,
-        )
         breakdown = score_matrix_row_breakdown(climate_matrix, row_index, preferences)
         return build_probe_response(breakdown)
 

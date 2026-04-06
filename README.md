@@ -25,10 +25,13 @@ It is not a weather app. It scores long-term climate normals against a few user 
 ## How It Works
 
 - `GET /` renders the page.
-- `POST /score` accepts standard form fields and returns JSON.
+- `POST /score` accepts `preferred_day_temperature`, `summer_heat_limit`, `winter_cold_limit`, `dryness_preference`, and `sunshine_preference` as form fields and returns JSON.
 - The response shape is `{"scores": [{"name", "continent", "country_code", "flag", "score", "lat", "lon", "probe_lat", "probe_lon"}, ...], "heatmap": "data:image/png;base64,..."}`.
 - Empty or all-zero results return `{"scores": [], "heatmap": ""}`.
 - `GET /probe` accepts the same preference fields plus `lat` and `lon`, then returns `{"found": bool, "overall_score": 0..1, "metrics": [{"key", "label", "value", "display_value", "score"}, ...]}`.
+- Both `/score` and `/probe` return `422` when `preferred_day_temperature` falls above `summer_heat_limit` or below `winter_cold_limit`.
+- `/probe` metric keys are `temp`, `high`, `low`, `rain`, and `sun`.
+- `/probe` temperature metrics mean: `temp` = typical day from median monthly high, `high` = hottest-month high, `low` = coldest-month low.
 - `/probe` returns `{"found": false, "overall_score": 0.0, "metrics": []}` for ocean points, unmapped cells, or repositories without probe support.
 - FastAPI handles HTTP and validation.
 - Scoring, ranking, and heatmap rendering stay out of the route layer.
@@ -40,13 +43,17 @@ It is not a weather app. It scores long-term climate normals against a few user 
 - Current baseline: native `5m` WorldClim grids, meaning 5 arc-minutes per cell.
 - Runtime tables: `climate_cells(...)` and `cities(...)` inside `data/climate.duckdb`.
 - If the database is missing, the app falls back to a small in-repo stub dataset.
+- Temperature inputs now store monthly mean, monthly average daily low, and monthly average daily high normals.
+- Older `data/climate.duckdb` files from before issue `#41` are incompatible because the runtime now requires `tmin_*` and `tmax_*` columns. Rebuild the database instead of trying to migrate it in place.
 - Cloud cover is currently approximated from solar radiation.
 
 ## Scoring
 
-- Temperature uses an ideal value plus separate cold and heat tolerance.
-- Rain is one-sided: more rain only hurts the score.
-- Sun preference becomes a cloud-cover tolerance threshold.
+- Temperature uses average daily highs for the preferred day and summer limit, plus average daily lows for the winter limit.
+- Temperature is the dominant block in the final score; rain and sun only gain more influence when the user gives stronger non-neutral answers.
+- Dryness uses a profile score built from typical monthly rain plus the wettest month, so a bad wet season still matters.
+- Sunshine uses average cloud plus the gloomiest month, so one dark season still hurts.
+- The final composite is multiplicative rather than a plain weighted average, so a place cannot fully buy back a bad summer or winter with good rain/sun traits.
 - Scores are normalized per request so the best available match lands at `1.0`.
 - Ranked cities are grouped by continent, apply a regional diversity penalty so one cluster does not dominate the output, and keep a deeper reserve of up to 30 cities per continent for progressive reveal in the sidebar.
 
@@ -90,7 +97,7 @@ Notes:
 uv run python scripts/build_climate_db.py
 ```
 
-This builds `data/climate.duckdb`, downloads the required WorldClim rasters and GeoNames city source, keeps only valid land cells, and populates `climate_cells` plus `cities`.
+This builds `data/climate.duckdb`, downloads the required WorldClim rasters and GeoNames city source, keeps only land cells whose monthly mean temperature, min temperature, max temperature, precipitation, and solar-radiation inputs are all finite for all 12 months, and populates `climate_cells` plus `cities`.
 
 Optional flag:
 
