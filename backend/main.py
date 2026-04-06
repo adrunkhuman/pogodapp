@@ -126,6 +126,14 @@ def create_app(
     app = FastAPI(title="Pogodapp")
     repository = climate_repository or build_default_climate_repository(resolve_climate_database_path())
     preload_repository(repository)
+
+    initial_scores: ScoreResponse | None = None
+    try:
+        default_prefs = PreferenceInputs(**{f.name: f.value for f in DEFAULT_PREFERENCES})
+        initial_scores = build_score_response(repository, default_prefs)
+    except Exception:
+        logger.warning("default_score_precompute outcome=skipped")
+
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/health")
@@ -137,7 +145,7 @@ def create_app(
         return templates.TemplateResponse(
             request=request,
             name="index.html",
-            context=build_index_context(),
+            context={**build_index_context(), "initial_scores": initial_scores},
         )
 
     @app.post("/score")
