@@ -35,6 +35,8 @@ const FOCUS_PING_MS = 1800;
 const FOCUS_ANIMATION_MS = 900;
 const FOCUS_VISIBILITY_PADDING_PX = 72;
 const CITY_SNAP_RADIUS_PX = 14;
+const PROBE_TIMEOUT_MS = 5000;
+const SCORE_TIMEOUT_MS = 30000;
 const CONTINENT_ORDER = ["Europe", "Asia", "Africa", "North America", "South America", "Oceania"];
 const SCORE_COLOR_EXPR = [
   "interpolate", ["linear"], ["get", "score"],
@@ -54,6 +56,7 @@ let mapLoaded = false;
 let pendingResponse = null;
 let probeTimer = null;
 let probeController = null;
+let probeTimeoutId = null;
 let tooltipHideTimer = null;
 let focusClearTimer = null;
 let focusAnimationFrame = null;
@@ -120,6 +123,7 @@ function cancelTooltipHideTimer() {
 }
 
 function abortActiveProbe() {
+  clearTimeout(probeTimeoutId);
   if (probeController) probeController.abort();
 }
 

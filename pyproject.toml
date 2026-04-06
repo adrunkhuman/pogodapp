@@ -22,6 +22,7 @@ dependencies = [
     "numpy>=2.4.4",
     "pillow>=11.2.1",
     "python-multipart>=0.0.22",
+    "slowapi>=0.1.9",
     "tifffile>=2026.3.3",
     "uvicorn[standard]>=0.42.0",
 ]
@@ -70,6 +71,8 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "ARG", "PLR2004", "D"]
 "__init__.py" = ["F401"]
+# slowapi requires `request: Request` in route signatures for IP extraction but the arg is unused by our code.
+"backend/main.py" = ["ARG001"]
 
 [tool.ty.environment]
 python-version = "3.14"

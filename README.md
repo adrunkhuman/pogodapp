@@ -72,8 +72,7 @@ uv run pogodapp
 Run against a non-default database file:
 
 ```bash
-$env:POGODAPP_CLIMATE_DB = "data/climate-5m.duckdb"
-uv run pogodapp
+POGODAPP_CLIMATE_DB=data/climate-5m.duckdb uv run pogodapp
 ```
 
 Optional flags:
