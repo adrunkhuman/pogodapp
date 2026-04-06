@@ -65,9 +65,9 @@ def test_solar_radiation_to_cloud_proxy_inverts_relative_brightness() -> None:
 def test_validate_climate_database_accepts_expected_schema_and_row_count(tmp_path: Path) -> None:
     database_path = tmp_path / "climate.duckdb"
     with duckdb.connect(str(database_path)) as connection:
-        columns = ", ".join(f"{column} DOUBLE" for column in EXPECTED_CLIMATE_COLUMNS[:26])
-        cloud_columns = ", ".join(f"{column} INTEGER" for column in EXPECTED_CLIMATE_COLUMNS[26:])
-        connection.execute(f"CREATE TABLE climate_cells ({columns}, {cloud_columns})")
+        double_columns = ", ".join(f"{column} DOUBLE" for column in EXPECTED_CLIMATE_COLUMNS[:-12])
+        cloud_columns = ", ".join(f"{column} INTEGER" for column in EXPECTED_CLIMATE_COLUMNS[-12:])
+        connection.execute(f"CREATE TABLE climate_cells ({double_columns}, {cloud_columns})")
         connection.executemany(INSERT_CLIMATE_CELL_QUERY, [tuple(0 for _ in EXPECTED_CLIMATE_COLUMNS)] * 2)
         create_cities_table(connection)
         connection.executemany(INSERT_CITY_QUERY, [("Bogota", "CO", 4.711, -74.0721, 4.75, -74.0833, 0)])
@@ -83,9 +83,9 @@ def test_validate_climate_database_accepts_expected_schema_and_row_count(tmp_pat
 def test_validate_climate_database_rejects_unexpected_row_count(tmp_path: Path) -> None:
     database_path = tmp_path / "climate.duckdb"
     with duckdb.connect(str(database_path)) as connection:
-        columns = ", ".join(f"{column} DOUBLE" for column in EXPECTED_CLIMATE_COLUMNS[:26])
-        cloud_columns = ", ".join(f"{column} INTEGER" for column in EXPECTED_CLIMATE_COLUMNS[26:])
-        connection.execute(f"CREATE TABLE climate_cells ({columns}, {cloud_columns})")
+        double_columns = ", ".join(f"{column} DOUBLE" for column in EXPECTED_CLIMATE_COLUMNS[:-12])
+        cloud_columns = ", ".join(f"{column} INTEGER" for column in EXPECTED_CLIMATE_COLUMNS[-12:])
+        connection.execute(f"CREATE TABLE climate_cells ({double_columns}, {cloud_columns})")
         connection.executemany(INSERT_CLIMATE_CELL_QUERY, [tuple(0 for _ in EXPECTED_CLIMATE_COLUMNS)])
         create_cities_table(connection)
         connection.executemany(INSERT_CITY_QUERY, [("Bogota", "CO", 4.711, -74.0721, 4.75, -74.0833, 0)])
@@ -97,9 +97,9 @@ def test_validate_climate_database_rejects_unexpected_row_count(tmp_path: Path) 
 def test_validate_climate_database_rejects_zero_city_rows(tmp_path: Path) -> None:
     database_path = tmp_path / "climate.duckdb"
     with duckdb.connect(str(database_path)) as connection:
-        columns = ", ".join(f"{column} DOUBLE" for column in EXPECTED_CLIMATE_COLUMNS[:26])
-        cloud_columns = ", ".join(f"{column} INTEGER" for column in EXPECTED_CLIMATE_COLUMNS[26:])
-        connection.execute(f"CREATE TABLE climate_cells ({columns}, {cloud_columns})")
+        double_columns = ", ".join(f"{column} DOUBLE" for column in EXPECTED_CLIMATE_COLUMNS[:-12])
+        cloud_columns = ", ".join(f"{column} INTEGER" for column in EXPECTED_CLIMATE_COLUMNS[-12:])
+        connection.execute(f"CREATE TABLE climate_cells ({double_columns}, {cloud_columns})")
         connection.executemany(INSERT_CLIMATE_CELL_QUERY, [tuple(0 for _ in EXPECTED_CLIMATE_COLUMNS)] * 2)
         create_cities_table(connection)
 
@@ -115,7 +115,11 @@ def test_build_city_rows_filters_out_cities_that_snap_to_ocean_cells(tmp_path: P
         encoding="utf-8",
     )
 
-    rows = build_city_rows(city_catalog_path, [(4.7083, -74.0417, *([0.0] * 36))], DEFAULT_WORLDCLIM_RESOLUTION)
+    rows = build_city_rows(
+        city_catalog_path,
+        [(4.7083, -74.0417, *([0.0] * (len(EXPECTED_CLIMATE_COLUMNS) - 2)))],
+        DEFAULT_WORLDCLIM_RESOLUTION,
+    )
 
     assert rows == [("Bogota", "CO", 4.711, -74.0721, 4.7083, -74.0417, 0)]
 
@@ -139,9 +143,9 @@ def test_build_coordinate_grids_matches_requested_resolution() -> None:
 def test_validate_climate_database_uses_resolution_specific_row_range(tmp_path: Path) -> None:
     database_path = tmp_path / "climate.duckdb"
     with duckdb.connect(str(database_path)) as connection:
-        columns = ", ".join(f"{column} DOUBLE" for column in EXPECTED_CLIMATE_COLUMNS[:26])
-        cloud_columns = ", ".join(f"{column} INTEGER" for column in EXPECTED_CLIMATE_COLUMNS[26:])
-        connection.execute(f"CREATE TABLE climate_cells ({columns}, {cloud_columns})")
+        double_columns = ", ".join(f"{column} DOUBLE" for column in EXPECTED_CLIMATE_COLUMNS[:-12])
+        cloud_columns = ", ".join(f"{column} INTEGER" for column in EXPECTED_CLIMATE_COLUMNS[-12:])
+        connection.execute(f"CREATE TABLE climate_cells ({double_columns}, {cloud_columns})")
         connection.executemany(INSERT_CLIMATE_CELL_QUERY, [tuple(0 for _ in EXPECTED_CLIMATE_COLUMNS)] * 2)
         create_cities_table(connection)
         connection.executemany(INSERT_CITY_QUERY, [("Bogota", "CO", 4.711, -74.0721, 4.75, -74.0833, 0)])

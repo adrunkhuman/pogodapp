@@ -40,6 +40,8 @@ class ManyCitiesRepository:
                 lat=float(index),
                 lon=float(index),
                 temperature_c=(22.0,) * 12,
+                temperature_min_c=(22.0,) * 12,
+                temperature_max_c=(22.0,) * 12,
                 precipitation_mm=(0.0,) * 12,
                 cloud_cover_pct=(15,) * 12,
             )

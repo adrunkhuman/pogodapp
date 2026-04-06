@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 from backend.cities import CityCandidate, CityRankingCache, snap_city_to_cell_key
 from backend.climate_pipeline import (
     DEFAULT_WORLDCLIM_RESOLUTION,
+    MonthlyClimateRasters,
     build_insert_rows,
     copy_rows_into_cities_table,
     copy_rows_into_climate_table,
@@ -70,6 +71,10 @@ def test_duckdb_climate_repository_loads_monthly_climate_rows(tmp_path: Path) ->
                 20.5 AS lon,
                 1.0 AS t_jan, 2.0 AS t_feb, 3.0 AS t_mar, 4.0 AS t_apr, 5.0 AS t_may, 6.0 AS t_jun,
                 7.0 AS t_jul, 8.0 AS t_aug, 9.0 AS t_sep, 10.0 AS t_oct, 11.0 AS t_nov, 12.0 AS t_dec,
+                -1.0 AS tmin_jan, 0.0 AS tmin_feb, 1.0 AS tmin_mar, 2.0 AS tmin_apr, 3.0 AS tmin_may, 4.0 AS tmin_jun,
+                5.0 AS tmin_jul, 6.0 AS tmin_aug, 7.0 AS tmin_sep, 8.0 AS tmin_oct, 9.0 AS tmin_nov, 10.0 AS tmin_dec,
+                3.0 AS tmax_jan, 4.0 AS tmax_feb, 5.0 AS tmax_mar, 6.0 AS tmax_apr, 7.0 AS tmax_may, 8.0 AS tmax_jun,
+                9.0 AS tmax_jul, 10.0 AS tmax_aug, 11.0 AS tmax_sep, 12.0 AS tmax_oct, 13.0 AS tmax_nov, 14.0 AS tmax_dec,
                 13.0 AS prec_jan, 14.0 AS prec_feb, 15.0 AS prec_mar, 16.0 AS prec_apr, 17.0 AS prec_may, 18.0 AS prec_jun,
                 19.0 AS prec_jul, 20.0 AS prec_aug, 21.0 AS prec_sep, 22.0 AS prec_oct, 23.0 AS prec_nov, 24.0 AS prec_dec,
                 25 AS cloud_jan, 26 AS cloud_feb, 27 AS cloud_mar, 28 AS cloud_apr, 29 AS cloud_may, 30 AS cloud_jun,
@@ -86,6 +91,8 @@ def test_duckdb_climate_repository_loads_monthly_climate_rows(tmp_path: Path) ->
             lat=10.5,
             lon=20.5,
             temperature_c=(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0),
+            temperature_min_c=(-1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0),
+            temperature_max_c=(3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0),
             precipitation_mm=(13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0),
             cloud_cover_pct=(25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36),
         ),
@@ -217,6 +224,10 @@ def test_duckdb_climate_repository_probe_nearest_cell_returns_index_for_known_la
                 ? AS lon,
                 1.0 AS t_jan, 2.0 AS t_feb, 3.0 AS t_mar, 4.0 AS t_apr, 5.0 AS t_may, 6.0 AS t_jun,
                 7.0 AS t_jul, 8.0 AS t_aug, 9.0 AS t_sep, 10.0 AS t_oct, 11.0 AS t_nov, 12.0 AS t_dec,
+                -1.0 AS tmin_jan, 0.0 AS tmin_feb, 1.0 AS tmin_mar, 2.0 AS tmin_apr, 3.0 AS tmin_may, 4.0 AS tmin_jun,
+                5.0 AS tmin_jul, 6.0 AS tmin_aug, 7.0 AS tmin_sep, 8.0 AS tmin_oct, 9.0 AS tmin_nov, 10.0 AS tmin_dec,
+                3.0 AS tmax_jan, 4.0 AS tmax_feb, 5.0 AS tmax_mar, 6.0 AS tmax_apr, 7.0 AS tmax_may, 8.0 AS tmax_jun,
+                9.0 AS tmax_jul, 10.0 AS tmax_aug, 11.0 AS tmax_sep, 12.0 AS tmax_oct, 13.0 AS tmax_nov, 14.0 AS tmax_dec,
                 13.0 AS prec_jan, 14.0 AS prec_feb, 15.0 AS prec_mar, 16.0 AS prec_apr, 17.0 AS prec_may, 18.0 AS prec_jun,
                 19.0 AS prec_jul, 20.0 AS prec_aug, 21.0 AS prec_sep, 22.0 AS prec_oct, 23.0 AS prec_nov, 24.0 AS prec_dec,
                 25 AS cloud_jan, 26 AS cloud_feb, 27 AS cloud_mar, 28 AS cloud_apr, 29 AS cloud_may, 30 AS cloud_jun,
@@ -241,6 +252,10 @@ def test_duckdb_climate_repository_probe_nearest_cell_returns_none_for_unmapped_
                 20.5 AS lon,
                 1.0 AS t_jan, 2.0 AS t_feb, 3.0 AS t_mar, 4.0 AS t_apr, 5.0 AS t_may, 6.0 AS t_jun,
                 7.0 AS t_jul, 8.0 AS t_aug, 9.0 AS t_sep, 10.0 AS t_oct, 11.0 AS t_nov, 12.0 AS t_dec,
+                -1.0 AS tmin_jan, 0.0 AS tmin_feb, 1.0 AS tmin_mar, 2.0 AS tmin_apr, 3.0 AS tmin_may, 4.0 AS tmin_jun,
+                5.0 AS tmin_jul, 6.0 AS tmin_aug, 7.0 AS tmin_sep, 8.0 AS tmin_oct, 9.0 AS tmin_nov, 10.0 AS tmin_dec,
+                3.0 AS tmax_jan, 4.0 AS tmax_feb, 5.0 AS tmax_mar, 6.0 AS tmax_apr, 7.0 AS tmax_may, 8.0 AS tmax_jun,
+                9.0 AS tmax_jul, 10.0 AS tmax_aug, 11.0 AS tmax_sep, 12.0 AS tmax_oct, 13.0 AS tmax_nov, 14.0 AS tmax_dec,
                 13.0 AS prec_jan, 14.0 AS prec_feb, 15.0 AS prec_mar, 16.0 AS prec_apr, 17.0 AS prec_may, 18.0 AS prec_jun,
                 19.0 AS prec_jul, 20.0 AS prec_aug, 21.0 AS prec_sep, 22.0 AS prec_oct, 23.0 AS prec_nov, 24.0 AS prec_dec,
                 25 AS cloud_jan, 26 AS cloud_feb, 27 AS cloud_mar, 28 AS cloud_apr, 29 AS cloud_may, 30 AS cloud_jun,
@@ -261,6 +276,8 @@ def test_app_can_use_an_injected_climate_repository() -> None:
                     lat=1.0,
                     lon=2.0,
                     temperature_c=(22.0,) * 12,
+                    temperature_min_c=(22.0,) * 12,
+                    temperature_max_c=(22.0,) * 12,
                     precipitation_mm=(0.0,) * 12,
                     cloud_cover_pct=(15,) * 12,
                 ),
@@ -299,6 +316,8 @@ def test_create_app_preloads_optimized_repository() -> None:
                 latitudes=np.array([], dtype=np.float32),
                 longitudes=np.array([], dtype=np.float32),
                 temperature_c=np.empty((0, 12), dtype=np.float32),
+                temperature_min_c=np.empty((0, 12), dtype=np.float32),
+                temperature_max_c=np.empty((0, 12), dtype=np.float32),
                 precipitation_mm=np.empty((0, 12), dtype=np.float32),
                 cloud_cover_pct=np.empty((0, 12), dtype=np.uint8),
             )
@@ -366,6 +385,8 @@ def test_create_app_preload_warms_caches_without_rebuilding_on_first_request() -
                             lat=1.0,
                             lon=2.0,
                             temperature_c=(22.0,) * 12,
+                            temperature_min_c=(22.0,) * 12,
+                            temperature_max_c=(22.0,) * 12,
                             precipitation_mm=(0.0,) * 12,
                             cloud_cover_pct=(15,) * 12,
                         ),
@@ -410,6 +431,8 @@ def test_app_can_use_an_injected_climate_repository_with_city_catalog() -> None:
                     lat=1.0,
                     lon=2.0,
                     temperature_c=(22.0,) * 12,
+                    temperature_min_c=(22.0,) * 12,
+                    temperature_max_c=(22.0,) * 12,
                     precipitation_mm=(0.0,) * 12,
                     cloud_cover_pct=(15,) * 12,
                 ),
@@ -475,6 +498,8 @@ def test_app_returns_clear_503_when_city_lookup_fails() -> None:
                     lat=1.0,
                     lon=2.0,
                     temperature_c=(22.0,) * 12,
+                    temperature_min_c=(22.0,) * 12,
+                    temperature_max_c=(22.0,) * 12,
                     precipitation_mm=(0.0,) * 12,
                     cloud_cover_pct=(15,) * 12,
                 ),
@@ -504,6 +529,10 @@ def test_app_scores_from_duckdb(tmp_path: Path) -> None:
                 2.0 AS lon,
                 22.0 AS t_jan, 22.0 AS t_feb, 22.0 AS t_mar, 22.0 AS t_apr, 22.0 AS t_may, 22.0 AS t_jun,
                 22.0 AS t_jul, 22.0 AS t_aug, 22.0 AS t_sep, 22.0 AS t_oct, 22.0 AS t_nov, 22.0 AS t_dec,
+                22.0 AS tmin_jan, 22.0 AS tmin_feb, 22.0 AS tmin_mar, 22.0 AS tmin_apr, 22.0 AS tmin_may, 22.0 AS tmin_jun,
+                22.0 AS tmin_jul, 22.0 AS tmin_aug, 22.0 AS tmin_sep, 22.0 AS tmin_oct, 22.0 AS tmin_nov, 22.0 AS tmin_dec,
+                22.0 AS tmax_jan, 22.0 AS tmax_feb, 22.0 AS tmax_mar, 22.0 AS tmax_apr, 22.0 AS tmax_may, 22.0 AS tmax_jun,
+                22.0 AS tmax_jul, 22.0 AS tmax_aug, 22.0 AS tmax_sep, 22.0 AS tmax_oct, 22.0 AS tmax_nov, 22.0 AS tmax_dec,
                 0.0 AS prec_jan, 0.0 AS prec_feb, 0.0 AS prec_mar, 0.0 AS prec_apr, 0.0 AS prec_may, 0.0 AS prec_jun,
                 0.0 AS prec_jul, 0.0 AS prec_aug, 0.0 AS prec_sep, 0.0 AS prec_oct, 0.0 AS prec_nov, 0.0 AS prec_dec,
                 15 AS cloud_jan, 15 AS cloud_feb, 15 AS cloud_mar, 15 AS cloud_apr, 15 AS cloud_may, 15 AS cloud_jun,
@@ -554,14 +583,20 @@ def test_duckdb_city_cache_aligns_indexes_with_shuffled_climate_rows(tmp_path: P
             SELECT * FROM (
                 VALUES
                     (5.0, 6.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0,
+                     22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0,
+                     22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0,
                      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                      15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15),
                     (1.0, 2.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0,
+                     22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0,
+                     22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0,
                      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                      15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15)
             ) AS t(
                 lat, lon,
                 t_jan, t_feb, t_mar, t_apr, t_may, t_jun, t_jul, t_aug, t_sep, t_oct, t_nov, t_dec,
+                tmin_jan, tmin_feb, tmin_mar, tmin_apr, tmin_may, tmin_jun, tmin_jul, tmin_aug, tmin_sep, tmin_oct, tmin_nov, tmin_dec,
+                tmax_jan, tmax_feb, tmax_mar, tmax_apr, tmax_may, tmax_jun, tmax_jul, tmax_aug, tmax_sep, tmax_oct, tmax_nov, tmax_dec,
                 prec_jan, prec_feb, prec_mar, prec_apr, prec_may, prec_jun, prec_jul, prec_aug, prec_sep, prec_oct, prec_nov, prec_dec,
                 cloud_jan, cloud_feb, cloud_mar, cloud_apr, cloud_may, cloud_jun, cloud_jul, cloud_aug, cloud_sep, cloud_oct, cloud_nov, cloud_dec
             )
@@ -601,6 +636,10 @@ def test_app_uses_duckdb_automatically_when_default_database_exists(
                 2.0 AS lon,
                 22.0 AS t_jan, 22.0 AS t_feb, 22.0 AS t_mar, 22.0 AS t_apr, 22.0 AS t_may, 22.0 AS t_jun,
                 22.0 AS t_jul, 22.0 AS t_aug, 22.0 AS t_sep, 22.0 AS t_oct, 22.0 AS t_nov, 22.0 AS t_dec,
+                22.0 AS tmin_jan, 22.0 AS tmin_feb, 22.0 AS tmin_mar, 22.0 AS tmin_apr, 22.0 AS tmin_may, 22.0 AS tmin_jun,
+                22.0 AS tmin_jul, 22.0 AS tmin_aug, 22.0 AS tmin_sep, 22.0 AS tmin_oct, 22.0 AS tmin_nov, 22.0 AS tmin_dec,
+                22.0 AS tmax_jan, 22.0 AS tmax_feb, 22.0 AS tmax_mar, 22.0 AS tmax_apr, 22.0 AS tmax_may, 22.0 AS tmax_jun,
+                22.0 AS tmax_jul, 22.0 AS tmax_aug, 22.0 AS tmax_sep, 22.0 AS tmax_oct, 22.0 AS tmax_nov, 22.0 AS tmax_dec,
                 0.0 AS prec_jan, 0.0 AS prec_feb, 0.0 AS prec_mar, 0.0 AS prec_apr, 0.0 AS prec_may, 0.0 AS prec_jun,
                 0.0 AS prec_jul, 0.0 AS prec_aug, 0.0 AS prec_sep, 0.0 AS prec_oct, 0.0 AS prec_nov, 0.0 AS prec_dec,
                 15 AS cloud_jan, 15 AS cloud_feb, 15 AS cloud_mar, 15 AS cloud_apr, 15 AS cloud_may, 15 AS cloud_jun,
@@ -655,6 +694,10 @@ def test_duckdb_climate_repository_raises_clear_error_for_bad_row_values(tmp_pat
                 2.0 AS lon,
                 NULL AS t_jan, 22.0 AS t_feb, 22.0 AS t_mar, 22.0 AS t_apr, 22.0 AS t_may, 22.0 AS t_jun,
                 22.0 AS t_jul, 22.0 AS t_aug, 22.0 AS t_sep, 22.0 AS t_oct, 22.0 AS t_nov, 22.0 AS t_dec,
+                22.0 AS tmin_jan, 22.0 AS tmin_feb, 22.0 AS tmin_mar, 22.0 AS tmin_apr, 22.0 AS tmin_may, 22.0 AS tmin_jun,
+                22.0 AS tmin_jul, 22.0 AS tmin_aug, 22.0 AS tmin_sep, 22.0 AS tmin_oct, 22.0 AS tmin_nov, 22.0 AS tmin_dec,
+                22.0 AS tmax_jan, 22.0 AS tmax_feb, 22.0 AS tmax_mar, 22.0 AS tmax_apr, 22.0 AS tmax_may, 22.0 AS tmax_jun,
+                22.0 AS tmax_jul, 22.0 AS tmax_aug, 22.0 AS tmax_sep, 22.0 AS tmax_oct, 22.0 AS tmax_nov, 22.0 AS tmax_dec,
                 0.0 AS prec_jan, 0.0 AS prec_feb, 0.0 AS prec_mar, 0.0 AS prec_apr, 0.0 AS prec_may, 0.0 AS prec_jun,
                 0.0 AS prec_jul, 0.0 AS prec_aug, 0.0 AS prec_sep, 0.0 AS prec_oct, 0.0 AS prec_nov, 0.0 AS prec_dec,
                 15 AS cloud_jan, 15 AS cloud_feb, 15 AS cloud_mar, 15 AS cloud_apr, 15 AS cloud_may, 15 AS cloud_jun,
@@ -671,11 +714,19 @@ def test_duckdb_climate_repository_loads_rows_built_in_pipeline_shape(tmp_path: 
     raster_height, raster_width = DEFAULT_WORLDCLIM_RESOLUTION.raster_shape
 
     monthly_temperature = tuple(np.full((raster_height, raster_width), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_temperature_min = tuple(np.full((raster_height, raster_width), np.nan, dtype=np.float64) for _ in range(12))
+    monthly_temperature_max = tuple(np.full((raster_height, raster_width), np.nan, dtype=np.float64) for _ in range(12))
     monthly_precipitation = tuple(np.full((raster_height, raster_width), np.nan, dtype=np.float64) for _ in range(12))
     monthly_solar_radiation = tuple(np.full((raster_height, raster_width), np.nan, dtype=np.float64) for _ in range(12))
 
     for month_index, month in enumerate(monthly_temperature, start=1):
         month[0, 0] = float(month_index)
+
+    for month_index, month in enumerate(monthly_temperature_min, start=1):
+        month[0, 0] = float(month_index - 2)
+
+    for month_index, month in enumerate(monthly_temperature_max, start=1):
+        month[0, 0] = float(month_index + 2)
 
     for month_index, month in enumerate(monthly_precipitation, start=1):
         month[0, 0] = float(month_index * 10)
@@ -684,9 +735,13 @@ def test_duckdb_climate_repository_loads_rows_built_in_pipeline_shape(tmp_path: 
         month[0, 0] = float(month_index * 100)
 
     rows = build_insert_rows(
-        monthly_temperature,
-        monthly_precipitation,
-        monthly_solar_radiation,
+        MonthlyClimateRasters(
+            temperature_mean=monthly_temperature,
+            temperature_min=monthly_temperature_min,
+            temperature_max=monthly_temperature_max,
+            precipitation=monthly_precipitation,
+            solar_radiation=monthly_solar_radiation,
+        ),
         DEFAULT_WORLDCLIM_RESOLUTION,
     )
 
@@ -707,6 +762,8 @@ def test_duckdb_climate_repository_loads_rows_built_in_pipeline_shape(tmp_path: 
             lat=89.9583,
             lon=-179.9583,
             temperature_c=tuple(float(month_index) for month_index in range(1, 13)),
+            temperature_min_c=tuple(float(month_index - 2) for month_index in range(1, 13)),
+            temperature_max_c=tuple(float(month_index + 2) for month_index in range(1, 13)),
             precipitation_mm=tuple(float(month_index * 10) for month_index in range(1, 13)),
             cloud_cover_pct=(50,) * 12,
         ),
@@ -734,6 +791,10 @@ def test_create_app_reads_climate_database_path_from_env(monkeypatch: pytest.Mon
                 2.0 AS lon,
                 22.0 AS t_jan, 22.0 AS t_feb, 22.0 AS t_mar, 22.0 AS t_apr, 22.0 AS t_may, 22.0 AS t_jun,
                 22.0 AS t_jul, 22.0 AS t_aug, 22.0 AS t_sep, 22.0 AS t_oct, 22.0 AS t_nov, 22.0 AS t_dec,
+                22.0 AS tmin_jan, 22.0 AS tmin_feb, 22.0 AS tmin_mar, 22.0 AS tmin_apr, 22.0 AS tmin_may, 22.0 AS tmin_jun,
+                22.0 AS tmin_jul, 22.0 AS tmin_aug, 22.0 AS tmin_sep, 22.0 AS tmin_oct, 22.0 AS tmin_nov, 22.0 AS tmin_dec,
+                22.0 AS tmax_jan, 22.0 AS tmax_feb, 22.0 AS tmax_mar, 22.0 AS tmax_apr, 22.0 AS tmax_may, 22.0 AS tmax_jun,
+                22.0 AS tmax_jul, 22.0 AS tmax_aug, 22.0 AS tmax_sep, 22.0 AS tmax_oct, 22.0 AS tmax_nov, 22.0 AS tmax_dec,
                 0.0 AS prec_jan, 0.0 AS prec_feb, 0.0 AS prec_mar, 0.0 AS prec_apr, 0.0 AS prec_may, 0.0 AS prec_jun,
                 0.0 AS prec_jul, 0.0 AS prec_aug, 0.0 AS prec_sep, 0.0 AS prec_oct, 0.0 AS prec_nov, 0.0 AS prec_dec,
                 15 AS cloud_jan, 15 AS cloud_feb, 15 AS cloud_mar, 15 AS cloud_apr, 15 AS cloud_may, 15 AS cloud_jun,

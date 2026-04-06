@@ -74,6 +74,8 @@ def test_build_score_response_returns_empty_payload_for_empty_matrix() -> None:
                 latitudes=np.array([], dtype=np.float32),
                 longitudes=np.array([], dtype=np.float32),
                 temperature_c=np.empty((0, 12), dtype=np.float32),
+                temperature_min_c=np.empty((0, 12), dtype=np.float32),
+                temperature_max_c=np.empty((0, 12), dtype=np.float32),
                 precipitation_mm=np.empty((0, 12), dtype=np.float32),
                 cloud_cover_pct=np.empty((0, 12), dtype=np.uint8),
             )
@@ -104,6 +106,8 @@ def test_build_score_response_returns_empty_payload_for_all_zero_matrix_scores(m
                         lat=1.0,
                         lon=2.0,
                         temperature_c=(22.0,) * 12,
+                        temperature_min_c=(22.0,) * 12,
+                        temperature_max_c=(22.0,) * 12,
                         precipitation_mm=(0.0,) * 12,
                         cloud_cover_pct=(15,) * 12,
                     ),
@@ -138,6 +142,8 @@ def test_build_score_response_falls_back_to_array_heatmap_path_when_projection_c
                         lat=1.0,
                         lon=2.0,
                         temperature_c=(22.0,) * 12,
+                        temperature_min_c=(22.0,) * 12,
+                        temperature_max_c=(22.0,) * 12,
                         precipitation_mm=(0.0,) * 12,
                         cloud_cover_pct=(15,) * 12,
                     ),
@@ -216,6 +222,8 @@ def test_build_score_response_keeps_fallback_ranking_behavior_aligned_with_matri
             lat=1.0,
             lon=2.0,
             temperature_c=(22.0,) * 12,
+            temperature_min_c=(22.0,) * 12,
+            temperature_max_c=(22.0,) * 12,
             precipitation_mm=(0.0,) * 12,
             cloud_cover_pct=(15,) * 12,
         ),
@@ -223,6 +231,8 @@ def test_build_score_response_keeps_fallback_ranking_behavior_aligned_with_matri
             lat=10.0,
             lon=11.0,
             temperature_c=(22.0,) * 12,
+            temperature_min_c=(22.0,) * 12,
+            temperature_max_c=(22.0,) * 12,
             precipitation_mm=(0.0,) * 12,
             cloud_cover_pct=(15,) * 12,
         ),
@@ -261,13 +271,31 @@ def test_build_score_response_filters_low_population_but_keeps_legacy_zero_popul
     monkeypatch.setattr("backend.score_service.RANKING_MIN_POPULATION", 30_000)
     climate_cells = (
         ClimateCell(
-            lat=1.0, lon=2.0, temperature_c=(22.0,) * 12, precipitation_mm=(0.0,) * 12, cloud_cover_pct=(15,) * 12
+            lat=1.0,
+            lon=2.0,
+            temperature_c=(22.0,) * 12,
+            temperature_min_c=(22.0,) * 12,
+            temperature_max_c=(22.0,) * 12,
+            precipitation_mm=(0.0,) * 12,
+            cloud_cover_pct=(15,) * 12,
         ),
         ClimateCell(
-            lat=3.0, lon=4.0, temperature_c=(22.0,) * 12, precipitation_mm=(0.0,) * 12, cloud_cover_pct=(15,) * 12
+            lat=3.0,
+            lon=4.0,
+            temperature_c=(22.0,) * 12,
+            temperature_min_c=(22.0,) * 12,
+            temperature_max_c=(22.0,) * 12,
+            precipitation_mm=(0.0,) * 12,
+            cloud_cover_pct=(15,) * 12,
         ),
         ClimateCell(
-            lat=5.0, lon=6.0, temperature_c=(22.0,) * 12, precipitation_mm=(0.0,) * 12, cloud_cover_pct=(15,) * 12
+            lat=5.0,
+            lon=6.0,
+            temperature_c=(22.0,) * 12,
+            temperature_min_c=(22.0,) * 12,
+            temperature_max_c=(22.0,) * 12,
+            precipitation_mm=(0.0,) * 12,
+            cloud_cover_pct=(15,) * 12,
         ),
     )
     cities = (

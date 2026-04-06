@@ -32,28 +32,28 @@ def make_preferences(**overrides: int) -> PreferenceInputs:
 def test_temperature_score_keeps_the_comfort_band_at_full_score() -> None:
     preferences = make_preferences()
 
-    assert temperature_score(22.0, preferences) == 1.0
-    assert temperature_score(24.0, preferences) == 1.0
-    assert temperature_score(20.0, preferences) == 1.0
+    assert temperature_score(18.0, 14.0, 22.0, preferences) == 1.0
+    assert temperature_score(20.0, 16.0, 24.0, preferences) == 1.0
+    assert temperature_score(16.0, 12.0, 20.0, preferences) == 1.0
 
 
 def test_temperature_score_penalizes_months_far_from_the_preferred_band() -> None:
     preferences = make_preferences()
 
-    assert temperature_score(28.0, preferences) < 1.0
-    assert temperature_score(14.0, preferences) < 1.0
+    assert temperature_score(24.0, 20.0, 28.0, preferences) < 1.0
+    assert temperature_score(10.0, 6.0, 14.0, preferences) < 1.0
 
 
 def test_temperature_score_penalizes_heat_above_the_summer_limit() -> None:
     preferences = make_preferences(summer_heat_limit=26)
 
-    assert temperature_score(30.0, preferences) < temperature_score(26.0, preferences)
+    assert temperature_score(26.0, 22.0, 30.0, preferences) < temperature_score(22.0, 18.0, 26.0, preferences)
 
 
 def test_temperature_score_penalizes_cold_below_the_winter_limit() -> None:
     preferences = make_preferences(winter_cold_limit=10)
 
-    assert temperature_score(4.0, preferences) < temperature_score(10.0, preferences)
+    assert temperature_score(8.0, 4.0, 12.0, preferences) < temperature_score(14.0, 10.0, 18.0, preferences)
 
 
 def test_preference_inputs_require_typical_day_to_stay_within_limits() -> None:
@@ -88,6 +88,8 @@ def test_annual_score_stays_normalized_for_extreme_climate_rows() -> None:
         lat=0.0,
         lon=0.0,
         temperature_c=(50.0,) * 12,
+        temperature_min_c=(40.0,) * 12,
+        temperature_max_c=(60.0,) * 12,
         precipitation_mm=(400.0,) * 12,
         cloud_cover_pct=(100,) * 12,
     )
@@ -104,7 +106,9 @@ def test_annual_score_averages_monthly_scores_over_twelve_months() -> None:
     mostly_perfect_cell = ClimateCell(
         lat=0.0,
         lon=0.0,
-        temperature_c=(22.0,) * 11 + (50.0,),
+        temperature_c=(18.0,) * 11 + (45.0,),
+        temperature_min_c=(14.0,) * 11 + (35.0,),
+        temperature_max_c=(22.0,) * 11 + (50.0,),
         precipitation_mm=(0.0,) * 11 + (300.0,),
         cloud_cover_pct=(15,) * 11 + (100,),
     )
@@ -131,6 +135,8 @@ def test_climate_cell_requires_exactly_twelve_months_per_signal(
             lat=0.0,
             lon=0.0,
             temperature_c=temperature_c,
+            temperature_min_c=(10.0,) * 12,
+            temperature_max_c=(20.0,) * 12,
             precipitation_mm=precipitation_mm,
             cloud_cover_pct=cloud_cover_pct,
         )
@@ -141,6 +147,8 @@ def test_vectorized_scoring_matches_scalar_scoring_for_stub_cells() -> None:
         latitudes=np.array([cell.lat for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
         longitudes=np.array([cell.lon for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
         temperature_c=np.array([cell.temperature_c for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
+        temperature_min_c=np.array([cell.temperature_min_c for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
+        temperature_max_c=np.array([cell.temperature_max_c for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
         precipitation_mm=np.array([cell.precipitation_mm for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
         cloud_cover_pct=np.array([cell.cloud_cover_pct for cell in STUB_CLIMATE_CELLS], dtype=np.uint8),
     )

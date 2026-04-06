@@ -49,6 +49,8 @@ class ClimateCell:
     lat: float
     lon: float
     temperature_c: tuple[float, ...]
+    temperature_min_c: tuple[float, ...]
+    temperature_max_c: tuple[float, ...]
     precipitation_mm: tuple[float, ...]
     cloud_cover_pct: tuple[int, ...]
 
@@ -56,6 +58,14 @@ class ClimateCell:
         """Reject incomplete monthly rows before they reach scoring code."""
         if len(self.temperature_c) != MONTHS_PER_YEAR:
             msg = "temperature_c must contain 12 monthly values"
+            raise ValueError(msg)
+
+        if len(self.temperature_min_c) != MONTHS_PER_YEAR:
+            msg = "temperature_min_c must contain 12 monthly values"
+            raise ValueError(msg)
+
+        if len(self.temperature_max_c) != MONTHS_PER_YEAR:
+            msg = "temperature_max_c must contain 12 monthly values"
             raise ValueError(msg)
 
         if len(self.precipitation_mm) != MONTHS_PER_YEAR:
@@ -74,6 +84,8 @@ class ClimateMatrix:
     latitudes: NDArray[np.float32]
     longitudes: NDArray[np.float32]
     temperature_c: NDArray[np.float32]
+    temperature_min_c: NDArray[np.float32]
+    temperature_max_c: NDArray[np.float32]
     precipitation_mm: NDArray[np.float32]
     cloud_cover_pct: NDArray[np.uint8]
 
@@ -87,6 +99,14 @@ class ClimateMatrix:
 
         if self.temperature_c.shape != (cell_count, MONTHS_PER_YEAR):
             msg = "temperature_c must be shaped (cells, 12)"
+            raise ValueError(msg)
+
+        if self.temperature_min_c.shape != (cell_count, MONTHS_PER_YEAR):
+            msg = "temperature_min_c must be shaped (cells, 12)"
+            raise ValueError(msg)
+
+        if self.temperature_max_c.shape != (cell_count, MONTHS_PER_YEAR):
+            msg = "temperature_max_c must be shaped (cells, 12)"
             raise ValueError(msg)
 
         if self.precipitation_mm.shape != (cell_count, MONTHS_PER_YEAR):
@@ -104,6 +124,8 @@ class ClimateMatrix:
             latitudes=np.array([cell.lat for cell in climate_cells], dtype=np.float32),
             longitudes=np.array([cell.lon for cell in climate_cells], dtype=np.float32),
             temperature_c=np.array([cell.temperature_c for cell in climate_cells], dtype=np.float32),
+            temperature_min_c=np.array([cell.temperature_min_c for cell in climate_cells], dtype=np.float32),
+            temperature_max_c=np.array([cell.temperature_max_c for cell in climate_cells], dtype=np.float32),
             precipitation_mm=np.array([cell.precipitation_mm for cell in climate_cells], dtype=np.float32),
             cloud_cover_pct=np.array([cell.cloud_cover_pct for cell in climate_cells], dtype=np.uint8),
         )
@@ -141,6 +163,8 @@ STUB_CLIMATE_CELLS: tuple[ClimateCell, ...] = (
         lat=37.5,
         lon=-122.0,
         temperature_c=(11.0, 12.0, 13.0, 14.0, 16.0, 18.0, 19.0, 20.0, 20.0, 18.0, 15.0, 12.0),
+        temperature_min_c=(6.0, 7.0, 8.0, 9.0, 10.0, 12.0, 13.0, 14.0, 14.0, 12.0, 9.0, 7.0),
+        temperature_max_c=(16.0, 17.0, 18.0, 20.0, 22.0, 24.0, 25.0, 26.0, 26.0, 24.0, 20.0, 17.0),
         precipitation_mm=(110.0, 90.0, 70.0, 35.0, 15.0, 5.0, 1.0, 2.0, 8.0, 30.0, 70.0, 100.0),
         cloud_cover_pct=(60, 55, 50, 40, 30, 20, 15, 15, 20, 30, 45, 55),
     ),
@@ -148,6 +172,8 @@ STUB_CLIMATE_CELLS: tuple[ClimateCell, ...] = (
         lat=41.9,
         lon=12.5,
         temperature_c=(8.0, 9.0, 12.0, 15.0, 19.0, 23.0, 26.0, 26.0, 23.0, 18.0, 13.0, 9.0),
+        temperature_min_c=(3.0, 4.0, 6.0, 9.0, 13.0, 17.0, 20.0, 20.0, 17.0, 13.0, 8.0, 4.0),
+        temperature_max_c=(13.0, 14.0, 18.0, 21.0, 25.0, 30.0, 33.0, 33.0, 29.0, 24.0, 18.0, 14.0),
         precipitation_mm=(80.0, 70.0, 60.0, 65.0, 45.0, 30.0, 20.0, 25.0, 70.0, 105.0, 115.0, 95.0),
         cloud_cover_pct=(55, 50, 45, 40, 30, 20, 15, 15, 25, 35, 50, 55),
     ),
@@ -155,6 +181,8 @@ STUB_CLIMATE_CELLS: tuple[ClimateCell, ...] = (
         lat=-33.9,
         lon=18.4,
         temperature_c=(21.0, 21.0, 20.0, 18.0, 16.0, 14.0, 13.0, 14.0, 15.0, 17.0, 18.0, 20.0),
+        temperature_min_c=(16.0, 16.0, 15.0, 13.0, 11.0, 8.0, 7.0, 8.0, 9.0, 11.0, 13.0, 15.0),
+        temperature_max_c=(27.0, 27.0, 26.0, 24.0, 21.0, 18.0, 17.0, 18.0, 19.0, 22.0, 24.0, 26.0),
         precipitation_mm=(15.0, 18.0, 20.0, 35.0, 75.0, 95.0, 110.0, 90.0, 45.0, 30.0, 20.0, 15.0),
         cloud_cover_pct=(20, 22, 28, 35, 45, 55, 60, 58, 45, 35, 28, 22),
     ),
@@ -162,6 +190,8 @@ STUB_CLIMATE_CELLS: tuple[ClimateCell, ...] = (
         lat=35.7,
         lon=139.7,
         temperature_c=(6.0, 7.0, 10.0, 15.0, 19.0, 22.0, 26.0, 28.0, 24.0, 18.0, 13.0, 8.0),
+        temperature_min_c=(1.0, 2.0, 5.0, 10.0, 14.0, 18.0, 22.0, 24.0, 20.0, 14.0, 8.0, 3.0),
+        temperature_max_c=(11.0, 12.0, 15.0, 20.0, 24.0, 27.0, 31.0, 33.0, 29.0, 23.0, 18.0, 13.0),
         precipitation_mm=(55.0, 60.0, 115.0, 125.0, 135.0, 160.0, 155.0, 170.0, 210.0, 195.0, 95.0, 55.0),
         cloud_cover_pct=(45, 45, 50, 55, 60, 70, 75, 70, 65, 55, 45, 40),
     ),
@@ -169,6 +199,8 @@ STUB_CLIMATE_CELLS: tuple[ClimateCell, ...] = (
         lat=-22.9,
         lon=-43.2,
         temperature_c=(27.0, 28.0, 27.0, 26.0, 24.0, 22.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0),
+        temperature_min_c=(23.0, 24.0, 23.0, 21.0, 19.0, 17.0, 17.0, 18.0, 19.0, 20.0, 21.0, 23.0),
+        temperature_max_c=(31.0, 32.0, 31.0, 30.0, 28.0, 26.0, 26.0, 27.0, 28.0, 29.0, 30.0, 31.0),
         precipitation_mm=(175.0, 160.0, 180.0, 140.0, 110.0, 90.0, 75.0, 70.0, 110.0, 130.0, 145.0, 165.0),
         cloud_cover_pct=(40, 38, 42, 45, 50, 55, 52, 48, 45, 42, 40, 38),
     ),
@@ -180,16 +212,21 @@ def clamp_score(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
-def temperature_score(observed_temperature_c: float, preferences: PreferenceInputs) -> float:
-    """Score temperature with one preferred band plus separate hot and cold guardrails."""
-    ideal_delta = abs(observed_temperature_c - preferences.preferred_day_temperature)
+def temperature_score(
+    _observed_average_c: float,
+    observed_min_c: float,
+    observed_max_c: float,
+    preferences: PreferenceInputs,
+) -> float:
+    """Score temperature using daytime highs and nighttime lows, not just monthly means."""
+    ideal_delta = abs(observed_max_c - preferences.preferred_day_temperature)
     ideal_distance = max(ideal_delta - TEMPERATURE_COMFORT_BAND_C, 0.0)
     ideal_score = clamp_score(1 - ideal_distance / TEMPERATURE_IDEAL_SLOPE_C)
 
-    heat_excess = max(observed_temperature_c - preferences.summer_heat_limit, 0.0)
+    heat_excess = max(observed_max_c - preferences.summer_heat_limit, 0.0)
     heat_score = clamp_score(1 - heat_excess / TEMPERATURE_LIMIT_SLOPE_C)
 
-    cold_excess = max(preferences.winter_cold_limit - observed_temperature_c, 0.0)
+    cold_excess = max(preferences.winter_cold_limit - observed_min_c, 0.0)
     cold_score = clamp_score(1 - cold_excess / TEMPERATURE_LIMIT_SLOPE_C)
 
     return (
@@ -221,7 +258,12 @@ def cloud_score(monthly_cloud_cover_pct: int, sunshine_preference: int) -> float
 def monthly_score(cell: ClimateCell, month_index: int, preferences: PreferenceInputs) -> float:
     """Combine the three monthly climate signals into one monthly fit score."""
     return (
-        temperature_score(cell.temperature_c[month_index], preferences)
+        temperature_score(
+            cell.temperature_c[month_index],
+            cell.temperature_min_c[month_index],
+            cell.temperature_max_c[month_index],
+            preferences,
+        )
         + rain_score(cell.precipitation_mm[month_index], preferences.dryness_preference)
         + cloud_score(cell.cloud_cover_pct[month_index], preferences.sunshine_preference)
     ) / 3
@@ -258,19 +300,20 @@ def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceI
     annual_scores = np.zeros(climate_matrix.latitudes.shape[0], dtype=np.float32)
 
     for month_index in range(MONTHS_PER_YEAR):
-        monthly_temperature = climate_matrix.temperature_c[:, month_index]
+        monthly_temperature_min = climate_matrix.temperature_min_c[:, month_index]
+        monthly_temperature_max = climate_matrix.temperature_max_c[:, month_index]
         monthly_precipitation = climate_matrix.precipitation_mm[:, month_index]
         monthly_cloud_cover = climate_matrix.cloud_cover_pct[:, month_index].astype(np.float32, copy=False)
 
         ideal_distance = np.maximum(
-            np.abs(monthly_temperature - preferred_day_temperature) - TEMPERATURE_COMFORT_BAND_C,
+            np.abs(monthly_temperature_max - preferred_day_temperature) - TEMPERATURE_COMFORT_BAND_C,
             0.0,
             dtype=np.float32,
         )
         ideal_scores = np.clip(1.0 - (ideal_distance / TEMPERATURE_IDEAL_SLOPE_C), 0.0, 1.0)
-        heat_excess = np.maximum(monthly_temperature - summer_heat_limit, 0.0, dtype=np.float32)
+        heat_excess = np.maximum(monthly_temperature_max - summer_heat_limit, 0.0, dtype=np.float32)
         heat_scores = np.clip(1.0 - (heat_excess / TEMPERATURE_LIMIT_SLOPE_C), 0.0, 1.0)
-        cold_excess = np.maximum(winter_cold_limit - monthly_temperature, 0.0, dtype=np.float32)
+        cold_excess = np.maximum(winter_cold_limit - monthly_temperature_min, 0.0, dtype=np.float32)
         cold_scores = np.clip(1.0 - (cold_excess / TEMPERATURE_LIMIT_SLOPE_C), 0.0, 1.0)
         temperature_scores = (
             ideal_scores * TEMPERATURE_IDEAL_WEIGHT
@@ -320,7 +363,14 @@ def score_matrix_row_breakdown(
     cloud_scores = []
 
     for month in range(MONTHS_PER_YEAR):
-        temp_scores.append(temperature_score(float(climate_matrix.temperature_c[row_index, month]), preferences))
+        temp_scores.append(
+            temperature_score(
+                float(climate_matrix.temperature_c[row_index, month]),
+                float(climate_matrix.temperature_min_c[row_index, month]),
+                float(climate_matrix.temperature_max_c[row_index, month]),
+                preferences,
+            )
+        )
         rain_scores.append(
             rain_score(float(climate_matrix.precipitation_mm[row_index, month]), preferences.dryness_preference)
         )
@@ -328,7 +378,8 @@ def score_matrix_row_breakdown(
             cloud_score(int(climate_matrix.cloud_cover_pct[row_index, month]), preferences.sunshine_preference)
         )
 
-    avg_temp_c = round(float(np.mean(climate_matrix.temperature_c[row_index])), 1)
+    avg_temp_max_c = round(float(np.mean(climate_matrix.temperature_max_c[row_index])), 1)
+    avg_temp_min_c = round(float(np.mean(climate_matrix.temperature_min_c[row_index])), 1)
     avg_precip_mm = round(float(np.mean(climate_matrix.precipitation_mm[row_index])), 1)
     avg_cloud_pct = round(float(np.mean(climate_matrix.cloud_cover_pct[row_index].astype(np.float32))), 1)
     avg_sun_pct = round(100.0 - avg_cloud_pct, 1)
@@ -336,8 +387,8 @@ def score_matrix_row_breakdown(
         ProbeMetricBreakdown(
             key="temp",
             label="temperature",
-            value=avg_temp_c,
-            display_value=f"{'+' if avg_temp_c > 0 else ''}{avg_temp_c:.1f}°C",
+            value=avg_temp_max_c,
+            display_value=f"{avg_temp_max_c:.1f}/{avg_temp_min_c:.1f}°C hi/lo",
             score=round(sum(temp_scores) / MONTHS_PER_YEAR, 3),
         ),
         ProbeMetricBreakdown(

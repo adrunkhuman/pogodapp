@@ -40,12 +40,12 @@ It is not a weather app. It scores long-term climate normals against a few user 
 - Current baseline: native `5m` WorldClim grids, meaning 5 arc-minutes per cell.
 - Runtime tables: `climate_cells(...)` and `cities(...)` inside `data/climate.duckdb`.
 - If the database is missing, the app falls back to a small in-repo stub dataset.
+- Temperature inputs now store monthly mean, monthly average daily low, and monthly average daily high normals.
 - Cloud cover is currently approximated from solar radiation.
 
 ## Scoring
 
-- Temperature uses one preferred temperature band plus separate summer and winter guardrails.
-- The current prototype still applies those semantics to monthly mean temperature until the dataset grows dedicated high/low normals.
+- Temperature uses average daily highs for the preferred day and summer limit, plus average daily lows for the winter limit.
 - Dryness is one-sided: wetter months only hurt the score.
 - Sunshine preference becomes a cloud-cover tolerance threshold.
 - Scores are normalized per request so the best available match lands at `1.0`.
