@@ -88,3 +88,30 @@ def test_ensure_climate_database_rejects_unknown_resolution(monkeypatch: pytest.
 
     with pytest.raises(ValueError, match="Unsupported climate resolution"):
         launcher.ensure_climate_database()
+
+
+def test_main_starts_uvicorn_with_custom_logging_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Args:
+        host = "127.0.0.1"
+        port = 8000
+        no_reload = False
+
+    run_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(launcher, "parse_args", Args)
+    monkeypatch.setattr(launcher, "resolve_reload", lambda: True)
+    monkeypatch.setattr(launcher, "ensure_climate_database", lambda: None)
+    monkeypatch.setattr(launcher.uvicorn, "run", lambda *args, **kwargs: run_calls.append({"args": args, **kwargs}))
+
+    launcher.main()
+
+    assert run_calls == [
+        {
+            "args": ("backend.main:app",),
+            "host": "127.0.0.1",
+            "port": 8000,
+            "reload": True,
+            "access_log": False,
+            "log_config": None,
+        }
+    ]

@@ -30,6 +30,26 @@ _PLAIN_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 _PLAIN_DATEFMT = "%H:%M:%S"
 
 
+def _build_handler(level: int) -> logging.Handler:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(level)
+
+    if _is_railway():
+        handler.setFormatter(_JSONFormatter())
+    else:
+        handler.setFormatter(logging.Formatter(_PLAIN_FORMAT, datefmt=_PLAIN_DATEFMT))
+
+    return handler
+
+
+def _configure_named_logger(name: str, level: int) -> None:
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    logger.propagate = False
+    logger.handlers.clear()
+    logger.addHandler(_build_handler(level))
+
+
 def configure_backend_logging() -> None:
     """Configure the backend logger for Railway (JSON/stdout) or local (plain/stdout).
 
@@ -39,19 +59,5 @@ def configure_backend_logging() -> None:
     level_name = os.getenv("LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
 
-    backend_logger = logging.getLogger("backend")
-    backend_logger.setLevel(level)
-    backend_logger.propagate = False
-
-    if backend_logger.handlers:
-        return
-
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(level)
-
-    if _is_railway():
-        handler.setFormatter(_JSONFormatter())
-    else:
-        handler.setFormatter(logging.Formatter(_PLAIN_FORMAT, datefmt=_PLAIN_DATEFMT))
-
-    backend_logger.addHandler(handler)
+    for logger_name in ("backend", "uvicorn", "uvicorn.error"):
+        _configure_named_logger(logger_name, level)
