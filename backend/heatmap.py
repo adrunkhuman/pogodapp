@@ -17,8 +17,8 @@ if TYPE_CHECKING:
 
     from .scoring import CellScorePoint
 
-WIDTH = 3584
-HEIGHT = 1792
+WIDTH = 2560
+HEIGHT = 1280
 BLUR_RADIUS = 7  # px — preserves more local structure while still showing broad regions
 DETAIL_PRESERVE_THRESHOLD = 0.35
 DETAIL_PRESERVE_STRENGTH = 0.9
@@ -165,7 +165,8 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
     rgba = _COLOR_RAMP_LOOKUP[styled_gray]
 
     buf = BytesIO()
-    Image.fromarray(rgba, mode="RGBA").save(buf, format="PNG", compress_level=4)
+    # Lower PNG compression trades a small size increase for materially less CPU per request.
+    Image.fromarray(rgba, mode="RGBA").save(buf, format="PNG", compress_level=1)
     return buf.getvalue()
 
 

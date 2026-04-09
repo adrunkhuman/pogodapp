@@ -6,9 +6,31 @@ import os
 import sys
 from datetime import UTC, datetime
 
+_RAILWAY_LEVEL_NAMES = {
+    logging.DEBUG: "debug",
+    logging.INFO: "info",
+    logging.WARNING: "warn",
+    logging.ERROR: "error",
+    logging.CRITICAL: "error",
+}
+_LOG_RECORD_DEFAULTS = frozenset(logging.makeLogRecord({}).__dict__)
 
-def _is_railway() -> bool:
+
+def is_railway_environment() -> bool:
+    """Return whether the app is running inside Railway."""
     return os.getenv("RAILWAY_ENVIRONMENT") is not None or os.getenv("RAILWAY_SERVICE_NAME") is not None
+
+
+def _serialize_log_value(value: object) -> object:
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, tuple):
+        return [_serialize_log_value(item) for item in value]
+    if isinstance(value, list):
+        return [_serialize_log_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _serialize_log_value(item) for key, item in value.items()}
+    return str(value)
 
 
 class _JSONFormatter(logging.Formatter):
@@ -16,11 +38,15 @@ class _JSONFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         entry: dict[str, object] = {
-            "level": record.levelname.lower(),
+            "level": _RAILWAY_LEVEL_NAMES.get(record.levelno, "info"),
             "message": record.getMessage(),
             "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "logger": record.name,
         }
+        for key, value in record.__dict__.items():
+            if key in _LOG_RECORD_DEFAULTS or key.startswith("_"):
+                continue
+            entry[key] = _serialize_log_value(value)
         if record.exc_info:
             entry["error"] = self.formatException(record.exc_info)
         return json.dumps(entry, ensure_ascii=False, separators=(",", ":"))
@@ -34,7 +60,7 @@ def _build_handler(level: int) -> logging.Handler:
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(level)
 
-    if _is_railway():
+    if is_railway_environment():
         handler.setFormatter(_JSONFormatter())
     else:
         handler.setFormatter(logging.Formatter(_PLAIN_FORMAT, datefmt=_PLAIN_DATEFMT))

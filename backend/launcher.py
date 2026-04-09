@@ -38,10 +38,20 @@ def ensure_climate_database() -> None:
     """Optionally build the climate database before the app imports its runtime repository."""
     database_path = resolve_climate_database_path()
     if database_path.exists():
-        logger.info("startup_db outcome=found path=%s", database_path)
+        logger.info(
+            "climate database ready", extra={"event": "startup_db", "outcome": "found", "path": str(database_path)}
+        )
         return
     if not resolve_build_climate_db_if_missing():
-        logger.info("startup_db outcome=missing_using_stub path=%s bootstrap=disabled", database_path)
+        logger.info(
+            "climate database missing; using stub data",
+            extra={
+                "event": "startup_db",
+                "outcome": "missing_using_stub",
+                "path": str(database_path),
+                "bootstrap": "disabled",
+            },
+        )
         return
 
     resolution_name = resolve_climate_resolution()
@@ -56,18 +66,26 @@ def ensure_climate_database() -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     cache_dir.mkdir(parents=True, exist_ok=True)
     logger.info(
-        "startup_bootstrap outcome=building_climate_db path=%s resolution=%s cache_dir=%s",
-        database_path,
-        resolution.name,
-        cache_dir,
+        "building climate database",
+        extra={
+            "event": "startup_bootstrap",
+            "outcome": "building_climate_db",
+            "path": str(database_path),
+            "resolution": resolution.name,
+            "cache_dir": str(cache_dir),
+        },
     )
     build_worldclim_database(output_path=database_path, cache_dir=cache_dir, resolution=resolution)
     validation = validate_climate_database(database_path, resolution=resolution)
     logger.info(
-        "startup_bootstrap outcome=ready_climate_db path=%s rows=%s cities=%s",
-        database_path,
-        validation.row_count,
-        validation.city_count,
+        "climate database ready",
+        extra={
+            "event": "startup_bootstrap",
+            "outcome": "ready_climate_db",
+            "path": str(database_path),
+            "row_count": validation.row_count,
+            "city_count": validation.city_count,
+        },
     )
 
 
@@ -75,9 +93,14 @@ def main() -> None:
     """Launch the app server after any requested climate bootstrap work."""
     args = parse_args()
     reload = resolve_reload() and not args.no_reload
-    logger.info("startup phase=begin host=%s port=%s reload=%s", args.host, args.port, reload)
+    logger.info(
+        "startup begin",
+        extra={"event": "startup", "phase": "begin", "host": args.host, "port": args.port, "reload": reload},
+    )
     ensure_climate_database()
-    logger.info("startup phase=starting_server host=%s port=%s", args.host, args.port)
+    logger.info(
+        "starting server", extra={"event": "startup", "phase": "starting_server", "host": args.host, "port": args.port}
+    )
     uvicorn.run("backend.main:app", host=args.host, port=args.port, reload=reload, access_log=False, log_config=None)
 
 

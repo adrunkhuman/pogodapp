@@ -14,6 +14,9 @@ from backend.scoring import ClimateCell, ClimateMatrix, PreferenceInputs, score_
 
 if TYPE_CHECKING:
     from _pytest.logging import LogCaptureFixture
+    from _pytest.monkeypatch import MonkeyPatch
+
+from backend import main as backend_main
 
 
 def _capture_backend_logs() -> tuple[logging.Logger, list[logging.Handler], bool]:
@@ -108,7 +111,7 @@ def test_home_page_renders() -> None:
     assert "POGODAPP" in response.text
     assert "Pick the climate you like and see where it shows up." in response.text
     assert 'hx-post="/score"' in response.text
-    assert 'hx-trigger="input changed delay:300ms"' in response.text
+    assert 'hx-trigger="load, input changed delay:300ms"' in response.text
     assert 'hx-sync="this:replace"' in response.text
     assert 'hx-swap="none"' in response.text
     assert 'id="map-description"' in response.text
@@ -133,6 +136,7 @@ def test_home_page_renders() -> None:
     assert MAP_PROJECTION.name in response.text
     assert "probeGridDegrees" in response.text
     assert str(GRID_DEGREES) in response.text
+    assert "POGODAPP_INITIAL_SCORES" not in response.text
 
 
 def test_home_page_uses_backend_default_preferences() -> None:
@@ -148,6 +152,13 @@ def test_home_page_uses_backend_default_preferences() -> None:
         assert f'max="{preference.maximum}"' in response.text
         assert f'step="{preference.step}"' in response.text
         assert f'value="{preference.value}"' in response.text
+
+
+def test_app_bootstrap_relies_on_htmx_load_trigger_instead_of_manual_submit() -> None:
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert 'window.htmx.trigger(form, "submit")' not in response.text
 
 
 def test_preference_contract_matches_issue_scope() -> None:
@@ -290,8 +301,17 @@ def test_http_requests_are_logged(caplog: LogCaptureFixture) -> None:
         _restore_backend_logs(backend_logger, original_handlers, original_propagate)
 
     assert response.status_code == 200
-    assert "http_request outcome=ok method=GET path=/health query=- status=200" in caplog.text
-    assert "client=testclient scheme=http http_version=1.1" in caplog.text
+    assert caplog.records
+    record = caplog.records[-1]
+    assert record.message == "http request finished"
+    assert record.event == "http_request"
+    assert record.outcome == "ok"
+    assert record.method == "GET"
+    assert record.path == "/health"
+    assert record.httpStatus == 200
+    assert record.srcIp == "testclient"
+    assert record.scheme == "http"
+    assert record.httpVersion == "1.1"
 
 
 def test_http_request_logs_client_errors(caplog: LogCaptureFixture) -> None:
@@ -304,7 +324,13 @@ def test_http_request_logs_client_errors(caplog: LogCaptureFixture) -> None:
         _restore_backend_logs(backend_logger, original_handlers, original_propagate)
 
     assert response.status_code == 404
-    assert "http_request outcome=client_error method=GET path=/missing-route query=- status=404" in caplog.text
+    assert caplog.records
+    record = caplog.records[-1]
+    assert record.message == "http request finished"
+    assert record.event == "http_request"
+    assert record.outcome == "client_error"
+    assert record.path == "/missing-route"
+    assert record.httpStatus == 404
 
 
 def test_http_request_logs_server_errors(caplog: LogCaptureFixture) -> None:
@@ -324,7 +350,13 @@ def test_http_request_logs_server_errors(caplog: LogCaptureFixture) -> None:
         _restore_backend_logs(backend_logger, original_handlers, original_propagate)
 
     assert response.status_code == 503
-    assert "http_request outcome=error method=POST path=/score query=- status=503" in caplog.text
+    assert caplog.records
+    record = caplog.records[-1]
+    assert record.message == "http request finished"
+    assert record.event == "http_request"
+    assert record.outcome == "error"
+    assert record.path == "/score"
+    assert record.httpStatus == 503
 
 
 def test_http_request_logs_uncaught_exceptions(caplog: LogCaptureFixture) -> None:
@@ -345,7 +377,32 @@ def test_http_request_logs_uncaught_exceptions(caplog: LogCaptureFixture) -> Non
         _restore_backend_logs(backend_logger, original_handlers, original_propagate)
 
     assert response.status_code == 500
-    assert "http_request outcome=error method=GET path=/boom query=x=1" in caplog.text
+    assert caplog.records
+    record = caplog.records[-1]
+    assert record.message == "http request failed"
+    assert record.event == "http_request"
+    assert record.outcome == "error"
+    assert record.path == "/boom"
+    assert record.query == "x=1"
+
+
+def test_http_requests_are_logged_on_railway_too(monkeypatch: MonkeyPatch, caplog: LogCaptureFixture) -> None:
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+    railway_client = TestClient(create_app(climate_repository=StubClimateRepository()))
+    backend_logger, original_handlers, original_propagate = _capture_backend_logs()
+
+    try:
+        with caplog.at_level(logging.INFO, logger="backend"):
+            response = railway_client.get("/health")
+    finally:
+        _restore_backend_logs(backend_logger, original_handlers, original_propagate)
+
+    assert response.status_code == 200
+    assert caplog.records
+    record = caplog.records[-1]
+    assert record.event == "http_request"
+    assert record.path == "/health"
+    assert record.httpStatus == 200
 
 
 def test_score_endpoint_accepts_form_encoded_preferences() -> None:
@@ -426,6 +483,60 @@ def test_score_endpoint_is_deterministic_for_the_same_preferences() -> None:
     assert second_response.status_code == 200
     assert first_response.json()["scores"] == second_response.json()["scores"]
     assert first_response.json()["heatmap"] == second_response.json()["heatmap"]
+
+
+def test_score_endpoint_reuses_cached_response_for_identical_preferences() -> None:
+    call_count = 0
+    original_builder = backend_main.build_score_response
+
+    def counted_builder(repository: StubClimateRepository, preferences: PreferenceInputs) -> dict[str, object]:
+        nonlocal call_count
+        call_count += 1
+        return original_builder(repository, preferences)
+
+    backend_main.build_score_response = counted_builder
+    cached_client = TestClient(create_app(climate_repository=StubClimateRepository()))
+
+    try:
+        first_response = cached_client.post("/score", data=default_form_data())
+        second_response = cached_client.post("/score", data=default_form_data())
+    finally:
+        backend_main.build_score_response = original_builder
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert call_count == 1
+
+
+def test_score_endpoint_evicts_oldest_cached_preferences_after_cache_limit() -> None:
+    call_count = 0
+    original_builder = backend_main.build_score_response
+
+    def counted_builder(repository: StubClimateRepository, preferences: PreferenceInputs) -> dict[str, object]:
+        nonlocal call_count
+        call_count += 1
+        return original_builder(repository, preferences)
+
+    backend_main.build_score_response = counted_builder
+    cached_client = TestClient(create_app(climate_repository=StubClimateRepository()))
+    base_form = default_form_data()
+
+    try:
+        for offset in range(17):
+            response = cached_client.post(
+                "/score",
+                data={**base_form, "dryness_preference": str(offset)},
+            )
+            assert response.status_code == 200
+
+        repeated_first = cached_client.post("/score", data={**base_form, "dryness_preference": "0"})
+        newest_repeat = cached_client.post("/score", data={**base_form, "dryness_preference": "16"})
+    finally:
+        backend_main.build_score_response = original_builder
+
+    assert repeated_first.status_code == 200
+    assert newest_repeat.status_code == 200
+    assert call_count == 18
 
 
 def test_dryness_preference_penalizes_rainier_cells() -> None:

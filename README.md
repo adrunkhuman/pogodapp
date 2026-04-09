@@ -135,8 +135,8 @@ Railway-specific notes from the platform docs:
 
 ## Observability
 
-- Pogodapp emits its own request logs instead of Uvicorn access logs.
-- Request logs include `outcome`, `method`, `path`, `query`, `status`, `client`, `scheme`, `http_version`, `bytes`, and `duration_ms`.
+- Pogodapp emits its own request logs instead of Uvicorn access logs, including on Railway.
+- Request logs are structured around `event=http_request` and include `outcome`, `method`, `path`, `query`, `httpStatus`, `srcIp`, `scheme`, `httpVersion`, `txBytes`, `responseTime`, and `host`.
 - Local runs use plain stdout logs; Railway uses single-line JSON on stdout for ingestion.
 
 ## Build Climate Data
