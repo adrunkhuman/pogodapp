@@ -99,6 +99,56 @@ def test_duckdb_climate_repository_loads_monthly_climate_rows(tmp_path: Path) ->
     )
 
 
+def test_duckdb_climate_repository_loads_compact_matrix_with_expected_order_and_dtypes(tmp_path: Path) -> None:
+    database_path = tmp_path / "climate.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(
+            """
+            CREATE TABLE climate_cells AS
+            SELECT
+                10.5 AS lat,
+                20.5 AS lon,
+                1.0 AS t_jan, 2.0 AS t_feb, 3.0 AS t_mar, 4.0 AS t_apr, 5.0 AS t_may, 6.0 AS t_jun,
+                7.0 AS t_jul, 8.0 AS t_aug, 9.0 AS t_sep, 10.0 AS t_oct, 11.0 AS t_nov, 12.0 AS t_dec,
+                -1.0 AS tmin_jan, 0.0 AS tmin_feb, 1.0 AS tmin_mar, 2.0 AS tmin_apr, 3.0 AS tmin_may, 4.0 AS tmin_jun,
+                5.0 AS tmin_jul, 6.0 AS tmin_aug, 7.0 AS tmin_sep, 8.0 AS tmin_oct, 9.0 AS tmin_nov, 10.0 AS tmin_dec,
+                3.0 AS tmax_jan, 4.0 AS tmax_feb, 5.0 AS tmax_mar, 6.0 AS tmax_apr, 7.0 AS tmax_may, 8.0 AS tmax_jun,
+                9.0 AS tmax_jul, 10.0 AS tmax_aug, 11.0 AS tmax_sep, 12.0 AS tmax_oct, 13.0 AS tmax_nov, 14.0 AS tmax_dec,
+                13.0 AS prec_jan, 14.0 AS prec_feb, 15.0 AS prec_mar, 16.0 AS prec_apr, 17.0 AS prec_may, 18.0 AS prec_jun,
+                19.0 AS prec_jul, 20.0 AS prec_aug, 21.0 AS prec_sep, 22.0 AS prec_oct, 23.0 AS prec_nov, 24.0 AS prec_dec,
+                25 AS cloud_jan, 26 AS cloud_feb, 27 AS cloud_mar, 28 AS cloud_apr, 29 AS cloud_may, 30 AS cloud_jun,
+                31 AS cloud_jul, 32 AS cloud_aug, 33 AS cloud_sep, 34 AS cloud_oct, 35 AS cloud_nov, 36 AS cloud_dec
+            """
+        )
+
+    matrix = DuckDbClimateRepository(database_path).get_climate_matrix()
+
+    assert matrix.temperature_c is None
+    assert matrix.latitudes.dtype == np.float32
+    assert matrix.longitudes.dtype == np.float32
+    assert matrix.temperature_min_c.dtype == np.float32
+    assert matrix.temperature_max_c.dtype == np.float32
+    assert matrix.precipitation_mm.dtype == np.float32
+    assert matrix.cloud_cover_pct.dtype == np.uint8
+    assert matrix.temperature_min_c.tolist() == [[-1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]]
+    assert matrix.temperature_max_c.tolist() == [[3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0]]
+    assert matrix.precipitation_mm.tolist() == [
+        [13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0]
+    ]
+    assert matrix.cloud_cover_pct.tolist() == [[25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]]
+
+
+def test_duckdb_climate_repository_raises_clear_error_for_compact_matrix_schema_mismatch(tmp_path: Path) -> None:
+    database_path = tmp_path / "climate.duckdb"
+    with duckdb.connect(str(database_path)) as connection:
+        connection.execute(
+            "CREATE TABLE climate_cells (lat DOUBLE, lon DOUBLE, tmin_jan DOUBLE, tmax_jan DOUBLE, prec_jan DOUBLE)"
+        )
+
+    with pytest.raises(ClimateDataError, match="Failed to read climate data"):
+        DuckDbClimateRepository(database_path).get_climate_matrix()
+
+
 def test_duckdb_climate_repository_loads_city_rows(tmp_path: Path) -> None:
     database_path = tmp_path / "climate.duckdb"
     with duckdb.connect(str(database_path)) as connection:
@@ -315,7 +365,7 @@ def test_create_app_preloads_optimized_repository() -> None:
             return ClimateMatrix(
                 latitudes=np.array([], dtype=np.float32),
                 longitudes=np.array([], dtype=np.float32),
-                temperature_c=np.empty((0, 12), dtype=np.float32),
+                temperature_c=None,
                 temperature_min_c=np.empty((0, 12), dtype=np.float32),
                 temperature_max_c=np.empty((0, 12), dtype=np.float32),
                 precipitation_mm=np.empty((0, 12), dtype=np.float32),
@@ -618,6 +668,7 @@ def test_duckdb_city_cache_aligns_indexes_with_shuffled_climate_rows(tmp_path: P
     climate_matrix = repository.get_climate_matrix()
     city_cache = repository.get_indexed_cities()
 
+    assert climate_matrix.temperature_c is None
     assert [city.name for city in city_cache.cities] == ["First Match"]
     mapped_index = int(city_cache.climate_indexes[0])
     assert float(climate_matrix.latitudes[mapped_index]) == 1.0

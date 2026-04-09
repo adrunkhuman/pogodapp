@@ -229,7 +229,7 @@ def test_vectorized_scoring_matches_scalar_scoring_for_stub_cells() -> None:
     climate_matrix = ClimateMatrix(
         latitudes=np.array([cell.lat for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
         longitudes=np.array([cell.lon for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
-        temperature_c=np.array([cell.temperature_c for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
+        temperature_c=None,
         temperature_min_c=np.array([cell.temperature_min_c for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
         temperature_max_c=np.array([cell.temperature_max_c for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
         precipitation_mm=np.array([cell.precipitation_mm for cell in STUB_CLIMATE_CELLS], dtype=np.float32),
@@ -294,3 +294,21 @@ def test_score_matrix_row_breakdown_returns_structured_probe_metrics() -> None:
     assert [metric.key for metric in breakdown.metrics] == ["temp", "high", "low", "rain", "sun"]
     assert [metric.label for metric in breakdown.metrics] == ["temp", "high", "low", "rain", "sun"]
     assert all(metric.display_value for metric in breakdown.metrics)
+
+
+def test_score_matrix_row_breakdown_works_without_cached_average_temperatures() -> None:
+    source = STUB_CLIMATE_CELLS[0]
+    climate_matrix = ClimateMatrix(
+        latitudes=np.array([source.lat], dtype=np.float32),
+        longitudes=np.array([source.lon], dtype=np.float32),
+        temperature_c=None,
+        temperature_min_c=np.array([source.temperature_min_c], dtype=np.float32),
+        temperature_max_c=np.array([source.temperature_max_c], dtype=np.float32),
+        precipitation_mm=np.array([source.precipitation_mm], dtype=np.float32),
+        cloud_cover_pct=np.array([source.cloud_cover_pct], dtype=np.uint8),
+    )
+
+    breakdown = score_matrix_row_breakdown(climate_matrix, 0, make_preferences())
+
+    assert isinstance(breakdown, ProbeBreakdown)
+    assert 0 <= breakdown.overall_score <= 1
