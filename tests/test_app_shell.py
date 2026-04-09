@@ -1,7 +1,7 @@
 import numpy as np
 from fastapi.testclient import TestClient
 
-from backend.cities import CityCandidate, CityRankingCache, continent_of
+from backend.cities import GRID_DEGREES, CityCandidate, CityRankingCache, continent_of
 from backend.climate_repository import ClimateDataError, StubClimateRepository
 from backend.config import DEFAULT_PREFERENCES, MAP_PROJECTION, PREFERENCE_FIELD_NAMES
 from backend.heatmap import HeatmapProjection
@@ -86,6 +86,7 @@ def test_home_page_renders() -> None:
     assert "Pick the climate you like and see where it shows up." in response.text
     assert 'hx-post="/score"' in response.text
     assert 'hx-trigger="input changed delay:300ms"' in response.text
+    assert 'hx-sync="this:replace"' in response.text
     assert 'hx-swap="none"' in response.text
     assert 'id="map-description"' in response.text
     assert 'id="map-status"' in response.text
@@ -107,6 +108,8 @@ def test_home_page_renders() -> None:
     assert "/static/app.js" in response.text
     assert "window.POGODAPP_MAP_CONFIG" in response.text
     assert MAP_PROJECTION.name in response.text
+    assert "probeGridDegrees" in response.text
+    assert str(GRID_DEGREES) in response.text
 
 
 def test_home_page_uses_backend_default_preferences() -> None:

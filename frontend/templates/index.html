@@ -31,6 +31,7 @@
           id="preferences"
           hx-post="/score"
           hx-trigger="input changed delay:300ms"
+          hx-sync="this:replace"
           hx-swap="none"
           hx-request='{"timeout": 30000}'
         >
@@ -84,6 +85,7 @@
       window.POGODAPP_MAP_CONFIG = {
         projection: {{ map_projection.name | tojson }},
         imageCorners: {{ map_projection.image_corners | tojson }},
+        probeGridDegrees: {{ probe_grid_degrees | tojson }},
       };
     </script>
     <script src="/static/map-core.js"></script>

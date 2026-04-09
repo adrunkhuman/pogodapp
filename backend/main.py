@@ -15,6 +15,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+from backend.cities import GRID_DEGREES
 from backend.climate_repository import (
     ClimateDataError,
     ClimateRepository,
@@ -77,7 +78,11 @@ def build_probe_response(breakdown: ProbeBreakdown) -> ProbeResponse:
 
 def build_index_context() -> dict[str, object]:
     """Return template context for the initial page render."""
-    return {"preferences": DEFAULT_PREFERENCES, "map_projection": MAP_PROJECTION}
+    return {
+        "preferences": DEFAULT_PREFERENCES,
+        "map_projection": MAP_PROJECTION,
+        "probe_grid_degrees": GRID_DEGREES,
+    }
 
 
 def preload_repository(repository: ClimateRepository) -> None:
