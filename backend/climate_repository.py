@@ -18,6 +18,10 @@ from backend.scoring import MONTHS_PER_YEAR, STUB_CLIMATE_CELLS, ClimateCell, Cl
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from numpy.typing import NDArray
+
+MONTH_NAMES = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+
 SELECT_CLIMATE_CELLS_QUERY = """
 SELECT
     lat,
@@ -29,6 +33,26 @@ SELECT
     cloud_jan, cloud_feb, cloud_mar, cloud_apr, cloud_may, cloud_jun, cloud_jul, cloud_aug, cloud_sep, cloud_oct, cloud_nov, cloud_dec
 FROM climate_cells
 """
+
+TEMPERATURE_COLUMNS = tuple(f"t_{month}" for month in MONTH_NAMES)
+TEMPERATURE_MIN_COLUMNS = tuple(f"tmin_{month}" for month in MONTH_NAMES)
+TEMPERATURE_MAX_COLUMNS = tuple(f"tmax_{month}" for month in MONTH_NAMES)
+PRECIPITATION_COLUMNS = tuple(f"prec_{month}" for month in MONTH_NAMES)
+CLOUD_COLUMNS = tuple(f"cloud_{month}" for month in MONTH_NAMES)
+SELECT_CLIMATE_MATRIX_QUERY = (
+    "SELECT\n    "
+    + ",\n    ".join(
+        (
+            "lat",
+            "lon",
+            *TEMPERATURE_MIN_COLUMNS,
+            *TEMPERATURE_MAX_COLUMNS,
+            *PRECIPITATION_COLUMNS,
+            *CLOUD_COLUMNS,
+        )
+    )
+    + "\nFROM climate_cells"
+)
 
 CITY_BASE_COLUMNS = ("name", "country_code", "lat", "lon", "cell_lat", "cell_lon")
 
@@ -47,7 +71,12 @@ class ClimateRepository(Protocol):
         """Return user-facing cities already mapped onto the dataset."""
 
     def get_climate_matrix(self) -> ClimateMatrix:
-        """Return compact climate arrays ready for vectorized scoring."""
+        """Return compact climate arrays ready for vectorized scoring.
+
+        DuckDB-backed repositories may omit `temperature_c` and return `None`
+        there; callers should rely on the min/max, precipitation, and cloud
+        arrays for hot-path work.
+        """
 
     def get_indexed_cities(self) -> CityRankingCache:
         """Return ranking-ready cities aligned with the current climate-matrix row order."""
@@ -138,51 +167,34 @@ class DuckDbClimateRepository:
         return self._cities
 
     def get_climate_matrix(self) -> ClimateMatrix:
-        """Load the climate table once into compact arrays for repeated scoring."""
+        """Load the scoring columns once into compact arrays for repeated scoring.
+
+        Monthly mean temperatures are omitted from the cached runtime matrix to
+        reduce RAM.
+
+        Raises:
+            ClimateDataError: The database file is missing, unreadable, or does
+                not match the runtime matrix contract.
+        """
         if self._climate_matrix is not None:
             return self._climate_matrix
 
-        rows = self._fetch_rows(SELECT_CLIMATE_CELLS_QUERY)
-        row_count = len(rows)
-        latitudes = np.empty(row_count, dtype=np.float32)
-        longitudes = np.empty(row_count, dtype=np.float32)
-        temperature_c = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.float32)
-        temperature_min_c = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.float32)
-        temperature_max_c = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.float32)
-        precipitation_mm = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.float32)
-        cloud_cover_pct = np.empty((row_count, MONTHS_PER_YEAR), dtype=np.uint8)
-
         try:
-            for index, row in enumerate(rows):
-                latitude, longitude, *monthly_values = row
-                latitudes[index] = float(cast("int | float", latitude))
-                longitudes[index] = float(cast("int | float", longitude))
-                temperature_c[index] = tuple(
-                    float(cast("int | float", value)) for value in monthly_values[:MONTHS_PER_YEAR]
-                )
-                temperature_min_c[index] = tuple(
-                    float(cast("int | float", value)) for value in monthly_values[MONTHS_PER_YEAR : MONTHS_PER_YEAR * 2]
-                )
-                temperature_max_c[index] = tuple(
-                    float(cast("int | float", value))
-                    for value in monthly_values[MONTHS_PER_YEAR * 2 : MONTHS_PER_YEAR * 3]
-                )
-                precipitation_mm[index] = tuple(
-                    float(cast("int | float", value))
-                    for value in monthly_values[MONTHS_PER_YEAR * 3 : MONTHS_PER_YEAR * 4]
-                )
-                cloud_cover_pct[index] = tuple(
-                    int(cast("int | float", value))
-                    for value in monthly_values[MONTHS_PER_YEAR * 4 : MONTHS_PER_YEAR * 5]
-                )
-        except (TypeError, ValueError) as error:
+            columns = self._fetch_numpy_columns(SELECT_CLIMATE_MATRIX_QUERY)
+            latitudes = np.asarray(columns["lat"], dtype=np.float32)
+            longitudes = np.asarray(columns["lon"], dtype=np.float32)
+            temperature_min_c = self._build_monthly_matrix(columns, TEMPERATURE_MIN_COLUMNS, dtype=np.float32)
+            temperature_max_c = self._build_monthly_matrix(columns, TEMPERATURE_MAX_COLUMNS, dtype=np.float32)
+            precipitation_mm = self._build_monthly_matrix(columns, PRECIPITATION_COLUMNS, dtype=np.float32)
+            cloud_cover_pct = self._build_monthly_matrix(columns, CLOUD_COLUMNS, dtype=np.uint8)
+        except (KeyError, TypeError, ValueError) as error:
             msg = f"Failed to map climate data from {self.database_path} into climate rows: {error}"
             raise ClimateDataError(msg) from error
 
         self._climate_matrix = ClimateMatrix(
             latitudes=latitudes,
             longitudes=longitudes,
-            temperature_c=temperature_c,
+            temperature_c=None,
             temperature_min_c=temperature_min_c,
             temperature_max_c=temperature_max_c,
             precipitation_mm=precipitation_mm,
@@ -256,6 +268,31 @@ class DuckDbClimateRepository:
                 raise ClimateDataError(msg) from error
             msg = f"Failed to read climate data from {self.database_path}: {error}"
             raise ClimateDataError(msg) from error
+
+    def _fetch_numpy_columns(self, query: str) -> dict[str, NDArray[np.generic]]:
+        if not self.database_path.exists():
+            msg = f"Climate database file not found: {self.database_path}"
+            raise ClimateDataError(msg)
+
+        try:
+            with duckdb.connect(str(self.database_path), read_only=True) as connection:
+                return cast("dict[str, NDArray[np.generic]]", connection.execute(query).fetchnumpy())
+        except duckdb.Error as error:
+            msg = f"Failed to read climate data from {self.database_path}: {error}"
+            raise ClimateDataError(msg) from error
+
+    def _build_monthly_matrix(
+        self,
+        columns: dict[str, NDArray[np.generic]],
+        month_columns: tuple[str, ...],
+        *,
+        dtype: np.dtype[np.float32] | np.dtype[np.uint8],
+    ) -> NDArray[np.float32] | NDArray[np.uint8]:
+        row_count = len(columns[month_columns[0]])
+        matrix = np.empty((row_count, MONTHS_PER_YEAR), dtype=dtype)
+        for month_index, column_name in enumerate(month_columns):
+            matrix[:, month_index] = np.asarray(columns[column_name], dtype=dtype)
+        return matrix
 
     def _row_to_climate_cell(self, row: tuple[object, ...]) -> ClimateCell:
         """Convert one database row into the in-memory scoring shape."""

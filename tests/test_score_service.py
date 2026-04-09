@@ -73,7 +73,7 @@ def test_build_score_response_returns_empty_payload_for_empty_matrix() -> None:
             return ClimateMatrix(
                 latitudes=np.array([], dtype=np.float32),
                 longitudes=np.array([], dtype=np.float32),
-                temperature_c=np.empty((0, 12), dtype=np.float32),
+                temperature_c=None,
                 temperature_min_c=np.empty((0, 12), dtype=np.float32),
                 temperature_max_c=np.empty((0, 12), dtype=np.float32),
                 precipitation_mm=np.empty((0, 12), dtype=np.float32),

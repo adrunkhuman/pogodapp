@@ -91,11 +91,11 @@ class ClimateCell:
 
 @dataclass(frozen=True, slots=True)
 class ClimateMatrix:
-    """Compact climate features for vectorized scoring."""
+    """Compact climate features for vectorized scoring; monthly averages may be omitted."""
 
     latitudes: NDArray[np.float32]
     longitudes: NDArray[np.float32]
-    temperature_c: NDArray[np.float32]
+    temperature_c: NDArray[np.float32] | None
     temperature_min_c: NDArray[np.float32]
     temperature_max_c: NDArray[np.float32]
     precipitation_mm: NDArray[np.float32]
@@ -109,7 +109,7 @@ class ClimateMatrix:
             msg = "longitudes must align with latitudes"
             raise ValueError(msg)
 
-        if self.temperature_c.shape != (cell_count, MONTHS_PER_YEAR):
+        if self.temperature_c is not None and self.temperature_c.shape != (cell_count, MONTHS_PER_YEAR):
             msg = "temperature_c must be shaped (cells, 12)"
             raise ValueError(msg)
 
@@ -462,17 +462,7 @@ def score_matrix_row_breakdown(
     row_index: int,
     preferences: PreferenceInputs,
 ) -> ProbeBreakdown:
-    """Build `/probe` metrics from typical high plus yearly high/low extremes for one cell."""
-    row_cell = ClimateCell(
-        lat=float(climate_matrix.latitudes[row_index]),
-        lon=float(climate_matrix.longitudes[row_index]),
-        temperature_c=tuple(float(value) for value in climate_matrix.temperature_c[row_index]),
-        temperature_min_c=tuple(float(value) for value in climate_matrix.temperature_min_c[row_index]),
-        temperature_max_c=tuple(float(value) for value in climate_matrix.temperature_max_c[row_index]),
-        precipitation_mm=tuple(float(value) for value in climate_matrix.precipitation_mm[row_index]),
-        cloud_cover_pct=tuple(int(value) for value in climate_matrix.cloud_cover_pct[row_index]),
-    )
-
+    """Build `/probe` metrics from min/max, rain, and cloud rows without cached mean temperatures."""
     typical_high_value = float(np.median(climate_matrix.temperature_max_c[row_index]))
     hottest_month_high_value = float(np.max(climate_matrix.temperature_max_c[row_index]))
     coldest_month_low_value = float(np.min(climate_matrix.temperature_min_c[row_index]))
@@ -488,9 +478,30 @@ def score_matrix_row_breakdown(
     avg_precip_mm = round(float(np.mean(climate_matrix.precipitation_mm[row_index])), 1)
     avg_cloud_pct = round(float(np.mean(climate_matrix.cloud_cover_pct[row_index].astype(np.float32))), 1)
     avg_sun_pct = round(100.0 - avg_cloud_pct, 1)
-    rain_score_value = round(rain_profile_score(row_cell.precipitation_mm, preferences.dryness_preference), 3)
-    sun_score_value = round(sunshine_profile_score(row_cell.cloud_cover_pct, preferences.sunshine_preference), 3)
-    overall_score = round(annual_score(row_cell, preferences), 4)
+    monthly_precipitation = tuple(float(value) for value in climate_matrix.precipitation_mm[row_index])
+    monthly_cloud_cover = tuple(int(value) for value in climate_matrix.cloud_cover_pct[row_index])
+    temperature_score_value = weighted_product_score(
+        (typical_score, TEMPERATURE_IDEAL_WEIGHT),
+        (high_score, TEMPERATURE_HEAT_WEIGHT),
+        (low_score, TEMPERATURE_COLD_WEIGHT),
+    )
+    rain_score = rain_profile_score(monthly_precipitation, preferences.dryness_preference)
+    sun_score = sunshine_profile_score(monthly_cloud_cover, preferences.sunshine_preference)
+    temperature_weight, rain_weight, sun_weight = preference_block_weights(
+        preferences.dryness_preference,
+        preferences.sunshine_preference,
+    )
+    preference_score_value = weighted_product_score(
+        (rain_score, rain_weight),
+        (sun_score, sun_weight),
+    )
+    overall_score = round(
+        weighted_product_score(
+            (temperature_score_value, temperature_weight),
+            (preference_score_value, 1 - temperature_weight),
+        ),
+        4,
+    )
     metric_scores = (
         ProbeMetricBreakdown(
             key="temp",
@@ -518,14 +529,14 @@ def score_matrix_row_breakdown(
             label="rain",
             value=avg_precip_mm,
             display_value=f"{round(avg_precip_mm)}mm/mo",
-            score=rain_score_value,
+            score=round(rain_score, 3),
         ),
         ProbeMetricBreakdown(
             key="sun",
             label="sun",
             value=avg_sun_pct,
             display_value=f"{round(avg_sun_pct)}% sun",
-            score=sun_score_value,
+            score=round(sun_score, 3),
         ),
     )
     return ProbeBreakdown(overall_score=overall_score, metrics=metric_scores)
