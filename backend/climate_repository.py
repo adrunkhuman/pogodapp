@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast, overload
 
 import duckdb
 import numpy as np
@@ -21,6 +21,8 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 MONTH_NAMES = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+FLOAT32_DTYPE = np.dtype(np.float32)
+UINT8_DTYPE = np.dtype(np.uint8)
 
 SELECT_CLIMATE_CELLS_QUERY = """
 SELECT
@@ -181,12 +183,12 @@ class DuckDbClimateRepository:
 
         try:
             columns = self._fetch_numpy_columns(SELECT_CLIMATE_MATRIX_QUERY)
-            latitudes = np.asarray(columns["lat"], dtype=np.float32)
-            longitudes = np.asarray(columns["lon"], dtype=np.float32)
-            temperature_min_c = self._build_monthly_matrix(columns, TEMPERATURE_MIN_COLUMNS, dtype=np.float32)
-            temperature_max_c = self._build_monthly_matrix(columns, TEMPERATURE_MAX_COLUMNS, dtype=np.float32)
-            precipitation_mm = self._build_monthly_matrix(columns, PRECIPITATION_COLUMNS, dtype=np.float32)
-            cloud_cover_pct = self._build_monthly_matrix(columns, CLOUD_COLUMNS, dtype=np.uint8)
+            latitudes = np.asarray(columns["lat"], dtype=FLOAT32_DTYPE)
+            longitudes = np.asarray(columns["lon"], dtype=FLOAT32_DTYPE)
+            temperature_min_c = self._build_monthly_matrix(columns, TEMPERATURE_MIN_COLUMNS, dtype=FLOAT32_DTYPE)
+            temperature_max_c = self._build_monthly_matrix(columns, TEMPERATURE_MAX_COLUMNS, dtype=FLOAT32_DTYPE)
+            precipitation_mm = self._build_monthly_matrix(columns, PRECIPITATION_COLUMNS, dtype=FLOAT32_DTYPE)
+            cloud_cover_pct = self._build_monthly_matrix(columns, CLOUD_COLUMNS, dtype=UINT8_DTYPE)
         except (KeyError, TypeError, ValueError) as error:
             msg = f"Failed to map climate data from {self.database_path} into climate rows: {error}"
             raise ClimateDataError(msg) from error
@@ -281,6 +283,24 @@ class DuckDbClimateRepository:
             msg = f"Failed to read climate data from {self.database_path}: {error}"
             raise ClimateDataError(msg) from error
 
+    @overload
+    def _build_monthly_matrix(
+        self,
+        columns: dict[str, NDArray[np.generic]],
+        month_columns: tuple[str, ...],
+        *,
+        dtype: np.dtype[np.float32],
+    ) -> NDArray[np.float32]: ...
+
+    @overload
+    def _build_monthly_matrix(
+        self,
+        columns: dict[str, NDArray[np.generic]],
+        month_columns: tuple[str, ...],
+        *,
+        dtype: np.dtype[np.uint8],
+    ) -> NDArray[np.uint8]: ...
+
     def _build_monthly_matrix(
         self,
         columns: dict[str, NDArray[np.generic]],
@@ -292,7 +312,7 @@ class DuckDbClimateRepository:
         matrix = np.empty((row_count, MONTHS_PER_YEAR), dtype=dtype)
         for month_index, column_name in enumerate(month_columns):
             matrix[:, month_index] = np.asarray(columns[column_name], dtype=dtype)
-        return matrix
+        return cast("NDArray[np.float32] | NDArray[np.uint8]", matrix)
 
     def _row_to_climate_cell(self, row: tuple[object, ...]) -> ClimateCell:
         """Convert one database row into the in-memory scoring shape."""
