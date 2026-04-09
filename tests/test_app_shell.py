@@ -231,6 +231,14 @@ def test_map_contract_does_not_depend_on_remote_basemap_assets() -> None:
     assert "https://" not in probe_response.text
 
 
+def test_home_page_uses_gzip_when_requested() -> None:
+    response = client.get("/", headers={"Accept-Encoding": "gzip"})
+
+    assert response.status_code == 200
+    assert response.headers.get("content-encoding") == "gzip"
+    assert "Accept-Encoding" in response.headers.get("vary", "")
+
+
 def test_score_endpoint_accepts_form_encoded_preferences() -> None:
     response = client.post(
         "/score",
@@ -284,6 +292,19 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
     assert all(count <= 30 for count in continent_counts.values())
     # Heatmap is a PNG data URL
     assert payload["heatmap"].startswith("data:image/png;base64,")
+
+
+def test_score_endpoint_uses_gzip_when_requested() -> None:
+    response = client.post(
+        "/score",
+        data=default_form_data(),
+        headers={"Accept-Encoding": "gzip"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.headers.get("content-encoding") == "gzip"
+    assert "Accept-Encoding" in response.headers.get("vary", "")
 
 
 def test_score_endpoint_is_deterministic_for_the_same_preferences() -> None:

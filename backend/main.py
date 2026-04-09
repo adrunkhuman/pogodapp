@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Annotated, Protocol, cast
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -137,6 +138,7 @@ def create_app(
     """
     configure_backend_logging()
     app = FastAPI(title="Pogodapp")
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
     limiter = Limiter(key_func=get_remote_address)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
