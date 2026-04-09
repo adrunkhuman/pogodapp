@@ -89,6 +89,7 @@ Notes:
 - Live reload is on by default.
 - If `data/climate.duckdb` exists, startup warms the climate matrix, city cache, and heatmap projection.
 - If preload fails, startup logs the problem and requests fall back to the existing `503` path.
+- Large dynamic responses are gzip-compressed when the client sends `Accept-Encoding: gzip`; small responses like `/health` may stay uncompressed.
 
 ## Deployment
 
@@ -104,6 +105,7 @@ Relevant environment variables:
 - `POGODAPP_HOST`: bind host override. Default: `127.0.0.1` locally, `0.0.0.0` when a platform injects `PORT`.
 - `PORT`: bind port. Default: `8000`.
 - `POGODAPP_RELOAD`: toggles Uvicorn reload. Default: on for local runs, off when `PORT` is injected.
+- `LOG_LEVEL`: log level override for app and server logs. Default: `INFO`.
 
 Generic deployment shape:
 
@@ -129,6 +131,13 @@ Railway-specific notes from the platform docs:
 - Volumes are mounted only at runtime, not during build or pre-deploy.
 - Variables configured in Railway are exposed to the app as normal environment variables.
 - The first deploy on an empty volume can take a while because the app builds the climate database before Uvicorn starts.
+- On Railway, logs switch to single-line JSON automatically when `RAILWAY_ENVIRONMENT` or `RAILWAY_SERVICE_NAME` is present.
+
+## Observability
+
+- Pogodapp emits its own request logs instead of Uvicorn access logs.
+- Request logs include `outcome`, `method`, `path`, `query`, `status`, `client`, `scheme`, `http_version`, `bytes`, and `duration_ms`.
+- Local runs use plain stdout logs; Railway uses single-line JSON on stdout for ingestion.
 
 ## Build Climate Data
 

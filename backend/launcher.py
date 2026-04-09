@@ -78,7 +78,7 @@ def main() -> None:
     logger.info("startup phase=begin host=%s port=%s reload=%s", args.host, args.port, reload)
     ensure_climate_database()
     logger.info("startup phase=starting_server host=%s port=%s", args.host, args.port)
-    uvicorn.run("backend.main:app", host=args.host, port=args.port, reload=reload)
+    uvicorn.run("backend.main:app", host=args.host, port=args.port, reload=reload, access_log=False, log_config=None)
 
 
 if __name__ == "__main__":

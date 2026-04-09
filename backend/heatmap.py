@@ -17,8 +17,8 @@ if TYPE_CHECKING:
 
     from .scoring import CellScorePoint
 
-WIDTH = 4096
-HEIGHT = 2048
+WIDTH = 3584
+HEIGHT = 1792
 BLUR_RADIUS = 7  # px — preserves more local structure while still showing broad regions
 DETAIL_PRESERVE_THRESHOLD = 0.35
 DETAIL_PRESERVE_STRENGTH = 0.9
@@ -32,10 +32,10 @@ if MAP_PROJECTION.name != "mercator" or _MERCATOR_MAX_RENDER_LATITUDE is None:
     msg = f"Unsupported heatmap projection: {MAP_PROJECTION.name}"
     raise ValueError(msg)
 
-# Mercator y at the maximum latitude — used to normalise y to [0, HEIGHT].
+# Mercator y at the maximum latitude, used to normalise y to [0, HEIGHT].
 _Y_MAX = math.log(math.tan(math.pi / 4 + _MERCATOR_MAX_RENDER_LATITUDE * math.pi / 360))
 
-# Color ramp: stop format (value, (R, G, B, A)). Value 0.0 maps to alpha=0 (transparent).
+# 0.0 stays transparent; higher scores interpolate through the RGBA ramp.
 _COLOR_STOPS: list[tuple[float, tuple[int, int, int, int]]] = [
     (0.00, (53, 92, 125, 0)),
     (0.20, (53, 92, 125, 89)),
@@ -86,7 +86,6 @@ def _apply_color_ramp(values: np.ndarray) -> np.ndarray:
         for ch in range(4):
             rgba[..., ch] += np.where(in_band, c0[ch] + f * (c1[ch] - c0[ch]), 0.0)
 
-    # Pin the final stop exactly
     at_top = values >= _COLOR_STOPS[-1][0]
     for ch in range(4):
         rgba[..., ch] = np.where(at_top, _COLOR_STOPS[-1][1][ch], rgba[..., ch])
@@ -151,9 +150,7 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
     grid = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
     np.maximum.at(grid, (projection.ys, projection.xs), scores[projection.score_indexes])
 
-    # Land mask built from the projection itself.
-    # Dilated by MaxFilter so gaps between cell centers at high Mercator latitudes
-    # (where adjacent cells land 2-3 pixels apart) don't create scan-line stripes.
+    # Dilate the land mask so sparse high-latitude scanlines do not stripe after blur.
     land_mask_raw = np.zeros((HEIGHT, WIDTH), dtype=np.uint8)
     land_mask_raw[projection.ys, projection.xs] = 255
     land_mask = np.asarray(Image.fromarray(land_mask_raw, mode="L").filter(ImageFilter.MaxFilter(7))) > 0
@@ -168,7 +165,7 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
     rgba = _COLOR_RAMP_LOOKUP[styled_gray]
 
     buf = BytesIO()
-    Image.fromarray(rgba, mode="RGBA").save(buf, format="PNG", compress_level=1)
+    Image.fromarray(rgba, mode="RGBA").save(buf, format="PNG", compress_level=4)
     return buf.getvalue()
 
 

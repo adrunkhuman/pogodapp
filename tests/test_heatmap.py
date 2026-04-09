@@ -112,6 +112,18 @@ def test_heatmap_png_keeps_mid_strength_pixel_visible_when_surrounded_by_weaker_
     assert alpha[peak_y, peak_x] >= 125
 
 
+def test_heatmap_png_uses_configured_raster_dimensions() -> None:
+    latitudes = np.array([0.0], dtype=np.float32)
+    longitudes = np.array([0.0], dtype=np.float32)
+    scores = np.array([1.0], dtype=np.float32)
+
+    projection = HeatmapProjection.from_coordinates(latitudes, longitudes)
+    png_bytes = render_heatmap_png_from_projection(projection, scores)
+    image = Image.open(BytesIO(png_bytes))
+
+    assert image.size == (WIDTH, HEIGHT)
+
+
 def test_stylize_heatmap_gray_quantizes_to_limited_band_values() -> None:
     gray = np.array([[0, 20, 60, 110, 170, 230, 255]], dtype=np.uint8)
 

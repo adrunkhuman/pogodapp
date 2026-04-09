@@ -1,6 +1,10 @@
 "use strict";
 
 const probeCache = new Map();
+const PROBE_GRID_DEGREES = window.POGODAPP_MAP_CONFIG?.probeGridDegrees ?? (5 / 60);
+const PROBE_GRID_HALF_DEGREES = PROBE_GRID_DEGREES / 2;
+const PROBE_MAX_LATITUDE_INDEX = Math.round(180 / PROBE_GRID_DEGREES) - 1;
+const PROBE_MAX_LONGITUDE_INDEX = Math.round(360 / PROBE_GRID_DEGREES) - 1;
 
 document.addEventListener("input", (event) => {
   if (event.target.closest("#preferences")) probeCache.clear();
@@ -10,6 +14,26 @@ function getCurrentPreferences() {
   const form = document.getElementById("preferences");
   if (!form) return null;
   return Object.fromEntries(new FormData(form).entries());
+}
+
+function roundProbeCoordinate(value) {
+  return Math.round(value * 10000) / 10000;
+}
+
+function snapProbeCoordinate(lat, lon) {
+  const latitudeIndex = Math.min(
+    Math.max(Math.round((90 - PROBE_GRID_HALF_DEGREES - lat) / PROBE_GRID_DEGREES), 0),
+    PROBE_MAX_LATITUDE_INDEX,
+  );
+  const longitudeIndex = Math.min(
+    Math.max(Math.round((lon - (-180 + PROBE_GRID_HALF_DEGREES)) / PROBE_GRID_DEGREES), 0),
+    PROBE_MAX_LONGITUDE_INDEX,
+  );
+
+  return {
+    lat: roundProbeCoordinate(90 - PROBE_GRID_HALF_DEGREES - latitudeIndex * PROBE_GRID_DEGREES),
+    lon: roundProbeCoordinate(-180 + PROBE_GRID_HALF_DEGREES + longitudeIndex * PROBE_GRID_DEGREES),
+  };
 }
 
 function positionTooltip(x, y) {
@@ -140,7 +164,9 @@ function fetchProbe(lat, lon, clientX, clientY, cityHeader = null, { hideDelayMs
   const prefs = getCurrentPreferences();
   if (!prefs) return;
 
-  const cacheKey = `${lat},${lon},${new URLSearchParams(prefs)}`;
+  const snapped = snapProbeCoordinate(lat, lon);
+
+  const cacheKey = `${snapped.lat},${snapped.lon},${new URLSearchParams(prefs)}`;
   const cached = probeCache.get(cacheKey);
   if (cached) {
     abortActiveProbe();
@@ -151,7 +177,7 @@ function fetchProbe(lat, lon, clientX, clientY, cityHeader = null, { hideDelayMs
   abortActiveProbe();
   probeController = new AbortController();
   probeTimeoutId = setTimeout(() => probeController.abort(), PROBE_TIMEOUT_MS);
-  const params = new URLSearchParams({ lat, lon, ...prefs });
+  const params = new URLSearchParams({ lat: snapped.lat, lon: snapped.lon, ...prefs });
 
   fetch(`/probe?${params}`, { signal: probeController.signal })
     .then((response) => {

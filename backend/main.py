@@ -3,11 +3,13 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 from pathlib import Path
+from time import perf_counter
 from typing import TYPE_CHECKING, Annotated, Protocol, cast
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, ValidationError
@@ -15,6 +17,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+from backend.cities import GRID_DEGREES
 from backend.climate_repository import (
     ClimateDataError,
     ClimateRepository,
@@ -31,6 +34,8 @@ from backend.scoring import (
 )
 
 if TYPE_CHECKING:
+    from starlette.middleware.base import RequestResponseEndpoint
+
     from backend.scoring import ClimateMatrix
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -40,6 +45,8 @@ TEMPLATES_DIR = FRONTEND_DIR / "templates"
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 logger = logging.getLogger(__name__)
+CLIENT_ERROR_STATUS_MIN = 400
+SERVER_ERROR_STATUS_MIN = 500
 
 
 class _SupportsProbeRepository(Protocol):
@@ -77,7 +84,11 @@ def build_probe_response(breakdown: ProbeBreakdown) -> ProbeResponse:
 
 def build_index_context() -> dict[str, object]:
     """Return template context for the initial page render."""
-    return {"preferences": DEFAULT_PREFERENCES, "map_projection": MAP_PROJECTION}
+    return {
+        "preferences": DEFAULT_PREFERENCES,
+        "map_projection": MAP_PROJECTION,
+        "probe_grid_degrees": GRID_DEGREES,
+    }
 
 
 def preload_repository(repository: ClimateRepository) -> None:
@@ -120,18 +131,76 @@ async def _rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse({"detail": "Too many requests"}, status_code=429)
 
 
+def _request_log_context(request: Request, response: Response | None = None) -> tuple[str, str, str, str, int | str]:
+    client = request.client.host if request.client else "unknown"
+    query = request.url.query or "-"
+    content_length = response.headers.get("content-length", "-") if response is not None else "-"
+    http_version = request.scope.get("http_version", "unknown")
+    return client, query, request.url.scheme, http_version, content_length
+
+
+def _request_outcome(status_code: int) -> str:
+    if status_code >= SERVER_ERROR_STATUS_MIN:
+        return "error"
+    if status_code >= CLIENT_ERROR_STATUS_MIN:
+        return "client_error"
+    return "ok"
+
+
+def _attach_http_request_logging(app: FastAPI) -> None:
+    @app.middleware("http")
+    async def log_http_requests(request: Request, call_next: RequestResponseEndpoint) -> Response:
+        started = perf_counter()
+
+        try:
+            response = await call_next(request)
+        except Exception:
+            client, query, scheme, http_version, content_length = _request_log_context(request)
+            logger.exception(
+                "http_request outcome=error method=%s path=%s query=%s client=%s scheme=%s http_version=%s bytes=%s duration_ms=%.2f",
+                request.method,
+                request.url.path,
+                query,
+                client,
+                scheme,
+                http_version,
+                content_length,
+                (perf_counter() - started) * 1000,
+            )
+            raise
+
+        client, query, scheme, http_version, content_length = _request_log_context(request, response)
+        logger.info(
+            "http_request outcome=%s method=%s path=%s query=%s status=%d client=%s scheme=%s http_version=%s bytes=%s duration_ms=%.2f",
+            _request_outcome(response.status_code),
+            request.method,
+            request.url.path,
+            query,
+            response.status_code,
+            client,
+            scheme,
+            http_version,
+            content_length,
+            (perf_counter() - started) * 1000,
+        )
+        return response
+
+
 def create_app(
     climate_repository: ClimateRepository | None = None,
 ) -> FastAPI:
     """Create the FastAPI application.
 
-    The app serves the initial shell, static frontend assets, and the `/score`
-    JSON API. `climate_repository` is injectable for tests; production wiring
-    falls back to the local DuckDB artifact when present and otherwise uses the
-    in-repo stub dataset.
+    The app serves the initial shell, static assets, `/score`, `/probe`, and
+    `/health`, and wires standard response compression plus request logging.
+    `climate_repository` is injectable for tests; production wiring falls back
+    to the local DuckDB artifact when present and otherwise uses the in-repo
+    stub dataset.
     """
     configure_backend_logging()
     app = FastAPI(title="Pogodapp")
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
+    _attach_http_request_logging(app)
     limiter = Limiter(key_func=get_remote_address)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)

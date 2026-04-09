@@ -1,12 +1,35 @@
+import logging
+from typing import TYPE_CHECKING
+
 import numpy as np
 from fastapi.testclient import TestClient
 
-from backend.cities import CityCandidate, CityRankingCache, continent_of
+from backend.cities import GRID_DEGREES, CityCandidate, CityRankingCache, continent_of
 from backend.climate_repository import ClimateDataError, StubClimateRepository
 from backend.config import DEFAULT_PREFERENCES, MAP_PROJECTION, PREFERENCE_FIELD_NAMES
 from backend.heatmap import HeatmapProjection
+from backend.logging_config import configure_backend_logging
 from backend.main import build_probe_response, create_app
 from backend.scoring import ClimateCell, ClimateMatrix, PreferenceInputs, score_matrix_row_breakdown, score_preferences
+
+if TYPE_CHECKING:
+    from _pytest.logging import LogCaptureFixture
+
+
+def _capture_backend_logs() -> tuple[logging.Logger, list[logging.Handler], bool]:
+    configure_backend_logging()
+    backend_logger = logging.getLogger("backend")
+    original_handlers = backend_logger.handlers[:]
+    original_propagate = backend_logger.propagate
+    backend_logger.handlers = []
+    backend_logger.propagate = True
+    return backend_logger, original_handlers, original_propagate
+
+
+def _restore_backend_logs(backend_logger: logging.Logger, handlers: list[logging.Handler], propagate: bool) -> None:
+    backend_logger.handlers = handlers
+    backend_logger.propagate = propagate
+
 
 client = TestClient(create_app(climate_repository=StubClimateRepository()))
 
@@ -86,6 +109,7 @@ def test_home_page_renders() -> None:
     assert "Pick the climate you like and see where it shows up." in response.text
     assert 'hx-post="/score"' in response.text
     assert 'hx-trigger="input changed delay:300ms"' in response.text
+    assert 'hx-sync="this:replace"' in response.text
     assert 'hx-swap="none"' in response.text
     assert 'id="map-description"' in response.text
     assert 'id="map-status"' in response.text
@@ -107,6 +131,8 @@ def test_home_page_renders() -> None:
     assert "/static/app.js" in response.text
     assert "window.POGODAPP_MAP_CONFIG" in response.text
     assert MAP_PROJECTION.name in response.text
+    assert "probeGridDegrees" in response.text
+    assert str(GRID_DEGREES) in response.text
 
 
 def test_home_page_uses_backend_default_preferences() -> None:
@@ -228,6 +254,100 @@ def test_map_contract_does_not_depend_on_remote_basemap_assets() -> None:
     assert "https://" not in probe_response.text
 
 
+def test_probe_script_snaps_cache_keys_and_query_params_to_backend_grid() -> None:
+    response = client.get("/static/map-probe.js")
+
+    assert response.status_code == 200
+    assert "function snapProbeCoordinate" in response.text
+    assert "probeGridDegrees" in response.text
+    assert "const snapped = snapProbeCoordinate(lat, lon);" in response.text
+    assert "const cacheKey = `${snapped.lat},${snapped.lon},${new URLSearchParams(prefs)}`;" in response.text
+    assert "new URLSearchParams({ lat: snapped.lat, lon: snapped.lon, ...prefs });" in response.text
+
+
+def test_home_page_uses_gzip_when_requested() -> None:
+    response = client.get("/", headers={"Accept-Encoding": "gzip"})
+
+    assert response.status_code == 200
+    assert response.headers.get("content-encoding") == "gzip"
+    assert "Accept-Encoding" in response.headers.get("vary", "")
+
+
+def test_small_health_response_stays_uncompressed() -> None:
+    response = client.get("/health", headers={"Accept-Encoding": "gzip"})
+
+    assert response.status_code == 200
+    assert response.headers.get("content-encoding") is None
+
+
+def test_http_requests_are_logged(caplog: LogCaptureFixture) -> None:
+    backend_logger, original_handlers, original_propagate = _capture_backend_logs()
+
+    try:
+        with caplog.at_level(logging.INFO, logger="backend"):
+            response = client.get("/health")
+    finally:
+        _restore_backend_logs(backend_logger, original_handlers, original_propagate)
+
+    assert response.status_code == 200
+    assert "http_request outcome=ok method=GET path=/health query=- status=200" in caplog.text
+    assert "client=testclient scheme=http http_version=1.1" in caplog.text
+
+
+def test_http_request_logs_client_errors(caplog: LogCaptureFixture) -> None:
+    backend_logger, original_handlers, original_propagate = _capture_backend_logs()
+
+    try:
+        with caplog.at_level(logging.INFO, logger="backend"):
+            response = client.get("/missing-route")
+    finally:
+        _restore_backend_logs(backend_logger, original_handlers, original_propagate)
+
+    assert response.status_code == 404
+    assert "http_request outcome=client_error method=GET path=/missing-route query=- status=404" in caplog.text
+
+
+def test_http_request_logs_server_errors(caplog: LogCaptureFixture) -> None:
+    class FailingRepository(StubClimateRepository):
+        def get_climate_matrix(self) -> ClimateMatrix:
+            msg = "db unavailable"
+            raise ClimateDataError(msg)
+
+    failing_client = TestClient(create_app(climate_repository=FailingRepository()))
+
+    backend_logger, original_handlers, original_propagate = _capture_backend_logs()
+
+    try:
+        with caplog.at_level(logging.INFO, logger="backend"):
+            response = failing_client.post("/score", data=default_form_data())
+    finally:
+        _restore_backend_logs(backend_logger, original_handlers, original_propagate)
+
+    assert response.status_code == 503
+    assert "http_request outcome=error method=POST path=/score query=- status=503" in caplog.text
+
+
+def test_http_request_logs_uncaught_exceptions(caplog: LogCaptureFixture) -> None:
+    app = create_app(climate_repository=StubClimateRepository())
+
+    @app.get("/boom")
+    async def boom() -> dict[str, str]:
+        msg = "boom"
+        raise RuntimeError(msg)
+
+    failing_client = TestClient(app, raise_server_exceptions=False)
+    backend_logger, original_handlers, original_propagate = _capture_backend_logs()
+
+    try:
+        with caplog.at_level(logging.INFO, logger="backend"):
+            response = failing_client.get("/boom?x=1")
+    finally:
+        _restore_backend_logs(backend_logger, original_handlers, original_propagate)
+
+    assert response.status_code == 500
+    assert "http_request outcome=error method=GET path=/boom query=x=1" in caplog.text
+
+
 def test_score_endpoint_accepts_form_encoded_preferences() -> None:
     response = client.post(
         "/score",
@@ -281,6 +401,19 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
     assert all(count <= 30 for count in continent_counts.values())
     # Heatmap is a PNG data URL
     assert payload["heatmap"].startswith("data:image/png;base64,")
+
+
+def test_score_endpoint_uses_gzip_when_requested() -> None:
+    response = client.post(
+        "/score",
+        data=default_form_data(),
+        headers={"Accept-Encoding": "gzip"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.headers.get("content-encoding") == "gzip"
+    assert "Accept-Encoding" in response.headers.get("vary", "")
 
 
 def test_score_endpoint_is_deterministic_for_the_same_preferences() -> None:
