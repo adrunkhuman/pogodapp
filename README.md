@@ -25,6 +25,7 @@ It is not a weather app. It scores long-term climate normals against a few user 
 ## How It Works
 
 - `GET /` renders the page.
+- `GET /` renders the shell only; the first results arrive through an automatic HTMX `load` `POST /score` using the backend default preferences.
 - `POST /score` accepts `preferred_day_temperature`, `summer_heat_limit`, `winter_cold_limit`, `dryness_preference`, and `sunshine_preference` as form fields and returns JSON.
 - The response shape is `{"scores": [{"name", "continent", "country_code", "flag", "score", "lat", "lon", "probe_lat", "probe_lon"}, ...], "heatmap": "data:image/png;base64,..."}`.
 - Empty or all-zero results return `{"scores": [], "heatmap": ""}`.
@@ -88,6 +89,7 @@ Notes:
 - Default local URL: `http://127.0.0.1:8000`
 - Live reload is on by default.
 - If `data/climate.duckdb` exists, startup warms the climate matrix, city cache, and heatmap projection.
+- When climate data is available, startup also precomputes and caches the default `/score` response; if that warmup hits a climate-data failure, startup logs it and continues.
 - If preload fails, startup logs the problem and requests fall back to the existing `503` path.
 - Large dynamic responses are gzip-compressed when the client sends `Accept-Encoding: gzip`; small responses like `/health` may stay uncompressed.
 
@@ -137,6 +139,8 @@ Railway-specific notes from the platform docs:
 
 - Pogodapp emits its own request logs instead of Uvicorn access logs, including on Railway.
 - Request logs are structured around `event=http_request` and include `outcome`, `method`, `path`, `query`, `httpStatus`, `srcIp`, `scheme`, `httpVersion`, `txBytes`, `responseTime`, and `host`.
+- Other structured events include `startup`, `startup_db`, `startup_bootstrap`, `startup_preload`, `startup_default_score`, `score_request`, and `probe_request`.
+- Railway JSON logs always include `level`, `message`, `timestamp`, `logger`, and any event-specific fields attached to the record.
 - Local runs use plain stdout logs; Railway uses single-line JSON on stdout for ingestion.
 
 ## Build Climate Data

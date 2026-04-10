@@ -288,8 +288,7 @@ def create_app(
     score_cache = _ScoreResponseCache(SCORE_CACHE_SIZE)
     preload_repository(repository)
 
-    # Pre-warm cache with default preferences so the load-triggered POST on first page
-    # visit hits a cache entry rather than doing a full 5s computation cold.
+    # Pre-warm default scores so the page-load HTMX POST hits cache instead of paying the cold path.
     try:
         default_prefs = PreferenceInputs(**{f.name: f.value for f in DEFAULT_PREFERENCES})
         score_cache.set(_score_cache_key(default_prefs), build_score_response(repository, default_prefs))
