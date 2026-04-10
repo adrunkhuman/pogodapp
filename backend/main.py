@@ -6,7 +6,7 @@ from collections import OrderedDict
 from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Annotated, Callable, Protocol, cast
+from typing import TYPE_CHECKING, Annotated, Protocol, cast
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -36,6 +36,8 @@ from backend.scoring import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from starlette.middleware.base import RequestResponseEndpoint
 
     from backend.scoring import ClimateMatrix

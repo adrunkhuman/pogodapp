@@ -112,6 +112,44 @@ class ClimateMatrix:
         """Reject malformed matrix shapes before they reach the scorer."""
         cell_count = self.latitudes.shape[0]
 
+        self._validate_base_shapes(cell_count)
+        self._ensure_derived_vector(
+            "typical_highs_c",
+            np.median(self.temperature_max_c, axis=1).astype(np.float32, copy=False),
+            cell_count,
+        )
+        self._ensure_derived_vector(
+            "hottest_month_highs_c",
+            np.max(self.temperature_max_c, axis=1).astype(np.float32, copy=False),
+            cell_count,
+        )
+        self._ensure_derived_vector(
+            "coldest_month_lows_c",
+            np.min(self.temperature_min_c, axis=1).astype(np.float32, copy=False),
+            cell_count,
+        )
+        self._ensure_derived_vector(
+            "median_precipitation_mm",
+            np.median(self.precipitation_mm, axis=1).astype(np.float32, copy=False),
+            cell_count,
+        )
+        self._ensure_derived_vector(
+            "wettest_precipitation_mm",
+            np.max(self.precipitation_mm, axis=1).astype(np.float32, copy=False),
+            cell_count,
+        )
+        self._ensure_derived_vector(
+            "average_cloud_cover_pct",
+            np.rint(np.mean(self.cloud_cover_pct.astype(np.float32), axis=1)).astype(np.float32, copy=False),
+            cell_count,
+        )
+        self._ensure_derived_vector(
+            "gloomiest_cloud_cover_pct",
+            np.max(self.cloud_cover_pct, axis=1).astype(np.float32, copy=False),
+            cell_count,
+        )
+
+    def _validate_base_shapes(self, cell_count: int) -> None:
         if self.longitudes.shape != (cell_count,):
             msg = "longitudes must align with latitudes"
             raise ValueError(msg)
@@ -136,74 +174,14 @@ class ClimateMatrix:
             msg = "cloud_cover_pct must be shaped (cells, 12)"
             raise ValueError(msg)
 
-        if self.typical_highs_c.shape == (0,):
-            object.__setattr__(
-                self,
-                "typical_highs_c",
-                np.median(self.temperature_max_c, axis=1).astype(np.float32, copy=False),
-            )
-        elif self.typical_highs_c.shape != (cell_count,):
-            msg = "typical_highs_c must align with latitudes"
-            raise ValueError(msg)
+    def _ensure_derived_vector(self, attribute: str, derived: NDArray[np.float32], cell_count: int) -> None:
+        current = getattr(self, attribute)
+        if current.shape == (0,):
+            object.__setattr__(self, attribute, derived)
+            return
 
-        if self.hottest_month_highs_c.shape == (0,):
-            object.__setattr__(
-                self,
-                "hottest_month_highs_c",
-                np.max(self.temperature_max_c, axis=1).astype(np.float32, copy=False),
-            )
-        elif self.hottest_month_highs_c.shape != (cell_count,):
-            msg = "hottest_month_highs_c must align with latitudes"
-            raise ValueError(msg)
-
-        if self.coldest_month_lows_c.shape == (0,):
-            object.__setattr__(
-                self,
-                "coldest_month_lows_c",
-                np.min(self.temperature_min_c, axis=1).astype(np.float32, copy=False),
-            )
-        elif self.coldest_month_lows_c.shape != (cell_count,):
-            msg = "coldest_month_lows_c must align with latitudes"
-            raise ValueError(msg)
-
-        if self.median_precipitation_mm.shape == (0,):
-            object.__setattr__(
-                self,
-                "median_precipitation_mm",
-                np.median(self.precipitation_mm, axis=1).astype(np.float32, copy=False),
-            )
-        elif self.median_precipitation_mm.shape != (cell_count,):
-            msg = "median_precipitation_mm must align with latitudes"
-            raise ValueError(msg)
-
-        if self.wettest_precipitation_mm.shape == (0,):
-            object.__setattr__(
-                self,
-                "wettest_precipitation_mm",
-                np.max(self.precipitation_mm, axis=1).astype(np.float32, copy=False),
-            )
-        elif self.wettest_precipitation_mm.shape != (cell_count,):
-            msg = "wettest_precipitation_mm must align with latitudes"
-            raise ValueError(msg)
-
-        if self.average_cloud_cover_pct.shape == (0,):
-            object.__setattr__(
-                self,
-                "average_cloud_cover_pct",
-                np.rint(np.mean(self.cloud_cover_pct.astype(np.float32), axis=1)).astype(np.float32, copy=False),
-            )
-        elif self.average_cloud_cover_pct.shape != (cell_count,):
-            msg = "average_cloud_cover_pct must align with latitudes"
-            raise ValueError(msg)
-
-        if self.gloomiest_cloud_cover_pct.shape == (0,):
-            object.__setattr__(
-                self,
-                "gloomiest_cloud_cover_pct",
-                np.max(self.cloud_cover_pct, axis=1).astype(np.float32, copy=False),
-            )
-        elif self.gloomiest_cloud_cover_pct.shape != (cell_count,):
-            msg = "gloomiest_cloud_cover_pct must align with latitudes"
+        if current.shape != (cell_count,):
+            msg = f"{attribute} must align with latitudes"
             raise ValueError(msg)
 
     @classmethod
