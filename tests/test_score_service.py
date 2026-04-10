@@ -54,15 +54,15 @@ def test_build_score_response_logs_step_timings(caplog: LogCaptureFixture) -> No
     assert caplog.records
     record = caplog.records[-1]
     assert record.message == "score request finished"
-    assert record.event == "score_request"
-    assert record.outcome == "ok"
-    assert record.total_ms >= 0
-    assert record.cells_ms >= 0
-    assert record.cities_ms >= 0
-    assert record.scoring_ms >= 0
-    assert record.normalize_ms >= 0
-    assert record.ranking_ms >= 0
-    assert record.heatmap_ms >= 0
+    assert record.__dict__["event"] == "score_request"
+    assert record.__dict__["outcome"] == "ok"
+    assert cast("float", record.__dict__["total_ms"]) >= 0
+    assert cast("float", record.__dict__["cells_ms"]) >= 0
+    assert cast("float", record.__dict__["cities_ms"]) >= 0
+    assert cast("float", record.__dict__["scoring_ms"]) >= 0
+    assert cast("float", record.__dict__["normalize_ms"]) >= 0
+    assert cast("float", record.__dict__["ranking_ms"]) >= 0
+    assert cast("float", record.__dict__["heatmap_ms"]) >= 0
 
 
 def test_build_score_response_returns_empty_payload_for_empty_matrix() -> None:

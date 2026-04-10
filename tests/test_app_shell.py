@@ -18,6 +18,9 @@ if TYPE_CHECKING:
     from _pytest.logging import LogCaptureFixture
     from _pytest.monkeypatch import MonkeyPatch
 
+    from backend.score_service import ScoreResponse
+
+
 from backend import main as backend_main
 
 
@@ -319,14 +322,14 @@ def test_http_requests_are_logged(caplog: LogCaptureFixture) -> None:
     assert caplog.records
     record = caplog.records[-1]
     assert record.message == "http request finished"
-    assert record.event == "http_request"
-    assert record.outcome == "ok"
-    assert record.method == "GET"
-    assert record.path == "/health"
-    assert record.httpStatus == 200
-    assert record.srcIp == "testclient"
-    assert record.scheme == "http"
-    assert record.httpVersion == "1.1"
+    assert record.__dict__["event"] == "http_request"
+    assert record.__dict__["outcome"] == "ok"
+    assert record.__dict__["method"] == "GET"
+    assert record.__dict__["path"] == "/health"
+    assert record.__dict__["httpStatus"] == 200
+    assert record.__dict__["srcIp"] == "testclient"
+    assert record.__dict__["scheme"] == "http"
+    assert record.__dict__["httpVersion"] == "1.1"
 
 
 def test_http_request_logs_client_errors(caplog: LogCaptureFixture) -> None:
@@ -342,10 +345,10 @@ def test_http_request_logs_client_errors(caplog: LogCaptureFixture) -> None:
     assert caplog.records
     record = caplog.records[-1]
     assert record.message == "http request finished"
-    assert record.event == "http_request"
-    assert record.outcome == "client_error"
-    assert record.path == "/missing-route"
-    assert record.httpStatus == 404
+    assert record.__dict__["event"] == "http_request"
+    assert record.__dict__["outcome"] == "client_error"
+    assert record.__dict__["path"] == "/missing-route"
+    assert record.__dict__["httpStatus"] == 404
 
 
 def test_http_request_logs_server_errors(caplog: LogCaptureFixture) -> None:
@@ -368,10 +371,10 @@ def test_http_request_logs_server_errors(caplog: LogCaptureFixture) -> None:
     assert caplog.records
     record = caplog.records[-1]
     assert record.message == "http request finished"
-    assert record.event == "http_request"
-    assert record.outcome == "error"
-    assert record.path == "/score"
-    assert record.httpStatus == 503
+    assert record.__dict__["event"] == "http_request"
+    assert record.__dict__["outcome"] == "error"
+    assert record.__dict__["path"] == "/score"
+    assert record.__dict__["httpStatus"] == 503
 
 
 def test_http_request_logs_uncaught_exceptions(caplog: LogCaptureFixture) -> None:
@@ -395,10 +398,10 @@ def test_http_request_logs_uncaught_exceptions(caplog: LogCaptureFixture) -> Non
     assert caplog.records
     record = caplog.records[-1]
     assert record.message == "http request failed"
-    assert record.event == "http_request"
-    assert record.outcome == "error"
-    assert record.path == "/boom"
-    assert record.query == "x=1"
+    assert record.__dict__["event"] == "http_request"
+    assert record.__dict__["outcome"] == "error"
+    assert record.__dict__["path"] == "/boom"
+    assert record.__dict__["query"] == "x=1"
 
 
 def test_http_requests_are_logged_on_railway_too(monkeypatch: MonkeyPatch, caplog: LogCaptureFixture) -> None:
@@ -415,9 +418,9 @@ def test_http_requests_are_logged_on_railway_too(monkeypatch: MonkeyPatch, caplo
     assert response.status_code == 200
     assert caplog.records
     record = caplog.records[-1]
-    assert record.event == "http_request"
-    assert record.path == "/health"
-    assert record.httpStatus == 200
+    assert record.__dict__["event"] == "http_request"
+    assert record.__dict__["path"] == "/health"
+    assert record.__dict__["httpStatus"] == 200
 
 
 def test_score_endpoint_accepts_form_encoded_preferences() -> None:
@@ -504,19 +507,19 @@ def test_score_endpoint_reuses_cached_response_for_identical_preferences() -> No
     call_count = 0
     original_builder = backend_main.build_score_response
 
-    def counted_builder(repository: StubClimateRepository, preferences: PreferenceInputs) -> dict[str, object]:
+    def counted_builder(repository: StubClimateRepository, preferences: PreferenceInputs) -> ScoreResponse:
         nonlocal call_count
         call_count += 1
         return original_builder(repository, preferences)
 
-    backend_main.build_score_response = counted_builder
+    backend_main.__dict__["build_score_response"] = counted_builder
     cached_client = TestClient(create_app(climate_repository=StubClimateRepository()))
 
     try:
         first_response = cached_client.post("/score", data=default_form_data())
         second_response = cached_client.post("/score", data=default_form_data())
     finally:
-        backend_main.build_score_response = original_builder
+        backend_main.__dict__["build_score_response"] = original_builder
 
     assert first_response.status_code == 200
     assert second_response.status_code == 200
@@ -527,18 +530,18 @@ def test_score_endpoint_uses_prewarmed_default_preferences_cache() -> None:
     call_count = 0
     original_builder = backend_main.build_score_response
 
-    def counted_builder(repository: StubClimateRepository, preferences: PreferenceInputs) -> dict[str, object]:
+    def counted_builder(repository: StubClimateRepository, preferences: PreferenceInputs) -> ScoreResponse:
         nonlocal call_count
         call_count += 1
         return original_builder(repository, preferences)
 
-    backend_main.build_score_response = counted_builder
+    backend_main.__dict__["build_score_response"] = counted_builder
 
     try:
         cached_client = TestClient(create_app(climate_repository=StubClimateRepository()))
         response = cached_client.post("/score", data=rendered_default_form_data())
     finally:
-        backend_main.build_score_response = original_builder
+        backend_main.__dict__["build_score_response"] = original_builder
 
     assert response.status_code == 200
     assert call_count == 1  # pre-warm only; the first default request should hit cache
@@ -548,12 +551,12 @@ def test_score_endpoint_evicts_oldest_cached_preferences_after_cache_limit() -> 
     call_count = 0
     original_builder = backend_main.build_score_response
 
-    def counted_builder(repository: StubClimateRepository, preferences: PreferenceInputs) -> dict[str, object]:
+    def counted_builder(repository: StubClimateRepository, preferences: PreferenceInputs) -> ScoreResponse:
         nonlocal call_count
         call_count += 1
         return original_builder(repository, preferences)
 
-    backend_main.build_score_response = counted_builder
+    backend_main.__dict__["build_score_response"] = counted_builder
     cached_client = TestClient(create_app(climate_repository=StubClimateRepository()))
     base_form = default_form_data()
 
@@ -568,7 +571,7 @@ def test_score_endpoint_evicts_oldest_cached_preferences_after_cache_limit() -> 
         repeated_first = cached_client.post("/score", data={**base_form, "dryness_preference": "0"})
         newest_repeat = cached_client.post("/score", data={**base_form, "dryness_preference": "16"})
     finally:
-        backend_main.build_score_response = original_builder
+        backend_main.__dict__["build_score_response"] = original_builder
 
     assert repeated_first.status_code == 200
     assert newest_repeat.status_code == 200
