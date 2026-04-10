@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
@@ -100,6 +100,13 @@ class ClimateMatrix:
     temperature_max_c: NDArray[np.float32]
     precipitation_mm: NDArray[np.float32]
     cloud_cover_pct: NDArray[np.uint8]
+    typical_highs_c: NDArray[np.float32] = field(default_factory=lambda: np.array([], dtype=np.float32))
+    hottest_month_highs_c: NDArray[np.float32] = field(default_factory=lambda: np.array([], dtype=np.float32))
+    coldest_month_lows_c: NDArray[np.float32] = field(default_factory=lambda: np.array([], dtype=np.float32))
+    median_precipitation_mm: NDArray[np.float32] = field(default_factory=lambda: np.array([], dtype=np.float32))
+    wettest_precipitation_mm: NDArray[np.float32] = field(default_factory=lambda: np.array([], dtype=np.float32))
+    average_cloud_cover_pct: NDArray[np.float32] = field(default_factory=lambda: np.array([], dtype=np.float32))
+    gloomiest_cloud_cover_pct: NDArray[np.float32] = field(default_factory=lambda: np.array([], dtype=np.float32))
 
     def __post_init__(self) -> None:
         """Reject malformed matrix shapes before they reach the scorer."""
@@ -127,6 +134,76 @@ class ClimateMatrix:
 
         if self.cloud_cover_pct.shape != (cell_count, MONTHS_PER_YEAR):
             msg = "cloud_cover_pct must be shaped (cells, 12)"
+            raise ValueError(msg)
+
+        if self.typical_highs_c.shape == (0,):
+            object.__setattr__(
+                self,
+                "typical_highs_c",
+                np.median(self.temperature_max_c, axis=1).astype(np.float32, copy=False),
+            )
+        elif self.typical_highs_c.shape != (cell_count,):
+            msg = "typical_highs_c must align with latitudes"
+            raise ValueError(msg)
+
+        if self.hottest_month_highs_c.shape == (0,):
+            object.__setattr__(
+                self,
+                "hottest_month_highs_c",
+                np.max(self.temperature_max_c, axis=1).astype(np.float32, copy=False),
+            )
+        elif self.hottest_month_highs_c.shape != (cell_count,):
+            msg = "hottest_month_highs_c must align with latitudes"
+            raise ValueError(msg)
+
+        if self.coldest_month_lows_c.shape == (0,):
+            object.__setattr__(
+                self,
+                "coldest_month_lows_c",
+                np.min(self.temperature_min_c, axis=1).astype(np.float32, copy=False),
+            )
+        elif self.coldest_month_lows_c.shape != (cell_count,):
+            msg = "coldest_month_lows_c must align with latitudes"
+            raise ValueError(msg)
+
+        if self.median_precipitation_mm.shape == (0,):
+            object.__setattr__(
+                self,
+                "median_precipitation_mm",
+                np.median(self.precipitation_mm, axis=1).astype(np.float32, copy=False),
+            )
+        elif self.median_precipitation_mm.shape != (cell_count,):
+            msg = "median_precipitation_mm must align with latitudes"
+            raise ValueError(msg)
+
+        if self.wettest_precipitation_mm.shape == (0,):
+            object.__setattr__(
+                self,
+                "wettest_precipitation_mm",
+                np.max(self.precipitation_mm, axis=1).astype(np.float32, copy=False),
+            )
+        elif self.wettest_precipitation_mm.shape != (cell_count,):
+            msg = "wettest_precipitation_mm must align with latitudes"
+            raise ValueError(msg)
+
+        if self.average_cloud_cover_pct.shape == (0,):
+            object.__setattr__(
+                self,
+                "average_cloud_cover_pct",
+                np.rint(np.mean(self.cloud_cover_pct.astype(np.float32), axis=1)).astype(np.float32, copy=False),
+            )
+        elif self.average_cloud_cover_pct.shape != (cell_count,):
+            msg = "average_cloud_cover_pct must align with latitudes"
+            raise ValueError(msg)
+
+        if self.gloomiest_cloud_cover_pct.shape == (0,):
+            object.__setattr__(
+                self,
+                "gloomiest_cloud_cover_pct",
+                np.max(self.cloud_cover_pct, axis=1).astype(np.float32, copy=False),
+            )
+        elif self.gloomiest_cloud_cover_pct.shape != (cell_count,):
+            msg = "gloomiest_cloud_cover_pct must align with latitudes"
             raise ValueError(msg)
 
     @classmethod
@@ -386,15 +463,13 @@ def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceI
         preferences.dryness_preference,
         preferences.sunshine_preference,
     )
-    typical_highs = np.median(climate_matrix.temperature_max_c, axis=1)
-    hottest_month_highs = np.max(climate_matrix.temperature_max_c, axis=1)
-    coldest_month_lows = np.min(climate_matrix.temperature_min_c, axis=1)
-
-    ideal_distance = np.maximum(np.abs(typical_highs - preferred_day_temperature) - TEMPERATURE_COMFORT_BAND_C, 0.0)
+    ideal_distance = np.maximum(
+        np.abs(climate_matrix.typical_highs_c - preferred_day_temperature) - TEMPERATURE_COMFORT_BAND_C, 0.0
+    )
     ideal_scores = np.clip(1.0 - (ideal_distance / TEMPERATURE_IDEAL_SLOPE_C), 0.0, 1.0)
-    heat_excess = np.maximum(hottest_month_highs - summer_heat_limit, 0.0)
+    heat_excess = np.maximum(climate_matrix.hottest_month_highs_c - summer_heat_limit, 0.0)
     heat_scores = np.clip(1.0 - (heat_excess / TEMPERATURE_LIMIT_SLOPE_C), 0.0, 1.0)
-    cold_excess = np.maximum(winter_cold_limit - coldest_month_lows, 0.0)
+    cold_excess = np.maximum(winter_cold_limit - climate_matrix.coldest_month_lows_c, 0.0)
     cold_scores = np.clip(1.0 - (cold_excess / TEMPERATURE_LIMIT_SLOPE_C), 0.0, 1.0)
     temperature_scores = (
         ideal_scores**TEMPERATURE_IDEAL_WEIGHT
@@ -402,11 +477,13 @@ def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceI
         * cold_scores**TEMPERATURE_COLD_WEIGHT
     ).astype(np.float32, copy=False)
 
-    median_precipitation = np.median(climate_matrix.precipitation_mm, axis=1)
-    wettest_precipitation = np.max(climate_matrix.precipitation_mm, axis=1)
-    typical_rain_scores = np.clip(1.0 - (median_precipitation / SATURATING_MONTHLY_RAIN_MM) * dryness_ratio, 0.0, 1.0)
+    typical_rain_scores = np.clip(
+        1.0 - (climate_matrix.median_precipitation_mm / SATURATING_MONTHLY_RAIN_MM) * dryness_ratio,
+        0.0,
+        1.0,
+    )
     wettest_month_scores = np.clip(
-        1.0 - (wettest_precipitation / SATURATING_WETTEST_MONTH_RAIN_MM) * dryness_ratio,
+        1.0 - (climate_matrix.wettest_precipitation_mm / SATURATING_WETTEST_MONTH_RAIN_MM) * dryness_ratio,
         0.0,
         1.0,
     )
@@ -415,17 +492,15 @@ def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceI
         * np.maximum(wettest_month_scores, MULTIPLICATIVE_SCORE_FLOOR) ** PRECIPITATION_PROFILE_PEAK_WEIGHT
     ).astype(np.float32, copy=False)
 
-    average_cloud_cover = np.rint(np.mean(climate_matrix.cloud_cover_pct.astype(np.float32), axis=1)).astype(np.float32)
-    gloomiest_cloud_cover = np.max(climate_matrix.cloud_cover_pct, axis=1).astype(np.float32)
-    average_excess_ratio = (average_cloud_cover - tolerated_cloud_cover) / cloud_denominator
+    average_excess_ratio = (climate_matrix.average_cloud_cover_pct - tolerated_cloud_cover) / cloud_denominator
     average_sun_scores = np.where(
-        average_cloud_cover <= tolerated_cloud_cover,
+        climate_matrix.average_cloud_cover_pct <= tolerated_cloud_cover,
         1.0,
         np.clip(1.0 - average_excess_ratio**2, 0.0, 1.0),
     )
-    gloom_excess_ratio = (gloomiest_cloud_cover - tolerated_cloud_cover) / cloud_denominator
+    gloom_excess_ratio = (climate_matrix.gloomiest_cloud_cover_pct - tolerated_cloud_cover) / cloud_denominator
     gloomiest_sun_scores = np.where(
-        gloomiest_cloud_cover <= tolerated_cloud_cover,
+        climate_matrix.gloomiest_cloud_cover_pct <= tolerated_cloud_cover,
         1.0,
         np.clip(1.0 - gloom_excess_ratio**2, 0.0, 1.0),
     )
