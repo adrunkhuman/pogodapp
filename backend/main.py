@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections import OrderedDict
 from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Annotated, Protocol, cast
+from typing import TYPE_CHECKING, Annotated, Callable, Protocol, cast
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -57,19 +58,40 @@ class _ScoreResponseCache:
     def __init__(self, max_entries: int) -> None:
         self.max_entries = max_entries
         self._entries: OrderedDict[tuple[int, int, int, int, int], ScoreResponse] = OrderedDict()
+        self._lock = threading.Lock()
 
     def get(self, key: tuple[int, int, int, int, int]) -> ScoreResponse | None:
-        response = self._entries.get(key)
-        if response is None:
-            return None
-        self._entries.move_to_end(key)
-        return response
+        with self._lock:
+            response = self._entries.get(key)
+            if response is None:
+                return None
+            self._entries.move_to_end(key)
+            return response
 
     def set(self, key: tuple[int, int, int, int, int], response: ScoreResponse) -> None:
-        self._entries[key] = response
-        self._entries.move_to_end(key)
-        if len(self._entries) > self.max_entries:
-            self._entries.popitem(last=False)
+        with self._lock:
+            self._entries[key] = response
+            self._entries.move_to_end(key)
+            if len(self._entries) > self.max_entries:
+                self._entries.popitem(last=False)
+
+    def get_or_set(
+        self,
+        key: tuple[int, int, int, int, int],
+        build: Callable[[], ScoreResponse],
+    ) -> ScoreResponse:
+        with self._lock:
+            response = self._entries.get(key)
+            if response is not None:
+                self._entries.move_to_end(key)
+                return response
+
+            response = build()
+            self._entries[key] = response
+            self._entries.move_to_end(key)
+            if len(self._entries) > self.max_entries:
+                self._entries.popitem(last=False)
+            return response
 
 
 class _SupportsProbeRepository(Protocol):
@@ -152,13 +174,7 @@ def _score_response_from_cache_or_repository(
     preferences: PreferenceInputs,
 ) -> ScoreResponse:
     cache_key = _score_cache_key(preferences)
-    cached_response = score_cache.get(cache_key)
-    if cached_response is not None:
-        return cached_response
-
-    response = build_score_response(repository, preferences)
-    score_cache.set(cache_key, response)
-    return response
+    return score_cache.get_or_set(cache_key, lambda: build_score_response(repository, preferences))
 
 
 def probe_preferences_dependency(

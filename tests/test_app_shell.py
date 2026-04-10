@@ -59,6 +59,10 @@ def default_query_params() -> dict[str, int | float]:
     }
 
 
+def rendered_default_form_data() -> dict[str, str]:
+    return {preference.name: str(preference.value) for preference in DEFAULT_PREFERENCES}
+
+
 class ManyCitiesRepository:
     def __init__(self) -> None:
         self._cells = tuple(
@@ -506,6 +510,27 @@ def test_score_endpoint_reuses_cached_response_for_identical_preferences() -> No
     assert first_response.status_code == 200
     assert second_response.status_code == 200
     assert call_count == 2  # 1 pre-warm (default prefs) + 1 first request (different prefs, cache miss)
+
+
+def test_score_endpoint_uses_prewarmed_default_preferences_cache() -> None:
+    call_count = 0
+    original_builder = backend_main.build_score_response
+
+    def counted_builder(repository: StubClimateRepository, preferences: PreferenceInputs) -> dict[str, object]:
+        nonlocal call_count
+        call_count += 1
+        return original_builder(repository, preferences)
+
+    backend_main.build_score_response = counted_builder
+
+    try:
+        cached_client = TestClient(create_app(climate_repository=StubClimateRepository()))
+        response = cached_client.post("/score", data=rendered_default_form_data())
+    finally:
+        backend_main.build_score_response = original_builder
+
+    assert response.status_code == 200
+    assert call_count == 1  # pre-warm only; the first default request should hit cache
 
 
 def test_score_endpoint_evicts_oldest_cached_preferences_after_cache_limit() -> None:

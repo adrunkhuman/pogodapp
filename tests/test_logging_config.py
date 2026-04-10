@@ -34,6 +34,25 @@ def test_json_formatter_emits_railway_friendly_fields() -> None:
     assert "timestamp" in payload
 
 
+def test_json_formatter_serializes_nested_extra_values() -> None:
+    formatter = _JSONFormatter()
+    record = logging.LogRecord(
+        name="backend.main",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="score request finished",
+        args=(),
+        exc_info=None,
+    )
+    record.event = "score_request"
+    record.metrics = {"durations": [1.2, 3], "cache": ("hit", True)}
+
+    payload = json.loads(formatter.format(record))
+
+    assert payload["metrics"] == {"durations": [1.2, 3], "cache": ["hit", True]}
+
+
 def test_configure_backend_logging_uses_plain_formatter_locally(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.delenv("RAILWAY_ENVIRONMENT", raising=False)
     monkeypatch.delenv("RAILWAY_SERVICE_NAME", raising=False)
