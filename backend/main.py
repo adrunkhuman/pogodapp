@@ -60,6 +60,7 @@ class _ScoreResponseCache:
     def __init__(self, max_entries: int) -> None:
         self.max_entries = max_entries
         self._entries: OrderedDict[tuple[int, int, int, int, int], ScoreResponse] = OrderedDict()
+        self._inflight: dict[tuple[int, int, int, int, int], threading.Event] = {}
         self._lock = threading.Lock()
 
     def get(self, key: tuple[int, int, int, int, int]) -> ScoreResponse | None:
@@ -82,17 +83,34 @@ class _ScoreResponseCache:
         key: tuple[int, int, int, int, int],
         build: Callable[[], ScoreResponse],
     ) -> ScoreResponse:
-        with self._lock:
-            response = self._entries.get(key)
-            if response is not None:
-                self._entries.move_to_end(key)
-                return response
+        while True:
+            with self._lock:
+                response = self._entries.get(key)
+                if response is not None:
+                    self._entries.move_to_end(key)
+                    return response
 
+                inflight = self._inflight.get(key)
+                if inflight is None:
+                    inflight = threading.Event()
+                    self._inflight[key] = inflight
+                    break
+
+            inflight.wait()
+
+        try:
             response = build()
+        except Exception:
+            with self._lock:
+                self._inflight.pop(key).set()
+            raise
+
+        with self._lock:
             self._entries[key] = response
             self._entries.move_to_end(key)
             if len(self._entries) > self.max_entries:
                 self._entries.popitem(last=False)
+            self._inflight.pop(key).set()
             return response
 
 

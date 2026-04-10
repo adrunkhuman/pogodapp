@@ -60,6 +60,7 @@ let probeTimer = null;
 let probeCooldownTimer = null;
 let probeController = null;
 let probeTimeoutId = null;
+let probeRequestToken = 0;
 let tooltipHideTimer = null;
 let focusClearTimer = null;
 let focusAnimationFrame = null;

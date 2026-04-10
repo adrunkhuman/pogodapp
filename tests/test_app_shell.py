@@ -1,4 +1,6 @@
 import logging
+import threading
+import time
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -271,13 +273,22 @@ def test_map_contract_does_not_depend_on_remote_basemap_assets() -> None:
 
 def test_probe_script_snaps_cache_keys_and_query_params_to_backend_grid() -> None:
     response = client.get("/static/map-probe.js")
+    core_response = client.get("/static/map-core.js")
 
     assert response.status_code == 200
+    assert core_response.status_code == 200
     assert "function snapProbeCoordinate" in response.text
     assert "probeGridDegrees" in response.text
     assert "const snapped = snapProbeCoordinate(lat, lon);" in response.text
     assert "const cacheKey = `${snapped.lat},${snapped.lon},${new URLSearchParams(prefs)}`;" in response.text
     assert "new URLSearchParams({ lat: snapped.lat, lon: snapped.lon, ...prefs });" in response.text
+    assert "const PROBE_HOVER_COOLDOWN_MS = 250;" in core_response.text
+    assert "let probeRequestToken = 0;" in core_response.text
+    assert "probeRequestToken += 1;" in response.text
+    assert "cancelProbeCooldown();" in response.text
+    assert "abortActiveProbe();" in response.text
+    assert "requestToken !== probeRequestToken" in response.text
+    assert "requestToken = ++probeRequestToken" in response.text
 
 
 def test_home_page_uses_gzip_when_requested() -> None:
@@ -562,6 +573,76 @@ def test_score_endpoint_evicts_oldest_cached_preferences_after_cache_limit() -> 
     assert repeated_first.status_code == 200
     assert newest_repeat.status_code == 200
     assert call_count == 19  # 1 pre-warm + 17 unique keys + 1 recompute after LRU eviction
+
+
+def test_score_response_cache_deduplicates_concurrent_identical_misses() -> None:
+    score_cache_class = backend_main.__dict__["_ScoreResponseCache"]
+    cache = score_cache_class(4)
+    key = (18, 30, 0, 30, 50)
+    build_started = threading.Event()
+    build_count = 0
+    results: list[dict[str, object]] = []
+
+    def build() -> dict[str, object]:
+        nonlocal build_count
+        build_count += 1
+        build_started.set()
+        time.sleep(0.05)
+        return {"scores": [], "heatmap": "cached"}
+
+    def worker() -> None:
+        results.append(cache.get_or_set(key, build))
+
+    threads = [threading.Thread(target=worker), threading.Thread(target=worker)]
+    threads[0].start()
+    assert build_started.wait(timeout=1)
+    threads[1].start()
+    for thread in threads:
+        thread.join(timeout=1)
+        assert not thread.is_alive()
+
+    assert build_count == 1
+    assert results == [{"scores": [], "heatmap": "cached"}, {"scores": [], "heatmap": "cached"}]
+
+
+def test_score_response_cache_recovers_after_failing_inflight_build() -> None:
+    score_cache_class = backend_main.__dict__["_ScoreResponseCache"]
+    cache = score_cache_class(4)
+    key = (18, 30, 0, 30, 50)
+    build_started = threading.Event()
+    call_count = 0
+    failures: list[str] = []
+    successes: list[dict[str, object]] = []
+
+    def flaky_build() -> dict[str, object]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            build_started.set()
+            time.sleep(0.05)
+            msg = "boom"
+            raise RuntimeError(msg)
+        return {"scores": [], "heatmap": "recovered"}
+
+    def worker() -> None:
+        try:
+            successes.append(cache.get_or_set(key, flaky_build))
+        except RuntimeError as error:
+            failures.append(str(error))
+
+    threads = [threading.Thread(target=worker), threading.Thread(target=worker)]
+    threads[0].start()
+    assert build_started.wait(timeout=1)
+    threads[1].start()
+    for thread in threads:
+        thread.join(timeout=1)
+        assert not thread.is_alive()
+
+    assert failures == ["boom"]
+    assert successes == [{"scores": [], "heatmap": "recovered"}]
+    assert call_count == 2
+    assert cache.get_or_set(key, flaky_build) == {"scores": [], "heatmap": "recovered"}
+    assert call_count == 2
 
 
 def test_dryness_preference_penalizes_rainier_cells() -> None:
