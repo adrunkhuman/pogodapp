@@ -53,6 +53,8 @@ class HeatmapProjection:
     score_indexes: NDArray[np.int32]
     xs: NDArray[np.int32]
     ys: NDArray[np.int32]
+    # Pre-dilated land mask: MaxFilter(7) is grid-fixed, not score-dependent.
+    land_mask: NDArray[np.bool_]
 
     @classmethod
     def from_coordinates(cls, latitudes: np.ndarray, longitudes: np.ndarray) -> HeatmapProjection:
@@ -67,10 +69,18 @@ class HeatmapProjection:
         ys = ((_Y_MAX - y_merc) / (2 * _Y_MAX) * HEIGHT).astype(np.int32)
 
         in_bounds = (xs >= 0) & (xs < WIDTH) & (ys >= 0) & (ys < HEIGHT)
+        final_xs = xs[in_bounds]
+        final_ys = ys[in_bounds]
+
+        land_mask_raw = np.zeros((HEIGHT, WIDTH), dtype=np.uint8)
+        land_mask_raw[final_ys, final_xs] = 255
+        land_mask = np.asarray(Image.fromarray(land_mask_raw, mode="L").filter(ImageFilter.MaxFilter(7))) > 0
+
         return cls(
             score_indexes=valid_indexes[in_bounds],
-            xs=xs[in_bounds],
-            ys=ys[in_bounds],
+            xs=final_xs,
+            ys=final_ys,
+            land_mask=land_mask,
         )
 
 
@@ -150,18 +160,13 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
     grid = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
     np.maximum.at(grid, (projection.ys, projection.xs), scores[projection.score_indexes])
 
-    # Dilate the land mask so sparse high-latitude scanlines do not stripe after blur.
-    land_mask_raw = np.zeros((HEIGHT, WIDTH), dtype=np.uint8)
-    land_mask_raw[projection.ys, projection.xs] = 255
-    land_mask = np.asarray(Image.fromarray(land_mask_raw, mode="L").filter(ImageFilter.MaxFilter(7))) > 0
-
     base_gray = (grid * 255).astype(np.uint8)
     pil_gray = Image.fromarray(base_gray, mode="L")
     pil_gray = pil_gray.filter(ImageFilter.GaussianBlur(radius=BLUR_RADIUS))
-    blurred_gray = np.asarray(pil_gray, dtype=np.uint8) * land_mask
+    blurred_gray = np.asarray(pil_gray, dtype=np.uint8) * projection.land_mask
     styled_gray = _stylize_heatmap_gray(_preserve_local_maxima(base_gray, blurred_gray))
     peak_floor = np.where(base_gray >= PEAK_BOOST_THRESHOLD * 255.0, styled_gray, 0)
-    styled_gray = (np.maximum(_smooth_styled_heatmap_gray(styled_gray), peak_floor) * land_mask).astype(np.uint8)
+    styled_gray = (np.maximum(_smooth_styled_heatmap_gray(styled_gray), peak_floor) * projection.land_mask).astype(np.uint8)
     rgba = _COLOR_RAMP_LOOKUP[styled_gray]
 
     buf = BytesIO()

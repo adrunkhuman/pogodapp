@@ -505,7 +505,7 @@ def test_score_endpoint_reuses_cached_response_for_identical_preferences() -> No
 
     assert first_response.status_code == 200
     assert second_response.status_code == 200
-    assert call_count == 1
+    assert call_count == 2  # 1 pre-warm (default prefs) + 1 first request (different prefs, cache miss)
 
 
 def test_score_endpoint_evicts_oldest_cached_preferences_after_cache_limit() -> None:
@@ -536,7 +536,7 @@ def test_score_endpoint_evicts_oldest_cached_preferences_after_cache_limit() -> 
 
     assert repeated_first.status_code == 200
     assert newest_repeat.status_code == 200
-    assert call_count == 18
+    assert call_count == 19  # 1 pre-warm + 17 unique requests + repeated_first evicted by pre-warm occupying a slot
 
 
 def test_dryness_preference_penalizes_rainier_cells() -> None:

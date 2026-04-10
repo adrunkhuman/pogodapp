@@ -272,6 +272,15 @@ def create_app(
     score_cache = _ScoreResponseCache(SCORE_CACHE_SIZE)
     preload_repository(repository)
 
+    # Pre-warm cache with default preferences so the load-triggered POST on first page
+    # visit hits a cache entry rather than doing a full 5s computation cold.
+    try:
+        default_prefs = PreferenceInputs(**{f.name: f.value for f in DEFAULT_PREFERENCES})
+        score_cache.set(_score_cache_key(default_prefs), build_score_response(repository, default_prefs))
+        logger.info("startup default score cached", extra={"event": "startup_default_score", "outcome": "ok"})
+    except ClimateDataError:
+        logger.warning("startup default score skipped", extra={"event": "startup_default_score", "outcome": "skipped"})
+
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/health")
