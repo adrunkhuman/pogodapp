@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+from collections import OrderedDict
 from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
@@ -34,6 +36,8 @@ from backend.scoring import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from starlette.middleware.base import RequestResponseEndpoint
 
     from backend.scoring import ClimateMatrix
@@ -47,6 +51,67 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 logger = logging.getLogger(__name__)
 CLIENT_ERROR_STATUS_MIN = 400
 SERVER_ERROR_STATUS_MIN = 500
+SCORE_CACHE_SIZE = 16
+
+
+class _ScoreResponseCache:
+    """Avoid recomputing identical score requests within one worker."""
+
+    def __init__(self, max_entries: int) -> None:
+        self.max_entries = max_entries
+        self._entries: OrderedDict[tuple[int, int, int, int, int], ScoreResponse] = OrderedDict()
+        self._inflight: dict[tuple[int, int, int, int, int], threading.Event] = {}
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple[int, int, int, int, int]) -> ScoreResponse | None:
+        with self._lock:
+            response = self._entries.get(key)
+            if response is None:
+                return None
+            self._entries.move_to_end(key)
+            return response
+
+    def set(self, key: tuple[int, int, int, int, int], response: ScoreResponse) -> None:
+        with self._lock:
+            self._entries[key] = response
+            self._entries.move_to_end(key)
+            if len(self._entries) > self.max_entries:
+                self._entries.popitem(last=False)
+
+    def get_or_set(
+        self,
+        key: tuple[int, int, int, int, int],
+        build: Callable[[], ScoreResponse],
+    ) -> ScoreResponse:
+        while True:
+            with self._lock:
+                response = self._entries.get(key)
+                if response is not None:
+                    self._entries.move_to_end(key)
+                    return response
+
+                inflight = self._inflight.get(key)
+                if inflight is None:
+                    inflight = threading.Event()
+                    self._inflight[key] = inflight
+                    break
+
+            inflight.wait()
+
+        try:
+            response = build()
+        except Exception:
+            with self._lock:
+                self._inflight.pop(key).set()
+            raise
+
+        with self._lock:
+            self._entries[key] = response
+            self._entries.move_to_end(key)
+            if len(self._entries) > self.max_entries:
+                self._entries.popitem(last=False)
+            self._inflight.pop(key).set()
+            return response
 
 
 class _SupportsProbeRepository(Protocol):
@@ -102,9 +167,34 @@ def preload_repository(repository: ClimateRepository) -> None:
         repository.get_indexed_cities()
         if hasattr(repository, "get_heatmap_projection"):
             repository.get_heatmap_projection()
-        logger.info("startup_preload outcome=ok repository=%s", type(repository).__name__)
+        logger.info(
+            "repository preload finished",
+            extra={"event": "startup_preload", "outcome": "ok", "repository": type(repository).__name__},
+        )
     except ClimateDataError as error:
-        logger.warning("startup_preload outcome=skipped detail=%s", error)
+        logger.warning(
+            "repository preload skipped",
+            extra={"event": "startup_preload", "outcome": "skipped", "detail": str(error)},
+        )
+
+
+def _score_cache_key(preferences: PreferenceInputs) -> tuple[int, int, int, int, int]:
+    return (
+        preferences.preferred_day_temperature,
+        preferences.summer_heat_limit,
+        preferences.winter_cold_limit,
+        preferences.dryness_preference,
+        preferences.sunshine_preference,
+    )
+
+
+def _score_response_from_cache_or_repository(
+    score_cache: _ScoreResponseCache,
+    repository: ClimateRepository,
+    preferences: PreferenceInputs,
+) -> ScoreResponse:
+    cache_key = _score_cache_key(preferences)
+    return score_cache.get_or_set(cache_key, lambda: build_score_response(repository, preferences))
 
 
 def probe_preferences_dependency(
@@ -157,31 +247,41 @@ def _attach_http_request_logging(app: FastAPI) -> None:
         except Exception:
             client, query, scheme, http_version, content_length = _request_log_context(request)
             logger.exception(
-                "http_request outcome=error method=%s path=%s query=%s client=%s scheme=%s http_version=%s bytes=%s duration_ms=%.2f",
-                request.method,
-                request.url.path,
-                query,
-                client,
-                scheme,
-                http_version,
-                content_length,
-                (perf_counter() - started) * 1000,
+                "http request failed",
+                extra={
+                    "event": "http_request",
+                    "outcome": "error",
+                    "method": request.method,
+                    "path": request.url.path,
+                    "query": query,
+                    "httpStatus": 500,
+                    "srcIp": client,
+                    "scheme": scheme,
+                    "httpVersion": http_version,
+                    "txBytes": content_length,
+                    "responseTime": round((perf_counter() - started) * 1000, 2),
+                    "host": request.headers.get("host", "-"),
+                },
             )
             raise
 
         client, query, scheme, http_version, content_length = _request_log_context(request, response)
         logger.info(
-            "http_request outcome=%s method=%s path=%s query=%s status=%d client=%s scheme=%s http_version=%s bytes=%s duration_ms=%.2f",
-            _request_outcome(response.status_code),
-            request.method,
-            request.url.path,
-            query,
-            response.status_code,
-            client,
-            scheme,
-            http_version,
-            content_length,
-            (perf_counter() - started) * 1000,
+            "http request finished",
+            extra={
+                "event": "http_request",
+                "outcome": _request_outcome(response.status_code),
+                "method": request.method,
+                "path": request.url.path,
+                "query": query,
+                "httpStatus": response.status_code,
+                "srcIp": client,
+                "scheme": scheme,
+                "httpVersion": http_version,
+                "txBytes": content_length,
+                "responseTime": round((perf_counter() - started) * 1000, 2),
+                "host": request.headers.get("host", "-"),
+            },
         )
         return response
 
@@ -205,15 +305,16 @@ def create_app(
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
     repository = climate_repository or build_default_climate_repository(resolve_climate_database_path())
+    score_cache = _ScoreResponseCache(SCORE_CACHE_SIZE)
     preload_repository(repository)
 
-    initial_scores: ScoreResponse | None = None
+    # Pre-warm default scores so the page-load HTMX POST hits cache instead of paying the cold path.
     try:
         default_prefs = PreferenceInputs(**{f.name: f.value for f in DEFAULT_PREFERENCES})
-        initial_scores = build_score_response(repository, default_prefs)
-        logger.info("startup_default_scores outcome=ok cities=%d", len(initial_scores.get("scores", [])))
+        score_cache.set(_score_cache_key(default_prefs), build_score_response(repository, default_prefs))
+        logger.info("startup default score cached", extra={"event": "startup_default_score", "outcome": "ok"})
     except ClimateDataError:
-        logger.warning("startup_default_scores outcome=skipped")
+        logger.warning("startup default score skipped", extra={"event": "startup_default_score", "outcome": "skipped"})
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -226,16 +327,27 @@ def create_app(
         return templates.TemplateResponse(
             request=request,
             name="index.html",
-            context={**build_index_context(), "initial_scores": initial_scores},
+            context=build_index_context(),
         )
 
     @app.post("/score")
     @limiter.limit("30/minute")
     async def score(request: Request, preferences: Annotated[PreferenceInputs, Form()]) -> ScoreResponse:
         try:
-            return build_score_response(repository, preferences)
+            return _score_response_from_cache_or_repository(score_cache, repository, preferences)
         except ClimateDataError as error:
-            logger.exception("score_request outcome=error")
+            logger.exception(
+                "score request failed",
+                extra={
+                    "event": "score_request",
+                    "outcome": "error",
+                    "preferred_day_temperature": preferences.preferred_day_temperature,
+                    "summer_heat_limit": preferences.summer_heat_limit,
+                    "winter_cold_limit": preferences.winter_cold_limit,
+                    "dryness_preference": preferences.dryness_preference,
+                    "sunshine_preference": preferences.sunshine_preference,
+                },
+            )
             raise HTTPException(status_code=503, detail=str(error)) from error
 
     @app.get("/probe")
@@ -255,7 +367,10 @@ def create_app(
                 return ProbeResponse()
             climate_matrix = probe_repository.get_climate_matrix()
         except ClimateDataError as error:
-            logger.exception("probe_request outcome=error")
+            logger.exception(
+                "probe request failed",
+                extra={"event": "probe_request", "outcome": "error", "lat": lat, "lon": lon},
+            )
             raise HTTPException(status_code=503, detail=str(error)) from error
         breakdown = score_matrix_row_breakdown(climate_matrix, row_index, preferences)
         return build_probe_response(breakdown)

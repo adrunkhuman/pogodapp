@@ -7,7 +7,13 @@ const PROBE_MAX_LATITUDE_INDEX = Math.round(180 / PROBE_GRID_DEGREES) - 1;
 const PROBE_MAX_LONGITUDE_INDEX = Math.round(360 / PROBE_GRID_DEGREES) - 1;
 
 document.addEventListener("input", (event) => {
-  if (event.target.closest("#preferences")) probeCache.clear();
+  if (!event.target.closest("#preferences")) return;
+
+  probeRequestToken += 1;
+  cancelProbeCooldown();
+  abortActiveProbe();
+  probeCache.clear();
+  hideTooltip();
 }, { passive: true });
 
 function getCurrentPreferences() {
@@ -103,6 +109,9 @@ function registerLayerProbeHandlers(layerId, { cursor, header, coordinates = nul
 
   map.on("mouseleave", layerId, () => {
     hoveringLayer = false;
+    probeRequestToken += 1;
+    cancelProbeCooldown();
+    abortActiveProbe();
     map.getCanvas().style.cursor = "";
     hideTooltip();
   });
@@ -160,7 +169,45 @@ function hideTooltip() {
   if (tooltip) tooltip.hidden = true;
 }
 
-function fetchProbe(lat, lon, clientX, clientY, cityHeader = null, { hideDelayMs = null } = {}) {
+function runProbeRequest(cacheKey, params, clientX, clientY, cityHeader, requestToken, { hideDelayMs = null } = {}) {
+  if (requestToken !== probeRequestToken) return;
+
+  abortActiveProbe();
+  probeController = new AbortController();
+  const timeoutId = setTimeout(() => probeController.abort(), PROBE_TIMEOUT_MS);
+  probeTimeoutId = timeoutId;
+
+  fetch(`/probe?${params}`, { signal: probeController.signal })
+    .then((response) => {
+      if (!response.ok) throw new Error(`Probe request failed with ${response.status}`);
+      return response.json();
+    })
+    .then((data) => {
+      if (requestToken !== probeRequestToken) return;
+      probeCache.set(cacheKey, data);
+      showTooltip(data, clientX, clientY, cityHeader, { hideDelayMs });
+    })
+    .catch(() => {})
+    .finally(() => {
+      clearTimeout(timeoutId);
+      if (probeTimeoutId === timeoutId) probeTimeoutId = null;
+    });
+}
+
+function queueProbeRequest(cacheKey, params, clientX, clientY, cityHeader, requestToken, { hideDelayMs = null, cooldownMs = 0 } = {}) {
+  cancelProbeCooldown();
+  if (cooldownMs <= 0) {
+    runProbeRequest(cacheKey, params, clientX, clientY, cityHeader, requestToken, { hideDelayMs });
+    return;
+  }
+
+  probeCooldownTimer = setTimeout(
+    () => runProbeRequest(cacheKey, params, clientX, clientY, cityHeader, requestToken, { hideDelayMs }),
+    cooldownMs,
+  );
+}
+
+function fetchProbe(lat, lon, clientX, clientY, cityHeader = null, { hideDelayMs = null, cooldownMs = 0, requestToken = ++probeRequestToken } = {}) {
   const prefs = getCurrentPreferences();
   if (!prefs) return;
 
@@ -169,40 +216,30 @@ function fetchProbe(lat, lon, clientX, clientY, cityHeader = null, { hideDelayMs
   const cacheKey = `${snapped.lat},${snapped.lon},${new URLSearchParams(prefs)}`;
   const cached = probeCache.get(cacheKey);
   if (cached) {
+    cancelProbeCooldown();
     abortActiveProbe();
+    if (requestToken !== probeRequestToken) return;
     showTooltip(cached, clientX, clientY, cityHeader, { hideDelayMs });
     return;
   }
 
-  abortActiveProbe();
-  probeController = new AbortController();
-  probeTimeoutId = setTimeout(() => probeController.abort(), PROBE_TIMEOUT_MS);
   const params = new URLSearchParams({ lat: snapped.lat, lon: snapped.lon, ...prefs });
-
-  fetch(`/probe?${params}`, { signal: probeController.signal })
-    .then((response) => {
-      if (!response.ok) throw new Error(`Probe request failed with ${response.status}`);
-      return response.json();
-    })
-    .then((data) => {
-      probeCache.set(cacheKey, data);
-      showTooltip(data, clientX, clientY, cityHeader, { hideDelayMs });
-    })
-    .catch(() => {})
-    .finally(() => clearTimeout(probeTimeoutId));
+  queueProbeRequest(cacheKey, params, clientX, clientY, cityHeader, requestToken, { hideDelayMs, cooldownMs });
 }
 
 function scheduleHoverProbe(event) {
   if (hoveringLayer) return;
 
-  hideTooltip();
   clearTimeout(probeTimer);
   probeTimer = setTimeout(() => {
     const snapped = nearestFeatureAtPoint(event.point);
+    const requestToken = ++probeRequestToken;
     if (snapped) {
       map.getCanvas().style.cursor = snapped.cursor;
       fetchProbe(snapped.lat, snapped.lon, event.originalEvent.clientX, event.originalEvent.clientY, snapped.header, {
         hideDelayMs: null,
+        cooldownMs: PROBE_HOVER_COOLDOWN_MS,
+        requestToken,
       });
       return;
     }
@@ -210,12 +247,16 @@ function scheduleHoverProbe(event) {
     map.getCanvas().style.cursor = "";
     fetchProbe(event.lngLat.lat, event.lngLat.lng, event.originalEvent.clientX, event.originalEvent.clientY, null, {
       hideDelayMs: null,
+      cooldownMs: PROBE_HOVER_COOLDOWN_MS,
+      requestToken,
     });
-  }, 80);
+  }, PROBE_HOVER_DELAY_MS);
 }
 
 function resetTransientMapUi() {
+  probeRequestToken += 1;
   clearTimeout(probeTimer);
+  cancelProbeCooldown();
   abortActiveProbe();
   hideTooltip();
   clearFocusedCity();

@@ -275,18 +275,21 @@ def _log_score_timings(
     outcome: str,
 ) -> None:
     logger.info(
-        "score_request outcome=%s total_ms=%.2f cells_ms=%.2f cities_ms=%.2f scoring_ms=%.2f normalize_ms=%.2f ranking_ms=%.2f heatmap_ms=%.2f climate_cells=%d cities=%d ranked_cities=%d",
-        outcome,
-        timings.total_ms,
-        timings.cells_ms,
-        timings.cities_ms,
-        timings.scoring_ms,
-        timings.normalize_ms,
-        timings.ranking_ms,
-        timings.heatmap_ms,
-        climate_cell_count,
-        city_count,
-        ranked_city_count,
+        "score request finished",
+        extra={
+            "event": "score_request",
+            "outcome": outcome,
+            "total_ms": timings.total_ms,
+            "cells_ms": timings.cells_ms,
+            "cities_ms": timings.cities_ms,
+            "scoring_ms": timings.scoring_ms,
+            "normalize_ms": timings.normalize_ms,
+            "ranking_ms": timings.ranking_ms,
+            "heatmap_ms": timings.heatmap_ms,
+            "climate_cells": climate_cell_count,
+            "cities": city_count,
+            "ranked_cities": ranked_city_count,
+        },
     )
 
 

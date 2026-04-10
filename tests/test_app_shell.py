@@ -1,4 +1,6 @@
 import logging
+import threading
+import time
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -14,6 +16,12 @@ from backend.scoring import ClimateCell, ClimateMatrix, PreferenceInputs, score_
 
 if TYPE_CHECKING:
     from _pytest.logging import LogCaptureFixture
+    from _pytest.monkeypatch import MonkeyPatch
+
+    from backend.score_service import ScoreResponse
+
+
+from backend import main as backend_main
 
 
 def _capture_backend_logs() -> tuple[logging.Logger, list[logging.Handler], bool]:
@@ -54,6 +62,10 @@ def default_query_params() -> dict[str, int | float]:
         "dryness_preference": 60,
         "sunshine_preference": 60,
     }
+
+
+def rendered_default_form_data() -> dict[str, str]:
+    return {preference.name: str(preference.value) for preference in DEFAULT_PREFERENCES}
 
 
 class ManyCitiesRepository:
@@ -108,7 +120,7 @@ def test_home_page_renders() -> None:
     assert "POGODAPP" in response.text
     assert "Pick the climate you like and see where it shows up." in response.text
     assert 'hx-post="/score"' in response.text
-    assert 'hx-trigger="input changed delay:300ms"' in response.text
+    assert 'hx-trigger="load, input changed delay:300ms"' in response.text
     assert 'hx-sync="this:replace"' in response.text
     assert 'hx-swap="none"' in response.text
     assert 'id="map-description"' in response.text
@@ -133,6 +145,7 @@ def test_home_page_renders() -> None:
     assert MAP_PROJECTION.name in response.text
     assert "probeGridDegrees" in response.text
     assert str(GRID_DEGREES) in response.text
+    assert "POGODAPP_INITIAL_SCORES" not in response.text
 
 
 def test_home_page_uses_backend_default_preferences() -> None:
@@ -148,6 +161,13 @@ def test_home_page_uses_backend_default_preferences() -> None:
         assert f'max="{preference.maximum}"' in response.text
         assert f'step="{preference.step}"' in response.text
         assert f'value="{preference.value}"' in response.text
+
+
+def test_app_bootstrap_relies_on_htmx_load_trigger_instead_of_manual_submit() -> None:
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert 'window.htmx.trigger(form, "submit")' not in response.text
 
 
 def test_preference_contract_matches_issue_scope() -> None:
@@ -256,13 +276,22 @@ def test_map_contract_does_not_depend_on_remote_basemap_assets() -> None:
 
 def test_probe_script_snaps_cache_keys_and_query_params_to_backend_grid() -> None:
     response = client.get("/static/map-probe.js")
+    core_response = client.get("/static/map-core.js")
 
     assert response.status_code == 200
+    assert core_response.status_code == 200
     assert "function snapProbeCoordinate" in response.text
     assert "probeGridDegrees" in response.text
     assert "const snapped = snapProbeCoordinate(lat, lon);" in response.text
     assert "const cacheKey = `${snapped.lat},${snapped.lon},${new URLSearchParams(prefs)}`;" in response.text
     assert "new URLSearchParams({ lat: snapped.lat, lon: snapped.lon, ...prefs });" in response.text
+    assert "const PROBE_HOVER_COOLDOWN_MS = 250;" in core_response.text
+    assert "let probeRequestToken = 0;" in core_response.text
+    assert "probeRequestToken += 1;" in response.text
+    assert "cancelProbeCooldown();" in response.text
+    assert "abortActiveProbe();" in response.text
+    assert "requestToken !== probeRequestToken" in response.text
+    assert "requestToken = ++probeRequestToken" in response.text
 
 
 def test_home_page_uses_gzip_when_requested() -> None:
@@ -290,8 +319,17 @@ def test_http_requests_are_logged(caplog: LogCaptureFixture) -> None:
         _restore_backend_logs(backend_logger, original_handlers, original_propagate)
 
     assert response.status_code == 200
-    assert "http_request outcome=ok method=GET path=/health query=- status=200" in caplog.text
-    assert "client=testclient scheme=http http_version=1.1" in caplog.text
+    assert caplog.records
+    record = caplog.records[-1]
+    assert record.message == "http request finished"
+    assert record.__dict__["event"] == "http_request"
+    assert record.__dict__["outcome"] == "ok"
+    assert record.__dict__["method"] == "GET"
+    assert record.__dict__["path"] == "/health"
+    assert record.__dict__["httpStatus"] == 200
+    assert record.__dict__["srcIp"] == "testclient"
+    assert record.__dict__["scheme"] == "http"
+    assert record.__dict__["httpVersion"] == "1.1"
 
 
 def test_http_request_logs_client_errors(caplog: LogCaptureFixture) -> None:
@@ -304,7 +342,13 @@ def test_http_request_logs_client_errors(caplog: LogCaptureFixture) -> None:
         _restore_backend_logs(backend_logger, original_handlers, original_propagate)
 
     assert response.status_code == 404
-    assert "http_request outcome=client_error method=GET path=/missing-route query=- status=404" in caplog.text
+    assert caplog.records
+    record = caplog.records[-1]
+    assert record.message == "http request finished"
+    assert record.__dict__["event"] == "http_request"
+    assert record.__dict__["outcome"] == "client_error"
+    assert record.__dict__["path"] == "/missing-route"
+    assert record.__dict__["httpStatus"] == 404
 
 
 def test_http_request_logs_server_errors(caplog: LogCaptureFixture) -> None:
@@ -324,7 +368,13 @@ def test_http_request_logs_server_errors(caplog: LogCaptureFixture) -> None:
         _restore_backend_logs(backend_logger, original_handlers, original_propagate)
 
     assert response.status_code == 503
-    assert "http_request outcome=error method=POST path=/score query=- status=503" in caplog.text
+    assert caplog.records
+    record = caplog.records[-1]
+    assert record.message == "http request finished"
+    assert record.__dict__["event"] == "http_request"
+    assert record.__dict__["outcome"] == "error"
+    assert record.__dict__["path"] == "/score"
+    assert record.__dict__["httpStatus"] == 503
 
 
 def test_http_request_logs_uncaught_exceptions(caplog: LogCaptureFixture) -> None:
@@ -345,7 +395,32 @@ def test_http_request_logs_uncaught_exceptions(caplog: LogCaptureFixture) -> Non
         _restore_backend_logs(backend_logger, original_handlers, original_propagate)
 
     assert response.status_code == 500
-    assert "http_request outcome=error method=GET path=/boom query=x=1" in caplog.text
+    assert caplog.records
+    record = caplog.records[-1]
+    assert record.message == "http request failed"
+    assert record.__dict__["event"] == "http_request"
+    assert record.__dict__["outcome"] == "error"
+    assert record.__dict__["path"] == "/boom"
+    assert record.__dict__["query"] == "x=1"
+
+
+def test_http_requests_are_logged_on_railway_too(monkeypatch: MonkeyPatch, caplog: LogCaptureFixture) -> None:
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+    railway_client = TestClient(create_app(climate_repository=StubClimateRepository()))
+    backend_logger, original_handlers, original_propagate = _capture_backend_logs()
+
+    try:
+        with caplog.at_level(logging.INFO, logger="backend"):
+            response = railway_client.get("/health")
+    finally:
+        _restore_backend_logs(backend_logger, original_handlers, original_propagate)
+
+    assert response.status_code == 200
+    assert caplog.records
+    record = caplog.records[-1]
+    assert record.__dict__["event"] == "http_request"
+    assert record.__dict__["path"] == "/health"
+    assert record.__dict__["httpStatus"] == 200
 
 
 def test_score_endpoint_accepts_form_encoded_preferences() -> None:
@@ -426,6 +501,151 @@ def test_score_endpoint_is_deterministic_for_the_same_preferences() -> None:
     assert second_response.status_code == 200
     assert first_response.json()["scores"] == second_response.json()["scores"]
     assert first_response.json()["heatmap"] == second_response.json()["heatmap"]
+
+
+def test_score_endpoint_reuses_cached_response_for_identical_preferences() -> None:
+    call_count = 0
+    original_builder = backend_main.build_score_response
+
+    def counted_builder(repository: StubClimateRepository, preferences: PreferenceInputs) -> ScoreResponse:
+        nonlocal call_count
+        call_count += 1
+        return original_builder(repository, preferences)
+
+    backend_main.__dict__["build_score_response"] = counted_builder
+    cached_client = TestClient(create_app(climate_repository=StubClimateRepository()))
+
+    try:
+        first_response = cached_client.post("/score", data=default_form_data())
+        second_response = cached_client.post("/score", data=default_form_data())
+    finally:
+        backend_main.__dict__["build_score_response"] = original_builder
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert call_count == 2  # 1 pre-warm + 1 miss for non-default form data
+
+
+def test_score_endpoint_uses_prewarmed_default_preferences_cache() -> None:
+    call_count = 0
+    original_builder = backend_main.build_score_response
+
+    def counted_builder(repository: StubClimateRepository, preferences: PreferenceInputs) -> ScoreResponse:
+        nonlocal call_count
+        call_count += 1
+        return original_builder(repository, preferences)
+
+    backend_main.__dict__["build_score_response"] = counted_builder
+
+    try:
+        cached_client = TestClient(create_app(climate_repository=StubClimateRepository()))
+        response = cached_client.post("/score", data=rendered_default_form_data())
+    finally:
+        backend_main.__dict__["build_score_response"] = original_builder
+
+    assert response.status_code == 200
+    assert call_count == 1  # pre-warm only; the first default request should hit cache
+
+
+def test_score_endpoint_evicts_oldest_cached_preferences_after_cache_limit() -> None:
+    call_count = 0
+    original_builder = backend_main.build_score_response
+
+    def counted_builder(repository: StubClimateRepository, preferences: PreferenceInputs) -> ScoreResponse:
+        nonlocal call_count
+        call_count += 1
+        return original_builder(repository, preferences)
+
+    backend_main.__dict__["build_score_response"] = counted_builder
+    cached_client = TestClient(create_app(climate_repository=StubClimateRepository()))
+    base_form = default_form_data()
+
+    try:
+        for offset in range(17):
+            response = cached_client.post(
+                "/score",
+                data={**base_form, "dryness_preference": str(offset)},
+            )
+            assert response.status_code == 200
+
+        repeated_first = cached_client.post("/score", data={**base_form, "dryness_preference": "0"})
+        newest_repeat = cached_client.post("/score", data={**base_form, "dryness_preference": "16"})
+    finally:
+        backend_main.__dict__["build_score_response"] = original_builder
+
+    assert repeated_first.status_code == 200
+    assert newest_repeat.status_code == 200
+    assert call_count == 19  # 1 pre-warm + 17 unique keys + 1 recompute after LRU eviction
+
+
+def test_score_response_cache_deduplicates_concurrent_identical_misses() -> None:
+    score_cache_class = backend_main.__dict__["_ScoreResponseCache"]
+    cache = score_cache_class(4)
+    key = (18, 30, 0, 30, 50)
+    build_started = threading.Event()
+    build_count = 0
+    results: list[dict[str, object]] = []
+
+    def build() -> dict[str, object]:
+        nonlocal build_count
+        build_count += 1
+        build_started.set()
+        time.sleep(0.05)
+        return {"scores": [], "heatmap": "cached"}
+
+    def worker() -> None:
+        results.append(cache.get_or_set(key, build))
+
+    threads = [threading.Thread(target=worker), threading.Thread(target=worker)]
+    threads[0].start()
+    assert build_started.wait(timeout=1)
+    threads[1].start()
+    for thread in threads:
+        thread.join(timeout=1)
+        assert not thread.is_alive()
+
+    assert build_count == 1
+    assert results == [{"scores": [], "heatmap": "cached"}, {"scores": [], "heatmap": "cached"}]
+
+
+def test_score_response_cache_recovers_after_failing_inflight_build() -> None:
+    score_cache_class = backend_main.__dict__["_ScoreResponseCache"]
+    cache = score_cache_class(4)
+    key = (18, 30, 0, 30, 50)
+    build_started = threading.Event()
+    call_count = 0
+    failures: list[str] = []
+    successes: list[dict[str, object]] = []
+
+    def flaky_build() -> dict[str, object]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            build_started.set()
+            time.sleep(0.05)
+            msg = "boom"
+            raise RuntimeError(msg)
+        return {"scores": [], "heatmap": "recovered"}
+
+    def worker() -> None:
+        try:
+            successes.append(cache.get_or_set(key, flaky_build))
+        except RuntimeError as error:
+            failures.append(str(error))
+
+    threads = [threading.Thread(target=worker), threading.Thread(target=worker)]
+    threads[0].start()
+    assert build_started.wait(timeout=1)
+    threads[1].start()
+    for thread in threads:
+        thread.join(timeout=1)
+        assert not thread.is_alive()
+
+    assert failures == ["boom"]
+    assert successes == [{"scores": [], "heatmap": "recovered"}]
+    assert call_count == 2
+    assert cache.get_or_set(key, flaky_build) == {"scores": [], "heatmap": "recovered"}
+    assert call_count == 2
 
 
 def test_dryness_preference_penalizes_rainier_cells() -> None:

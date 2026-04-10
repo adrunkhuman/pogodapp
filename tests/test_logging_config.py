@@ -14,20 +14,43 @@ def test_json_formatter_emits_railway_friendly_fields() -> None:
     formatter = _JSONFormatter()
     record = logging.LogRecord(
         name="backend.main",
-        level=logging.INFO,
+        level=logging.WARNING,
         pathname=__file__,
         lineno=1,
-        msg="http_request outcome=ok",
+        msg="http request finished",
         args=(),
         exc_info=None,
     )
+    record.event = "http_request"
+    record.httpStatus = 200
 
     payload = json.loads(formatter.format(record))
 
-    assert payload["level"] == "info"
+    assert payload["level"] == "warn"
     assert payload["logger"] == "backend.main"
-    assert payload["message"] == "http_request outcome=ok"
+    assert payload["message"] == "http request finished"
+    assert payload["event"] == "http_request"
+    assert payload["httpStatus"] == 200
     assert "timestamp" in payload
+
+
+def test_json_formatter_serializes_nested_extra_values() -> None:
+    formatter = _JSONFormatter()
+    record = logging.LogRecord(
+        name="backend.main",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="score request finished",
+        args=(),
+        exc_info=None,
+    )
+    record.event = "score_request"
+    record.metrics = {"durations": [1.2, 3], "cache": ("hit", True)}
+
+    payload = json.loads(formatter.format(record))
+
+    assert payload["metrics"] == {"durations": [1.2, 3], "cache": ["hit", True]}
 
 
 def test_configure_backend_logging_uses_plain_formatter_locally(monkeypatch: MonkeyPatch) -> None:

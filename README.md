@@ -25,10 +25,13 @@ It is not a weather app. It scores long-term climate normals against a few user 
 ## How It Works
 
 - `GET /` renders the page.
+- `GET /` renders the shell only; the first results arrive through an automatic HTMX `load` `POST /score` using the backend default preferences.
 - `POST /score` accepts `preferred_day_temperature`, `summer_heat_limit`, `winter_cold_limit`, `dryness_preference`, and `sunshine_preference` as form fields and returns JSON.
 - The response shape is `{"scores": [{"name", "continent", "country_code", "flag", "score", "lat", "lon", "probe_lat", "probe_lon"}, ...], "heatmap": "data:image/png;base64,..."}`.
 - Empty or all-zero results return `{"scores": [], "heatmap": ""}`.
+- `/score` is rate-limited to `30/minute` per client and returns `429` when that limit is exceeded.
 - `GET /probe` accepts the same preference fields plus `lat` and `lon`, then returns `{"found": bool, "overall_score": 0..1, "metrics": [{"key", "label", "value", "display_value", "score"}, ...]}`.
+- `/probe` is rate-limited to `120/minute` per client and returns `429` when that limit is exceeded.
 - Both `/score` and `/probe` return `422` when `preferred_day_temperature` falls above `summer_heat_limit` or below `winter_cold_limit`.
 - `/probe` metric keys are `temp`, `high`, `low`, `rain`, and `sun`.
 - `/probe` temperature metrics mean: `temp` = typical day from median monthly high, `high` = hottest-month high, `low` = coldest-month low.
@@ -36,6 +39,7 @@ It is not a weather app. It scores long-term climate normals against a few user 
 - FastAPI handles HTTP and validation.
 - Scoring, ranking, and heatmap rendering stay out of the route layer.
 - `frontend/static/map.js` only renders. HTMX submits the form and hands the response to the map code.
+- Tooltip probes snap hover points to the climate grid, cache results by snapped cell plus current preferences, wait `80ms` before hover lookup, then add a `250ms` cooldown for uncached free-map probes while canceling stale work on mouseleave and preference edits.
 
 ## Data
 
@@ -88,6 +92,8 @@ Notes:
 - Default local URL: `http://127.0.0.1:8000`
 - Live reload is on by default.
 - If `data/climate.duckdb` exists, startup warms the climate matrix, city cache, and heatmap projection.
+- When climate data is available, startup also precomputes and caches the default `/score` response; if that warmup hits a climate-data failure, startup logs it and continues.
+- The `/score` cache is per-worker, in-memory, bounded to `16` entries today, and collapses identical concurrent requests only within the same process.
 - If preload fails, startup logs the problem and requests fall back to the existing `503` path.
 - Large dynamic responses are gzip-compressed when the client sends `Accept-Encoding: gzip`; small responses like `/health` may stay uncompressed.
 
@@ -135,8 +141,11 @@ Railway-specific notes from the platform docs:
 
 ## Observability
 
-- Pogodapp emits its own request logs instead of Uvicorn access logs.
-- Request logs include `outcome`, `method`, `path`, `query`, `status`, `client`, `scheme`, `http_version`, `bytes`, and `duration_ms`.
+- Pogodapp emits its own request logs instead of Uvicorn access logs, including on Railway.
+- Request logs are structured around `event=http_request` and include `outcome`, `method`, `path`, `query`, `httpStatus`, `srcIp`, `scheme`, `httpVersion`, `txBytes`, `responseTime`, and `host`.
+- Other structured events include `startup`, `startup_db`, `startup_bootstrap`, `startup_preload`, `startup_default_score`, `score_request`, and `probe_request`.
+- `score_request` logs also include `total_ms`, `cells_ms`, `cities_ms`, `scoring_ms`, `normalize_ms`, `ranking_ms`, `heatmap_ms`, `climate_cells`, `cities`, and `ranked_cities`.
+- Railway JSON logs always include `level`, `message`, `timestamp`, `logger`, and any event-specific fields attached to the record.
 - Local runs use plain stdout logs; Railway uses single-line JSON on stdout for ingestion.
 
 ## Build Climate Data

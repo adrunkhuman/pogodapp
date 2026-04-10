@@ -51,14 +51,18 @@ def test_build_score_response_logs_step_timings(caplog: LogCaptureFixture) -> No
     assert response["scores"]
     assert "markers" not in response
     assert response["heatmap"].startswith("data:image/png;base64,")
-    assert "score_request outcome=ok" in caplog.text
-    assert "total_ms=" in caplog.text
-    assert "cells_ms=" in caplog.text
-    assert "cities_ms=" in caplog.text
-    assert "scoring_ms=" in caplog.text
-    assert "normalize_ms=" in caplog.text
-    assert "ranking_ms=" in caplog.text
-    assert "heatmap_ms=" in caplog.text
+    assert caplog.records
+    record = caplog.records[-1]
+    assert record.message == "score request finished"
+    assert record.__dict__["event"] == "score_request"
+    assert record.__dict__["outcome"] == "ok"
+    assert cast("float", record.__dict__["total_ms"]) >= 0
+    assert cast("float", record.__dict__["cells_ms"]) >= 0
+    assert cast("float", record.__dict__["cities_ms"]) >= 0
+    assert cast("float", record.__dict__["scoring_ms"]) >= 0
+    assert cast("float", record.__dict__["normalize_ms"]) >= 0
+    assert cast("float", record.__dict__["ranking_ms"]) >= 0
+    assert cast("float", record.__dict__["heatmap_ms"]) >= 0
 
 
 def test_build_score_response_returns_empty_payload_for_empty_matrix() -> None:
