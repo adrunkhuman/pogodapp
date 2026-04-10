@@ -166,7 +166,9 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
     blurred_gray = np.asarray(pil_gray, dtype=np.uint8) * projection.land_mask
     styled_gray = _stylize_heatmap_gray(_preserve_local_maxima(base_gray, blurred_gray))
     peak_floor = np.where(base_gray >= PEAK_BOOST_THRESHOLD * 255.0, styled_gray, 0)
-    styled_gray = (np.maximum(_smooth_styled_heatmap_gray(styled_gray), peak_floor) * projection.land_mask).astype(np.uint8)
+    styled_gray = (np.maximum(_smooth_styled_heatmap_gray(styled_gray), peak_floor) * projection.land_mask).astype(
+        np.uint8
+    )
     rgba = _COLOR_RAMP_LOOKUP[styled_gray]
 
     buf = BytesIO()
