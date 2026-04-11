@@ -17,6 +17,8 @@ from backend.main import build_probe_response, create_app
 from backend.scoring import ClimateCell, ClimateMatrix, PreferenceInputs, score_matrix_row_breakdown, score_preferences
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from _pytest.logging import LogCaptureFixture
     from _pytest.monkeypatch import MonkeyPatch
 
@@ -123,7 +125,7 @@ def test_home_page_renders() -> None:
     assert "POGODAPP" in response.text
     assert "Pick the climate you like and see where it shows up." in response.text
     assert 'hx-post="/score"' in response.text
-    assert 'hx-trigger="load, input changed delay:300ms"' in response.text
+    assert 'hx-trigger="load, change"' in response.text
     assert 'hx-sync="this:replace"' in response.text
     assert 'hx-swap="none"' in response.text
     assert 'id="map-description"' in response.text
@@ -483,6 +485,24 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
     assert payload["heatmap"].startswith("data:image/png;base64,")
 
 
+def test_score_endpoint_offloads_scoring_to_threadpool(monkeypatch: MonkeyPatch) -> None:
+    calls: list[tuple[object, tuple[object, ...]]] = []
+    app = create_app(climate_repository=StubClimateRepository())
+    threadpool_client = TestClient(app)
+
+    async def fake_run_in_threadpool(func: Callable[..., object], *args: object) -> object:
+        calls.append((func, args))
+        return func(*args)
+
+    monkeypatch.setattr(backend_main, "run_in_threadpool", fake_run_in_threadpool)
+
+    response = threadpool_client.post("/score", data=default_form_data())
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+    assert getattr(calls[0][0], "__name__", "") == "_score_response_from_cache_or_repository"
+
+
 def test_score_endpoint_uses_gzip_when_requested() -> None:
     response = client.post(
         "/score",
@@ -840,6 +860,32 @@ def test_probe_endpoint_returns_scored_breakdown_for_a_valid_cell() -> None:
     assert len(payload["metrics"]) == 5
     assert [metric["key"] for metric in payload["metrics"]] == ["temp", "high", "low", "rain", "sun"]
     assert all(set(metric) == {"key", "label", "value", "display_value", "score"} for metric in payload["metrics"])
+
+
+def test_probe_endpoint_offloads_breakdown_to_threadpool(monkeypatch: MonkeyPatch) -> None:
+    class ProbeRepository(StubClimateRepository):
+        def probe_nearest_cell(self, lat: float, lon: float) -> int | None:
+            return 0
+
+        def get_probe_cell(self, row_index: int) -> ClimateCell:
+            return self.list_cells()[row_index]
+
+    calls: list[tuple[object, tuple[object, ...]]] = []
+    app = create_app(climate_repository=ProbeRepository())
+    threadpool_client = TestClient(app)
+
+    async def fake_run_in_threadpool(func: Callable[..., object], *args: object) -> object:
+        calls.append((func, args))
+        return func(*args)
+
+    monkeypatch.setattr(backend_main, "run_in_threadpool", fake_run_in_threadpool)
+
+    response = threadpool_client.get("/probe", params=default_query_params())
+
+    assert response.status_code == 200
+    assert response.json()["found"] is True
+    assert len(calls) == 1
+    assert getattr(calls[0][0], "__name__", "") == "_build_probe_response_from_repository"
 
 
 def test_probe_endpoint_uses_probe_cell_without_loading_resident_matrix() -> None:

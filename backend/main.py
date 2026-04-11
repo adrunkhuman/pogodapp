@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field, ValidationError
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from starlette.concurrency import run_in_threadpool
 
 from backend.cities import GRID_DEGREES
 from backend.climate_repository import (
@@ -228,6 +229,21 @@ def _score_response_from_cache_or_repository(
     return score_cache.get_or_set(cache_key, lambda: build_score_response(repository, preferences))
 
 
+def _build_probe_response_from_repository(
+    repository: _SupportsProbeRepository,
+    lat: float,
+    lon: float,
+    preferences: PreferenceInputs,
+) -> ProbeResponse:
+    row_index = repository.probe_nearest_cell(lat, lon)
+    if row_index is None:
+        return ProbeResponse()
+
+    climate_cell = repository.get_probe_cell(row_index)
+    breakdown = score_climate_cell_breakdown(climate_cell, preferences)
+    return build_probe_response(breakdown)
+
+
 def probe_preferences_dependency(
     preferred_day_temperature: Annotated[int, Query(ge=5, le=35)],
     summer_heat_limit: Annotated[int, Query(ge=18, le=42)],
@@ -366,7 +382,9 @@ def create_app(
     @limiter.limit("30/minute")
     async def score(request: Request, preferences: Annotated[PreferenceInputs, Form()]) -> ScoreResponse:
         try:
-            return _score_response_from_cache_or_repository(score_cache, repository, preferences)
+            return await run_in_threadpool(
+                _score_response_from_cache_or_repository, score_cache, repository, preferences
+            )
         except ClimateDataError as error:
             logger.exception(
                 "score request failed",
@@ -394,18 +412,15 @@ def create_app(
             return ProbeResponse()
         probe_repository = cast("_SupportsProbeRepository", repository)
         try:
-            row_index = probe_repository.probe_nearest_cell(lat, lon)
-            if row_index is None:
-                return ProbeResponse()
-            climate_cell = probe_repository.get_probe_cell(row_index)
+            return await run_in_threadpool(
+                _build_probe_response_from_repository, probe_repository, lat, lon, preferences
+            )
         except ClimateDataError as error:
             logger.exception(
                 "probe request failed",
                 extra={"event": "probe_request", "outcome": "error", "lat": lat, "lon": lon},
             )
             raise HTTPException(status_code=503, detail=str(error)) from error
-        breakdown = score_climate_cell_breakdown(climate_cell, preferences)
-        return build_probe_response(breakdown)
 
     return app
 

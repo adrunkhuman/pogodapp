@@ -30,7 +30,7 @@
         <form
           id="preferences"
           hx-post="/score"
-          hx-trigger="load, input changed delay:300ms"
+          hx-trigger="load, change"
           hx-sync="this:replace"
           hx-swap="none"
           hx-request='{"timeout": 30000}'
