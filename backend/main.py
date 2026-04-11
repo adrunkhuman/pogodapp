@@ -128,7 +128,7 @@ def _current_rss_mb() -> float | None:
     try:
         rss_pages = int(statm_path.read_text(encoding="utf-8").split()[1])
         return round((rss_pages * mmap.PAGESIZE) / (1024 * 1024), 1)
-    except OSError, ValueError, IndexError:
+    except (OSError, ValueError, IndexError):
         return None
 
 
