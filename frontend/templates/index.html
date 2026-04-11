@@ -28,9 +28,12 @@
       <section class="app-panel controls-panel" aria-label="Controls area">
         <div class="panel-header">
           <h2>Controls</h2>
-          <div id="score-loading-indicator" class="score-loading-indicator" role="status" aria-live="polite" hidden>
-            <span class="score-loading-indicator__spinner" aria-hidden="true"></span>
-            <span>Calculating...</span>
+          <div class="score-request-status" aria-live="polite">
+            <div id="score-loading-indicator" class="score-loading-indicator" role="status" hidden>
+              <span class="score-loading-indicator__spinner" aria-hidden="true"></span>
+              <span>Calculating...</span>
+            </div>
+            <div id="score-error-indicator" class="score-error-indicator" role="alert" hidden></div>
           </div>
         </div>
         <form

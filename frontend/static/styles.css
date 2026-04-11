@@ -168,6 +168,24 @@ ul {
   display: none;
 }
 
+.score-request-status {
+  min-height: 0.85rem;
+}
+
+.score-error-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #ff7a7a;
+}
+
+.score-error-indicator[hidden] {
+  display: none;
+}
+
 .score-loading-indicator__spinner {
   width: 0.75rem;
   height: 0.75rem;

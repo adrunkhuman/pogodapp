@@ -32,8 +32,14 @@ function constrainTemperatureControls(form) {
   if (!(winterColdInput instanceof HTMLInputElement)) return;
 
   const preferredDayValue = Number(preferredDayInput.value);
-  summerHeatInput.min = preferredDayInput.value;
-  winterColdInput.max = preferredDayInput.value;
+  const summerHeatMinimum = Number(summerHeatInput.dataset.minimum || summerHeatInput.min);
+  const winterColdMaximum = Number(winterColdInput.dataset.maximum || winterColdInput.max);
+
+  summerHeatInput.dataset.minimum = String(summerHeatMinimum);
+  winterColdInput.dataset.maximum = String(winterColdMaximum);
+
+  summerHeatInput.min = String(Math.max(summerHeatMinimum, preferredDayValue));
+  winterColdInput.max = String(Math.min(winterColdMaximum, preferredDayValue));
 
   if (Number(summerHeatInput.value) < preferredDayValue) {
     summerHeatInput.value = preferredDayInput.value;
@@ -72,14 +78,22 @@ function bindPreferenceControls(form) {
 
 function bindScoreHandoff(form) {
   const loadingIndicator = document.getElementById("score-loading-indicator");
+  const errorIndicator = document.getElementById("score-error-indicator");
 
   const setLoading = (isLoading) => {
     if (!loadingIndicator) return;
     loadingIndicator.hidden = !isLoading;
   };
 
+  const setError = (message) => {
+    if (!(errorIndicator instanceof HTMLElement)) return;
+    errorIndicator.hidden = message.length === 0;
+    errorIndicator.textContent = message;
+  };
+
   document.body.addEventListener("htmx:beforeRequest", (event) => {
     if (event.detail.elt !== form) return;
+    setError("");
     setLoading(true);
   });
 
@@ -87,7 +101,12 @@ function bindScoreHandoff(form) {
   document.body.addEventListener("htmx:afterRequest", (event) => {
     if (event.detail.elt !== form) return;
     setLoading(false);
-    if (event.detail.xhr.status !== 200) return;
+    if (event.detail.xhr.status !== 200) {
+      setError("Could not calculate scores.");
+      return;
+    }
+
+    setError("");
     window.renderScores(JSON.parse(event.detail.xhr.responseText));
   });
 }
