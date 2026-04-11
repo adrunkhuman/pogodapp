@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
 from typing import TYPE_CHECKING, cast
 
+import httpx
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.cities import GRID_DEGREES, CityCandidate, CityRankingCache, continent_of
@@ -17,6 +20,8 @@ from backend.main import build_probe_response, create_app
 from backend.scoring import ClimateCell, ClimateMatrix, PreferenceInputs, score_matrix_row_breakdown, score_preferences
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from _pytest.logging import LogCaptureFixture
     from _pytest.monkeypatch import MonkeyPatch
 
@@ -71,6 +76,17 @@ def rendered_default_form_data() -> dict[str, str]:
     return {preference.name: str(preference.value) for preference in DEFAULT_PREFERENCES}
 
 
+async def wait_for_thread_event(event: threading.Event, max_wait_seconds: float = 1.0) -> None:
+    deadline = time.perf_counter() + max_wait_seconds
+    while time.perf_counter() < deadline:
+        if event.is_set():
+            return
+        await asyncio.sleep(0.01)
+
+    msg = "thread event was not set before timeout"
+    raise AssertionError(msg)
+
+
 class ManyCitiesRepository:
     def __init__(self) -> None:
         self._cells = tuple(
@@ -123,9 +139,10 @@ def test_home_page_renders() -> None:
     assert "POGODAPP" in response.text
     assert "Pick the climate you like and see where it shows up." in response.text
     assert 'hx-post="/score"' in response.text
-    assert 'hx-trigger="load, input changed delay:300ms"' in response.text
+    assert 'hx-trigger="load, change delay:500ms"' in response.text
     assert 'hx-sync="this:replace"' in response.text
     assert 'hx-swap="none"' in response.text
+    assert 'id="score-loading-indicator"' in response.text
     assert 'id="map-description"' in response.text
     assert 'id="map-status"' in response.text
     assert 'id="map-legend"' in response.text
@@ -481,6 +498,121 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
     assert all(count <= 30 for count in continent_counts.values())
     # Heatmap is a PNG data URL
     assert payload["heatmap"].startswith("data:image/png;base64,")
+
+
+def test_score_endpoint_offloads_scoring_to_threadpool(monkeypatch: MonkeyPatch) -> None:
+    calls: list[tuple[object, tuple[object, ...]]] = []
+    app = create_app(climate_repository=StubClimateRepository())
+    threadpool_client = TestClient(app)
+
+    async def fake_run_in_threadpool(func: Callable[..., object], *args: object) -> object:
+        calls.append((func, args))
+        return func(*args)
+
+    monkeypatch.setattr(backend_main, "run_in_threadpool", fake_run_in_threadpool)
+
+    response = threadpool_client.post("/score", data=default_form_data())
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+    assert getattr(calls[0][0], "__name__", "") == "_score_response_from_cache_or_repository"
+
+
+@pytest.mark.anyio
+async def test_score_endpoint_serializes_concurrent_requests_per_worker() -> None:
+    entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+    call_count = 0
+    lock = threading.Lock()
+    original_builder = backend_main.__dict__["_score_response_from_cache_or_repository"]
+    app = create_app(climate_repository=StubClimateRepository())
+
+    def slow_builder(*args: object) -> ScoreResponse:
+        nonlocal call_count
+        with lock:
+            call_count += 1
+            current_call = call_count
+
+        if current_call == 1:
+            entered.set()
+            assert release_first.wait(timeout=1)
+        else:
+            second_entered.set()
+
+        return {"scores": [], "heatmap": ""}
+
+    backend_main.__dict__["_score_response_from_cache_or_repository"] = slow_builder
+
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+            first_request = asyncio.create_task(async_client.post("/score", data=default_form_data()))
+            await wait_for_thread_event(entered)
+
+            second_request = asyncio.create_task(async_client.post("/score", data=default_form_data()))
+            await asyncio.sleep(0.05)
+            assert not second_entered.is_set()
+
+            release_first.set()
+
+            first_response = await first_request
+            second_response = await second_request
+    finally:
+        backend_main.__dict__["_score_response_from_cache_or_repository"] = original_builder
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert second_entered.is_set()
+
+
+@pytest.mark.anyio
+async def test_score_endpoint_releases_semaphore_after_failed_request() -> None:
+    entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+    call_count = 0
+    lock = threading.Lock()
+    original_builder = backend_main.__dict__["_score_response_from_cache_or_repository"]
+    app = create_app(climate_repository=StubClimateRepository())
+
+    def flaky_builder(*args: object) -> ScoreResponse:
+        nonlocal call_count
+        with lock:
+            call_count += 1
+            current_call = call_count
+
+        if current_call == 1:
+            entered.set()
+            assert release_first.wait(timeout=1)
+            msg = "boom"
+            raise ClimateDataError(msg)
+
+        second_entered.set()
+        return {"scores": [], "heatmap": ""}
+
+    backend_main.__dict__["_score_response_from_cache_or_repository"] = flaky_builder
+
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+            first_request = asyncio.create_task(async_client.post("/score", data=default_form_data()))
+            await wait_for_thread_event(entered)
+
+            second_request = asyncio.create_task(async_client.post("/score", data=default_form_data()))
+            await asyncio.sleep(0.05)
+            assert not second_entered.is_set()
+
+            release_first.set()
+
+            first_response = await first_request
+            second_response = await second_request
+    finally:
+        backend_main.__dict__["_score_response_from_cache_or_repository"] = original_builder
+
+    assert first_response.status_code == 503
+    assert second_response.status_code == 200
+    assert second_entered.is_set()
 
 
 def test_score_endpoint_uses_gzip_when_requested() -> None:
@@ -842,6 +974,32 @@ def test_probe_endpoint_returns_scored_breakdown_for_a_valid_cell() -> None:
     assert all(set(metric) == {"key", "label", "value", "display_value", "score"} for metric in payload["metrics"])
 
 
+def test_probe_endpoint_offloads_breakdown_to_threadpool(monkeypatch: MonkeyPatch) -> None:
+    class ProbeRepository(StubClimateRepository):
+        def probe_nearest_cell(self, lat: float, lon: float) -> int | None:
+            return 0
+
+        def get_probe_cell(self, row_index: int) -> ClimateCell:
+            return self.list_cells()[row_index]
+
+    calls: list[tuple[object, tuple[object, ...]]] = []
+    app = create_app(climate_repository=ProbeRepository())
+    threadpool_client = TestClient(app)
+
+    async def fake_run_in_threadpool(func: Callable[..., object], *args: object) -> object:
+        calls.append((func, args))
+        return func(*args)
+
+    monkeypatch.setattr(backend_main, "run_in_threadpool", fake_run_in_threadpool)
+
+    response = threadpool_client.get("/probe", params=default_query_params())
+
+    assert response.status_code == 200
+    assert response.json()["found"] is True
+    assert len(calls) == 1
+    assert getattr(calls[0][0], "__name__", "") == "_build_probe_response_from_repository"
+
+
 def test_probe_endpoint_uses_probe_cell_without_loading_resident_matrix() -> None:
     class ProbeOnlyRepository(StubClimateRepository):
         def __init__(self) -> None:
@@ -924,7 +1082,9 @@ def test_home_page_registers_htmx_handoff_script() -> None:
     assert app_script.status_code == 200
     assert "/static/app.js" in response.text
     assert "htmx:afterRequest" in app_script.text
+    assert "htmx:beforeRequest" in app_script.text
     assert "window.renderScores(JSON.parse(event.detail.xhr.responseText));" in app_script.text
+    assert "loadingIndicator.hidden = !isLoading;" in app_script.text
     assert "summerHeatInput.min = preferredDayInput.value" in app_script.text
     assert "winterColdInput.max = preferredDayInput.value" in app_script.text
 

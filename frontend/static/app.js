@@ -71,10 +71,23 @@ function bindPreferenceControls(form) {
 }
 
 function bindScoreHandoff(form) {
-  // Successful `#preferences` submissions return the raw `/score` JSON payload,
-  // which the split map scripts consume through `window.renderScores`.
+  const loadingIndicator = document.getElementById("score-loading-indicator");
+
+  const setLoading = (isLoading) => {
+    if (!loadingIndicator) return;
+    loadingIndicator.hidden = !isLoading;
+  };
+
+  document.body.addEventListener("htmx:beforeRequest", (event) => {
+    if (event.detail.elt !== form) return;
+    setLoading(true);
+  });
+
+  // HTMX returns raw /score JSON here; hand it straight to the map renderer.
   document.body.addEventListener("htmx:afterRequest", (event) => {
-    if (event.detail.elt !== form || event.detail.xhr.status !== 200) return;
+    if (event.detail.elt !== form) return;
+    setLoading(false);
+    if (event.detail.xhr.status !== 200) return;
     window.renderScores(JSON.parse(event.detail.xhr.responseText));
   });
 }

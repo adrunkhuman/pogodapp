@@ -27,6 +27,7 @@ It is not a weather app. It scores long-term climate normals against a few user 
 - `GET /` renders the page.
 - `GET /` renders the shell only; the first results arrive through an automatic HTMX `load` `POST /score` using the backend default preferences.
 - `POST /score` accepts `preferred_day_temperature`, `summer_heat_limit`, `winter_cold_limit`, `dryness_preference`, and `sunshine_preference` as form fields and returns JSON.
+- After the initial page-load score, HTMX re-submits the form on settled control `change` events with a `500ms` delay, so quick slider edits collapse into one `/score` request instead of fan-out bursts.
 - The response shape is `{"scores": [{"name", "continent", "country_code", "flag", "score", "lat", "lon", "probe_lat", "probe_lon"}, ...], "heatmap": "data:image/png;base64,..."}`.
 - Empty or all-zero results return `{"scores": [], "heatmap": ""}`.
 - `/score` is rate-limited to `30/minute` per client and returns `429` when that limit is exceeded.
@@ -38,7 +39,7 @@ It is not a weather app. It scores long-term climate normals against a few user 
 - `/probe` returns `{"found": false, "overall_score": 0.0, "metrics": []}` for ocean points, unmapped cells, or repositories without probe support.
 - FastAPI handles HTTP and validation.
 - Scoring, ranking, and heatmap rendering stay out of the route layer.
-- `frontend/static/map.js` only renders. HTMX submits the form and hands the response to the map code.
+- `frontend/static/map.js` only renders. HTMX submits the form, shows a brief `Calculating...` status in the controls panel, and hands the JSON response to the map code.
 - Tooltip probes snap hover points to the climate grid and cache results by snapped cell plus current preferences.
 
 ## Data

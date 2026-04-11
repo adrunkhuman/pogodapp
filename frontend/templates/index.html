@@ -26,11 +26,17 @@
       </header>
 
       <section class="app-panel controls-panel" aria-label="Controls area">
-        <h2>Controls</h2>
+        <div class="panel-header">
+          <h2>Controls</h2>
+          <div id="score-loading-indicator" class="score-loading-indicator" role="status" aria-live="polite" hidden>
+            <span class="score-loading-indicator__spinner" aria-hidden="true"></span>
+            <span>Calculating...</span>
+          </div>
+        </div>
         <form
           id="preferences"
           hx-post="/score"
-          hx-trigger="load, input changed delay:300ms"
+          hx-trigger="load, change delay:500ms"
           hx-sync="this:replace"
           hx-swap="none"
           hx-request='{"timeout": 30000}'
