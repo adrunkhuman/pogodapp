@@ -72,14 +72,43 @@ function bindPreferenceControls(form) {
 
 function bindScoreHandoff(form) {
   const loadingIndicator = document.getElementById("score-loading-indicator");
+  const errorIndicator = document.getElementById("score-error-indicator");
 
   const setLoading = (isLoading) => {
     if (!loadingIndicator) return;
     loadingIndicator.hidden = !isLoading;
   };
 
+  const setError = (message) => {
+    if (!(errorIndicator instanceof HTMLElement)) return;
+    errorIndicator.hidden = message.length === 0;
+    errorIndicator.textContent = message;
+  };
+
+  const scoreErrorMessage = (xhr) => {
+    if (xhr.status === 422) {
+      try {
+        const payload = JSON.parse(xhr.responseText);
+        const detail = Array.isArray(payload.detail) ? payload.detail : [];
+        if (detail.some((item) => String(item.msg || "").includes("summer_heat_limit"))) {
+          return "Typical day cannot be above too hot.";
+        }
+        if (detail.some((item) => String(item.msg || "").includes("winter_cold_limit"))) {
+          return "Typical day cannot be below too cold.";
+        }
+      } catch {
+        return "Those temperature limits conflict.";
+      }
+
+      return "Those temperature limits conflict.";
+    }
+
+    return "Could not score these preferences.";
+  };
+
   document.body.addEventListener("htmx:beforeRequest", (event) => {
     if (event.detail.elt !== form) return;
+    setError("");
     setLoading(true);
   });
 
@@ -87,7 +116,12 @@ function bindScoreHandoff(form) {
   document.body.addEventListener("htmx:afterRequest", (event) => {
     if (event.detail.elt !== form) return;
     setLoading(false);
-    if (event.detail.xhr.status !== 200) return;
+    if (event.detail.xhr.status !== 200) {
+      setError(scoreErrorMessage(event.detail.xhr));
+      return;
+    }
+
+    setError("");
     window.renderScores(JSON.parse(event.detail.xhr.responseText));
   });
 }

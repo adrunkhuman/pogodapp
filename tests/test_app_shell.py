@@ -143,6 +143,7 @@ def test_home_page_renders() -> None:
     assert 'hx-sync="this:replace"' in response.text
     assert 'hx-swap="none"' in response.text
     assert 'id="score-loading-indicator"' in response.text
+    assert 'id="score-error-indicator"' in response.text
     assert 'id="map-description"' in response.text
     assert 'id="map-status"' in response.text
     assert 'id="map-legend"' in response.text
@@ -1085,6 +1086,9 @@ def test_home_page_registers_htmx_handoff_script() -> None:
     assert "htmx:beforeRequest" in app_script.text
     assert "window.renderScores(JSON.parse(event.detail.xhr.responseText));" in app_script.text
     assert "loadingIndicator.hidden = !isLoading;" in app_script.text
+    assert 'const errorIndicator = document.getElementById("score-error-indicator");' in app_script.text
+    assert "if (event.detail.xhr.status !== 200) {" in app_script.text
+    assert "Could not score these preferences." in app_script.text
     assert "summerHeatInput.min = preferredDayInput.value" in app_script.text
     assert "winterColdInput.max = preferredDayInput.value" in app_script.text
 
