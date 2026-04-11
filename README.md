@@ -39,7 +39,7 @@ It is not a weather app. It scores long-term climate normals against a few user 
 - FastAPI handles HTTP and validation.
 - Scoring, ranking, and heatmap rendering stay out of the route layer.
 - `frontend/static/map.js` only renders. HTMX submits the form and hands the response to the map code.
-- Tooltip probes snap hover points to the climate grid, cache results by snapped cell plus current preferences, wait `80ms` before hover lookup, then add a `250ms` cooldown for uncached free-map probes while canceling stale work on mouseleave and preference edits.
+- Tooltip probes snap hover points to the climate grid and cache results by snapped cell plus current preferences.
 
 ## Data
 
@@ -91,16 +91,13 @@ Notes:
 
 - Default local URL: `http://127.0.0.1:8000`
 - Live reload is on by default.
-- If `data/climate.duckdb` exists, startup warms the score-time climate aggregates, city cache, heatmap projection, and the lookup indexes that keep city ranking and probe snapping aligned.
-- `/probe` keeps using the same response contract, but it now fetches one monthly climate row on demand instead of keeping all monthly probe data resident.
-- When climate data is available, startup also precomputes and caches the default `/score` response; if that warmup hits a climate-data failure, startup logs it and continues.
-- The `/score` cache is per-worker, in-memory, bounded to `16` entries today, and collapses identical concurrent requests only within the same process.
-- If preload fails, startup logs the problem and requests fall back to the existing `503` path.
 - Large dynamic responses are gzip-compressed when the client sends `Accept-Encoding: gzip`; small responses like `/health` may stay uncompressed.
 
 ## Deployment
 
-The app can bootstrap `climate.duckdb` on startup, but deployment config stays provider-agnostic and env-driven.
+The app can bootstrap `climate.duckdb` on startup, and deployment remains env-driven.
+
+For container deployments, mount persistent storage and point the data env vars at that mount. For example, if your runtime volume is mounted at `/app/data`, set `POGODAPP_DATA_DIR=/app/data`, `POGODAPP_CLIMATE_DB=/app/data/climate.duckdb`, and `POGODAPP_CLIMATE_CACHE_DIR=/app/data/worldclim`.
 
 Relevant environment variables:
 
@@ -113,42 +110,15 @@ Relevant environment variables:
 - `PORT`: bind port. Default: `8000`.
 - `POGODAPP_RELOAD`: toggles Uvicorn reload. Default: on for local runs, off when `PORT` is injected.
 - `LOG_LEVEL`: log level override for app and server logs. Default: `INFO`.
-
-Generic deployment shape:
-
-1. Mount persistent storage for the data directory.
-2. Set `POGODAPP_DATA_DIR` and `POGODAPP_CLIMATE_DB` to that persistent path.
-3. Set `POGODAPP_BUILD_CLIMATE_DB_IF_MISSING=true` for first-boot bootstrap.
-4. Start the app with `uv run pogodapp`.
-
-Railway example:
-
-1. Attach a volume mounted at `/app/data`.
-2. Set service variables:
-   - `POGODAPP_DATA_DIR=/app/data`
-   - `POGODAPP_CLIMATE_DB=/app/data/climate.duckdb`
-   - `POGODAPP_CLIMATE_CACHE_DIR=/app/data/worldclim`
-   - `POGODAPP_BUILD_CLIMATE_DB_IF_MISSING=true`
-   - `POGODAPP_CLIMATE_RESOLUTION=5m`
-   - `POGODAPP_RELOAD=false`
-3. Use the checked-in `railway.toml`, which starts the service with `uv run pogodapp`.
-
-Railway-specific notes from the platform docs:
-
-- Volumes are mounted only at runtime, not during build or pre-deploy.
-- Variables configured in Railway are exposed to the app as normal environment variables.
-- The first deploy on an empty volume can take a while because the app builds the climate database before Uvicorn starts.
-- On Railway, logs switch to single-line JSON automatically when `RAILWAY_ENVIRONMENT` or `RAILWAY_SERVICE_NAME` is present.
+- `LOG_FORMAT`: stdout formatter for `backend`, `uvicorn`, and `uvicorn.error`. Supported values: `json` and `plain`. Default: `json`. Unset or unrecognized values fall back to `json`.
 
 ## Observability
 
-- Pogodapp emits its own request logs instead of Uvicorn access logs, including on Railway.
-- Request logs are structured around `event=http_request` and include `outcome`, `method`, `path`, `query`, `httpStatus`, `srcIp`, `scheme`, `httpVersion`, `txBytes`, `responseTime`, and `host`.
-- Other structured events include `startup`, `startup_db`, `startup_bootstrap`, `startup_preload`, `startup_default_score`, `score_request`, `probe_request`, and `runtime_memory`.
-- `score_request` logs also include `total_ms`, `cells_ms`, `cities_ms`, `scoring_ms`, `normalize_ms`, `ranking_ms`, `heatmap_ms`, `climate_cells`, `cities`, and `ranked_cities`.
-- `runtime_memory` logs snapshot Linux RSS plus cache component sizes before preload, after each preload step, and after the default `/score` warmup.
-- Railway JSON logs always include `level`, `message`, `timestamp`, `logger`, and any event-specific fields attached to the record.
-- Local runs use plain stdout logs; Railway uses single-line JSON on stdout for ingestion.
+- Pogodapp emits its own request logs instead of Uvicorn access logs.
+- Logs are JSON by default. Set `LOG_FORMAT=plain` for traditional local stdout logs.
+- Log format is no longer inferred from Railway or any other platform environment variables.
+- JSON logs always include `level`, `message`, `timestamp`, `logger`, and any event-specific fields attached to the record.
+- Main event families are `http_request`, `startup`, `startup_db`, `startup_bootstrap`, `startup_preload`, `startup_default_score`, `score_request`, `probe_request`, and `runtime_memory`.
 
 ## Build Climate Data
 

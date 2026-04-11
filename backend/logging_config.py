@@ -6,7 +6,7 @@ import os
 import sys
 from datetime import UTC, datetime
 
-_RAILWAY_LEVEL_NAMES = {
+_JSON_LEVEL_NAMES = {
     logging.DEBUG: "debug",
     logging.INFO: "info",
     logging.WARNING: "warn",
@@ -14,11 +14,11 @@ _RAILWAY_LEVEL_NAMES = {
     logging.CRITICAL: "error",
 }
 _LOG_RECORD_DEFAULTS = frozenset(logging.makeLogRecord({}).__dict__)
+_LOG_FORMAT_ENV_VAR = "LOG_FORMAT"
 
 
-def is_railway_environment() -> bool:
-    """Return whether the app is running inside Railway."""
-    return os.getenv("RAILWAY_ENVIRONMENT") is not None or os.getenv("RAILWAY_SERVICE_NAME") is not None
+def _use_plain_logging() -> bool:
+    return os.getenv(_LOG_FORMAT_ENV_VAR, "json").strip().lower() == "plain"
 
 
 def _serialize_log_value(value: object) -> object:
@@ -34,11 +34,11 @@ def _serialize_log_value(value: object) -> object:
 
 
 class _JSONFormatter(logging.Formatter):
-    """Single-line JSON for Railway log ingestion."""
+    """JSON formatter for stdout logs."""
 
     def format(self, record: logging.LogRecord) -> str:
         entry: dict[str, object] = {
-            "level": _RAILWAY_LEVEL_NAMES.get(record.levelno, "info"),
+            "level": _JSON_LEVEL_NAMES.get(record.levelno, "info"),
             "message": record.getMessage(),
             "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "logger": record.name,
@@ -60,10 +60,10 @@ def _build_handler(level: int) -> logging.Handler:
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(level)
 
-    if is_railway_environment():
-        handler.setFormatter(_JSONFormatter())
-    else:
+    if _use_plain_logging():
         handler.setFormatter(logging.Formatter(_PLAIN_FORMAT, datefmt=_PLAIN_DATEFMT))
+    else:
+        handler.setFormatter(_JSONFormatter())
 
     return handler
 
@@ -77,10 +77,10 @@ def _configure_named_logger(name: str, level: int) -> None:
 
 
 def configure_backend_logging() -> None:
-    """Configure the backend logger for Railway (JSON/stdout) or local (plain/stdout).
+    """Configure backend and Uvicorn stdout logging.
 
+    Logs are JSON by default. Set LOG_FORMAT=plain for human-oriented local output.
     Uses LOG_LEVEL env var to override the default INFO level.
-    Railway is detected via RAILWAY_ENVIRONMENT or RAILWAY_SERVICE_NAME.
     """
     level_name = os.getenv("LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)

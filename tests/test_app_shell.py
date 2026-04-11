@@ -407,14 +407,16 @@ def test_http_request_logs_uncaught_exceptions(caplog: LogCaptureFixture) -> Non
     assert record.__dict__["query"] == "x=1"
 
 
-def test_http_requests_are_logged_on_railway_too(monkeypatch: MonkeyPatch, caplog: LogCaptureFixture) -> None:
-    monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
-    railway_client = TestClient(create_app(climate_repository=StubClimateRepository()))
+def test_http_requests_are_logged_with_structured_fields_by_default(
+    monkeypatch: MonkeyPatch, caplog: LogCaptureFixture
+) -> None:
+    monkeypatch.delenv("LOG_FORMAT", raising=False)
+    logging_client = TestClient(create_app(climate_repository=StubClimateRepository()))
     backend_logger, original_handlers, original_propagate = _capture_backend_logs()
 
     try:
         with caplog.at_level(logging.INFO, logger="backend"):
-            response = railway_client.get("/health")
+            response = logging_client.get("/health")
     finally:
         _restore_backend_logs(backend_logger, original_handlers, original_propagate)
 
