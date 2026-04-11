@@ -57,7 +57,7 @@ DEFAULT_PREFERENCES: tuple[PreferenceField, ...] = (
     PreferenceField(
         name="preferred_day_temperature",
         label="Typical day",
-        minimum=5,
+        minimum=-5,
         maximum=35,
         step=1,
         value=18,
@@ -68,7 +68,7 @@ DEFAULT_PREFERENCES: tuple[PreferenceField, ...] = (
     PreferenceField(
         name="summer_heat_limit",
         label="Summer limit",
-        minimum=18,
+        minimum=-5,
         maximum=42,
         step=1,
         value=30,
@@ -80,7 +80,7 @@ DEFAULT_PREFERENCES: tuple[PreferenceField, ...] = (
         name="winter_cold_limit",
         label="Winter limit",
         minimum=-15,
-        maximum=20,
+        maximum=35,
         step=1,
         value=0,
         description="How cold can cooler months get before the place starts feeling too cold?",

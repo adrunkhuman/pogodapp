@@ -32,8 +32,14 @@ function constrainTemperatureControls(form) {
   if (!(winterColdInput instanceof HTMLInputElement)) return;
 
   const preferredDayValue = Number(preferredDayInput.value);
-  summerHeatInput.min = preferredDayInput.value;
-  winterColdInput.max = preferredDayInput.value;
+  const summerHeatMinimum = Number(summerHeatInput.dataset.minimum || summerHeatInput.min);
+  const winterColdMaximum = Number(winterColdInput.dataset.maximum || winterColdInput.max);
+
+  summerHeatInput.dataset.minimum = String(summerHeatMinimum);
+  winterColdInput.dataset.maximum = String(winterColdMaximum);
+
+  summerHeatInput.min = String(Math.max(summerHeatMinimum, preferredDayValue));
+  winterColdInput.max = String(Math.min(winterColdMaximum, preferredDayValue));
 
   if (Number(summerHeatInput.value) < preferredDayValue) {
     summerHeatInput.value = preferredDayInput.value;
@@ -85,27 +91,6 @@ function bindScoreHandoff(form) {
     errorIndicator.textContent = message;
   };
 
-  const scoreErrorMessage = (xhr) => {
-    if (xhr.status === 422) {
-      try {
-        const payload = JSON.parse(xhr.responseText);
-        const detail = Array.isArray(payload.detail) ? payload.detail : [];
-        if (detail.some((item) => String(item.msg || "").includes("summer_heat_limit"))) {
-          return "Typical day cannot be above too hot.";
-        }
-        if (detail.some((item) => String(item.msg || "").includes("winter_cold_limit"))) {
-          return "Typical day cannot be below too cold.";
-        }
-      } catch {
-        return "Those temperature limits conflict.";
-      }
-
-      return "Those temperature limits conflict.";
-    }
-
-    return "Could not score these preferences.";
-  };
-
   document.body.addEventListener("htmx:beforeRequest", (event) => {
     if (event.detail.elt !== form) return;
     setError("");
@@ -117,7 +102,7 @@ function bindScoreHandoff(form) {
     if (event.detail.elt !== form) return;
     setLoading(false);
     if (event.detail.xhr.status !== 200) {
-      setError(scoreErrorMessage(event.detail.xhr));
+      setError("Could not calculate scores.");
       return;
     }
 

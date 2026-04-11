@@ -246,9 +246,9 @@ def _build_probe_response_from_repository(
 
 
 def probe_preferences_dependency(
-    preferred_day_temperature: Annotated[int, Query(ge=5, le=35)],
-    summer_heat_limit: Annotated[int, Query(ge=18, le=42)],
-    winter_cold_limit: Annotated[int, Query(ge=-15, le=20)],
+    preferred_day_temperature: Annotated[int, Query(ge=-5, le=35)],
+    summer_heat_limit: Annotated[int, Query(ge=-5, le=42)],
+    winter_cold_limit: Annotated[int, Query(ge=-15, le=35)],
     dryness_preference: Annotated[int, Query(ge=0, le=100)],
     sunshine_preference: Annotated[int, Query(ge=0, le=100)],
 ) -> PreferenceInputs:

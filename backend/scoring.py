@@ -36,9 +36,9 @@ MULTIPLICATIVE_SCORE_FLOOR = 0.02
 class PreferenceInputs(BaseModel):
     """Validated scoring inputs for the `/score` workflow."""
 
-    preferred_day_temperature: int = Field(ge=5, le=35)
-    summer_heat_limit: int = Field(ge=18, le=42)
-    winter_cold_limit: int = Field(ge=-15, le=20)
+    preferred_day_temperature: int = Field(ge=-5, le=35)
+    summer_heat_limit: int = Field(ge=-5, le=42)
+    winter_cold_limit: int = Field(ge=-15, le=35)
     dryness_preference: int = Field(ge=0, le=100)
     sunshine_preference: int = Field(ge=0, le=100)
 

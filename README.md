@@ -33,13 +33,16 @@ It is not a weather app. It scores long-term climate normals against a few user 
 - `/score` is rate-limited to `30/minute` per client and returns `429` when that limit is exceeded.
 - `GET /probe` accepts the same preference fields plus `lat` and `lon`, then returns `{"found": bool, "overall_score": 0..1, "metrics": [{"key", "label", "value", "display_value", "score"}, ...]}`.
 - `/probe` is rate-limited to `120/minute` per client and returns `429` when that limit is exceeded.
-- Both `/score` and `/probe` return `422` when `preferred_day_temperature` falls above `summer_heat_limit` or below `winter_cold_limit`.
+- `preferred_day_temperature` accepts `-5..35`.
+- `summer_heat_limit` accepts `-5..42` and must stay greater than or equal to `preferred_day_temperature`.
+- `winter_cold_limit` accepts `-15..35` and must stay less than or equal to `preferred_day_temperature`.
+- Both `/score` and `/probe` return `422` when those temperature fields violate the ordering rule.
 - `/probe` metric keys are `temp`, `high`, `low`, `rain`, and `sun`.
 - `/probe` temperature metrics mean: `temp` = typical day from median monthly high, `high` = hottest-month high, `low` = coldest-month low.
 - `/probe` returns `{"found": false, "overall_score": 0.0, "metrics": []}` for ocean points, unmapped cells, or repositories without probe support.
 - FastAPI handles HTTP and validation.
 - Scoring, ranking, and heatmap rendering stay out of the route layer.
-- `frontend/static/map.js` only renders. HTMX submits the form, shows a brief `Calculating...` status in the controls panel, and hands the JSON response to the map code.
+- `frontend/static/map.js` only renders. HTMX submits the form, shows a brief `Calculating...` status in the controls panel, and hands the JSON response to the map code. If scoring fails, the controls panel shows a generic inline error.
 - Tooltip probes snap hover points to the climate grid and cache results by snapped cell plus current preferences.
 
 ## Data
