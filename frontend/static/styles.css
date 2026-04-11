@@ -139,12 +139,48 @@ ul {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .app-panel h2 {
   font-size: 0.9rem;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #666666;
+}
+
+.score-loading-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8aaeff;
+}
+
+.score-loading-indicator[hidden] {
+  display: none;
+}
+
+.score-loading-indicator__spinner {
+  width: 0.75rem;
+  height: 0.75rem;
+  border: 1px solid #2f3f63;
+  border-top-color: #4a9eff;
+  border-radius: 999px;
+  animation: score-loading-spin 0.8s linear infinite;
+}
+
+@keyframes score-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 #preferences {

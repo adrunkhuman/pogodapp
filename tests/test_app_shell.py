@@ -128,6 +128,7 @@ def test_home_page_renders() -> None:
     assert 'hx-trigger="load, change delay:500ms"' in response.text
     assert 'hx-sync="this:replace"' in response.text
     assert 'hx-swap="none"' in response.text
+    assert 'id="score-loading-indicator"' in response.text
     assert 'id="map-description"' in response.text
     assert 'id="map-status"' in response.text
     assert 'id="map-legend"' in response.text
@@ -970,7 +971,9 @@ def test_home_page_registers_htmx_handoff_script() -> None:
     assert app_script.status_code == 200
     assert "/static/app.js" in response.text
     assert "htmx:afterRequest" in app_script.text
+    assert "htmx:beforeRequest" in app_script.text
     assert "window.renderScores(JSON.parse(event.detail.xhr.responseText));" in app_script.text
+    assert "loadingIndicator.hidden = !isLoading;" in app_script.text
     assert "summerHeatInput.min = preferredDayInput.value" in app_script.text
     assert "winterColdInput.max = preferredDayInput.value" in app_script.text
 
