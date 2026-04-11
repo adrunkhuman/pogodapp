@@ -125,7 +125,7 @@ def test_home_page_renders() -> None:
     assert "POGODAPP" in response.text
     assert "Pick the climate you like and see where it shows up." in response.text
     assert 'hx-post="/score"' in response.text
-    assert 'hx-trigger="load, change"' in response.text
+    assert 'hx-trigger="load, change delay:500ms"' in response.text
     assert 'hx-sync="this:replace"' in response.text
     assert 'hx-swap="none"' in response.text
     assert 'id="map-description"' in response.text

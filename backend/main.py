@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import mmap
 import threading
@@ -353,6 +354,7 @@ def create_app(
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
     repository = climate_repository or build_default_climate_repository(resolve_climate_database_path())
     score_cache = _ScoreResponseCache(SCORE_CACHE_SIZE)
+    score_request_semaphore = asyncio.Semaphore(1)
     preload_repository(repository)
 
     # Pre-warm default scores so the page-load HTMX POST hits cache instead of paying the cold path.
@@ -382,9 +384,10 @@ def create_app(
     @limiter.limit("30/minute")
     async def score(request: Request, preferences: Annotated[PreferenceInputs, Form()]) -> ScoreResponse:
         try:
-            return await run_in_threadpool(
-                _score_response_from_cache_or_repository, score_cache, repository, preferences
-            )
+            async with score_request_semaphore:
+                return await run_in_threadpool(
+                    _score_response_from_cache_or_repository, score_cache, repository, preferences
+                )
         except ClimateDataError as error:
             logger.exception(
                 "score request failed",
