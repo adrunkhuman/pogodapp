@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import mmap
 import threading
 from collections import OrderedDict
 from dataclasses import asdict
@@ -30,17 +31,16 @@ from backend.logging_config import configure_backend_logging
 from backend.runtime import resolve_climate_database_path
 from backend.score_service import ScoreResponse, build_score_response
 from backend.scoring import (
+    ClimateCell,
     PreferenceInputs,
     ProbeBreakdown,
-    score_matrix_row_breakdown,
+    score_climate_cell_breakdown,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from starlette.middleware.base import RequestResponseEndpoint
-
-    from backend.scoring import ClimateMatrix
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
@@ -117,7 +117,34 @@ class _ScoreResponseCache:
 class _SupportsProbeRepository(Protocol):
     def probe_nearest_cell(self, lat: float, lon: float) -> int | None: ...
 
-    def get_climate_matrix(self) -> ClimateMatrix: ...
+    def get_probe_cell(self, row_index: int) -> ClimateCell: ...
+
+
+def _current_rss_mb() -> float | None:
+    statm_path = Path("/proc/self/statm")
+    if not statm_path.exists():
+        return None
+
+    try:
+        rss_pages = int(statm_path.read_text(encoding="utf-8").split()[1])
+        return round((rss_pages * mmap.PAGESIZE) / (1024 * 1024), 1)
+    except OSError, ValueError, IndexError:
+        return None
+
+
+def _log_runtime_memory(stage: str, repository: ClimateRepository) -> None:
+    extra: dict[str, object] = {
+        "event": "runtime_memory",
+        "stage": stage,
+        "repository": type(repository).__name__,
+    }
+    rss_mb = _current_rss_mb()
+    if rss_mb is not None:
+        extra["rss_mb"] = rss_mb
+    get_runtime_cache_stats = getattr(repository, "get_runtime_cache_stats", None)
+    if callable(get_runtime_cache_stats):
+        extra.update(get_runtime_cache_stats())
+    logger.info("runtime memory snapshot", extra=extra)
 
 
 class ProbeMetricResponse(BaseModel):
@@ -162,11 +189,15 @@ def preload_repository(repository: ClimateRepository) -> None:
         return
 
     try:
+        _log_runtime_memory("before_preload", repository)
         # Test doubles and fallback repositories may only implement the slower request path.
         repository.get_climate_matrix()
+        _log_runtime_memory("after_climate_matrix", repository)
         repository.get_indexed_cities()
+        _log_runtime_memory("after_indexed_cities", repository)
         if hasattr(repository, "get_heatmap_projection"):
             repository.get_heatmap_projection()
+            _log_runtime_memory("after_heatmap_projection", repository)
         logger.info(
             "repository preload finished",
             extra={"event": "startup_preload", "outcome": "ok", "repository": type(repository).__name__},
@@ -312,6 +343,7 @@ def create_app(
     try:
         default_prefs = PreferenceInputs(**{f.name: f.value for f in DEFAULT_PREFERENCES})
         score_cache.set(_score_cache_key(default_prefs), build_score_response(repository, default_prefs))
+        _log_runtime_memory("after_default_score_cache", repository)
         logger.info("startup default score cached", extra={"event": "startup_default_score", "outcome": "ok"})
     except ClimateDataError:
         logger.warning("startup default score skipped", extra={"event": "startup_default_score", "outcome": "skipped"})
@@ -365,14 +397,14 @@ def create_app(
             row_index = probe_repository.probe_nearest_cell(lat, lon)
             if row_index is None:
                 return ProbeResponse()
-            climate_matrix = probe_repository.get_climate_matrix()
+            climate_cell = probe_repository.get_probe_cell(row_index)
         except ClimateDataError as error:
             logger.exception(
                 "probe request failed",
                 extra={"event": "probe_request", "outcome": "error", "lat": lat, "lon": lon},
             )
             raise HTTPException(status_code=503, detail=str(error)) from error
-        breakdown = score_matrix_row_breakdown(climate_matrix, row_index, preferences)
+        breakdown = score_climate_cell_breakdown(climate_cell, preferences)
         return build_probe_response(breakdown)
 
     return app

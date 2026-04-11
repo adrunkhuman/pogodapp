@@ -91,7 +91,8 @@ Notes:
 
 - Default local URL: `http://127.0.0.1:8000`
 - Live reload is on by default.
-- If `data/climate.duckdb` exists, startup warms the climate matrix, city cache, and heatmap projection.
+- If `data/climate.duckdb` exists, startup warms the score-time climate aggregates, city cache, heatmap projection, and the lookup indexes that keep city ranking and probe snapping aligned.
+- `/probe` keeps using the same response contract, but it now fetches one monthly climate row on demand instead of keeping all monthly probe data resident.
 - When climate data is available, startup also precomputes and caches the default `/score` response; if that warmup hits a climate-data failure, startup logs it and continues.
 - The `/score` cache is per-worker, in-memory, bounded to `16` entries today, and collapses identical concurrent requests only within the same process.
 - If preload fails, startup logs the problem and requests fall back to the existing `503` path.
@@ -143,8 +144,9 @@ Railway-specific notes from the platform docs:
 
 - Pogodapp emits its own request logs instead of Uvicorn access logs, including on Railway.
 - Request logs are structured around `event=http_request` and include `outcome`, `method`, `path`, `query`, `httpStatus`, `srcIp`, `scheme`, `httpVersion`, `txBytes`, `responseTime`, and `host`.
-- Other structured events include `startup`, `startup_db`, `startup_bootstrap`, `startup_preload`, `startup_default_score`, `score_request`, and `probe_request`.
+- Other structured events include `startup`, `startup_db`, `startup_bootstrap`, `startup_preload`, `startup_default_score`, `score_request`, `probe_request`, and `runtime_memory`.
 - `score_request` logs also include `total_ms`, `cells_ms`, `cities_ms`, `scoring_ms`, `normalize_ms`, `ranking_ms`, `heatmap_ms`, `climate_cells`, `cities`, and `ranked_cities`.
+- `runtime_memory` logs snapshot Linux RSS plus cache component sizes before preload, after each preload step, and after the default `/score` warmup.
 - Railway JSON logs always include `level`, `message`, `timestamp`, `logger`, and any event-specific fields attached to the record.
 - Local runs use plain stdout logs; Railway uses single-line JSON on stdout for ingestion.
 

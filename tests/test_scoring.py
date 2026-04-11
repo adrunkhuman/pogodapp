@@ -279,6 +279,48 @@ def test_vectorized_scoring_matches_scalar_scoring_for_extreme_inputs() -> None:
     assert np.allclose(vectorized_scores, scalar_scores)
 
 
+def test_vectorized_scoring_matches_full_matrix_when_only_derived_vectors_are_resident() -> None:
+    full_matrix = ClimateMatrix.from_cells(STUB_CLIMATE_CELLS)
+    derived_only_matrix = ClimateMatrix(
+        latitudes=full_matrix.latitudes,
+        longitudes=full_matrix.longitudes,
+        temperature_c=None,
+        typical_highs_c=full_matrix.typical_highs_c,
+        hottest_month_highs_c=full_matrix.hottest_month_highs_c,
+        coldest_month_lows_c=full_matrix.coldest_month_lows_c,
+        median_precipitation_mm=full_matrix.median_precipitation_mm,
+        wettest_precipitation_mm=full_matrix.wettest_precipitation_mm,
+        average_cloud_cover_pct=full_matrix.average_cloud_cover_pct,
+        gloomiest_cloud_cover_pct=full_matrix.gloomiest_cloud_cover_pct,
+    )
+    preferences = make_preferences(summer_heat_limit=28, winter_cold_limit=8)
+
+    assert np.allclose(
+        score_climate_matrix(derived_only_matrix, preferences),
+        score_climate_matrix(full_matrix, preferences),
+    )
+
+
+def test_climate_matrix_rejects_partially_populated_monthly_arrays() -> None:
+    with pytest.raises(ValueError, match="must be provided together"):
+        ClimateMatrix(
+            latitudes=np.array([0.0], dtype=np.float32),
+            longitudes=np.array([0.0], dtype=np.float32),
+            temperature_c=None,
+            temperature_min_c=np.array([[10.0] * 12], dtype=np.float32),
+            temperature_max_c=None,
+            precipitation_mm=None,
+            cloud_cover_pct=None,
+            typical_highs_c=np.array([20.0], dtype=np.float32),
+            hottest_month_highs_c=np.array([22.0], dtype=np.float32),
+            coldest_month_lows_c=np.array([8.0], dtype=np.float32),
+            median_precipitation_mm=np.array([15.0], dtype=np.float32),
+            wettest_precipitation_mm=np.array([30.0], dtype=np.float32),
+            average_cloud_cover_pct=np.array([20.0], dtype=np.float32),
+            gloomiest_cloud_cover_pct=np.array([30.0], dtype=np.float32),
+        )
+
+
 def test_normalize_score_array_scales_best_match_to_one() -> None:
     normalized = normalize_score_array(np.array([0.25, 0.5, 0.125], dtype=np.float32))
 
@@ -312,3 +354,22 @@ def test_score_matrix_row_breakdown_works_without_cached_average_temperatures() 
 
     assert isinstance(breakdown, ProbeBreakdown)
     assert 0 <= breakdown.overall_score <= 1
+
+
+def test_score_matrix_row_breakdown_rejects_aggregate_only_matrix() -> None:
+    full_matrix = ClimateMatrix.from_cells((STUB_CLIMATE_CELLS[0],))
+    derived_only_matrix = ClimateMatrix(
+        latitudes=full_matrix.latitudes,
+        longitudes=full_matrix.longitudes,
+        temperature_c=None,
+        typical_highs_c=full_matrix.typical_highs_c,
+        hottest_month_highs_c=full_matrix.hottest_month_highs_c,
+        coldest_month_lows_c=full_matrix.coldest_month_lows_c,
+        median_precipitation_mm=full_matrix.median_precipitation_mm,
+        wettest_precipitation_mm=full_matrix.wettest_precipitation_mm,
+        average_cloud_cover_pct=full_matrix.average_cloud_cover_pct,
+        gloomiest_cloud_cover_pct=full_matrix.gloomiest_cloud_cover_pct,
+    )
+
+    with pytest.raises(ValueError, match="requires monthly climate arrays"):
+        score_matrix_row_breakdown(derived_only_matrix, 0, make_preferences())
