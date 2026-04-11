@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, TypedDict, cast
 
 import numpy as np
 from pydantic import BaseModel, Field, model_validator
@@ -91,15 +91,19 @@ class ClimateCell:
 
 @dataclass(frozen=True, slots=True)
 class ClimateMatrix:
-    """Compact climate features for vectorized scoring; monthly averages may be omitted."""
+    """Compact score-time features for vectorized scoring.
+
+    Monthly arrays are optional because the runtime can keep yearly aggregates
+    resident for `/score` while `/probe` works from a full `ClimateCell`.
+    """
 
     latitudes: NDArray[np.float32]
     longitudes: NDArray[np.float32]
     temperature_c: NDArray[np.float32] | None
-    temperature_min_c: NDArray[np.float32]
-    temperature_max_c: NDArray[np.float32]
-    precipitation_mm: NDArray[np.float32]
-    cloud_cover_pct: NDArray[np.uint8]
+    temperature_min_c: NDArray[np.float32] | None = None
+    temperature_max_c: NDArray[np.float32] | None = None
+    precipitation_mm: NDArray[np.float32] | None = None
+    cloud_cover_pct: NDArray[np.uint8] | None = None
     typical_highs_c: NDArray[np.float32] = field(default_factory=lambda: np.array([], dtype=np.float32))
     hottest_month_highs_c: NDArray[np.float32] = field(default_factory=lambda: np.array([], dtype=np.float32))
     coldest_month_lows_c: NDArray[np.float32] = field(default_factory=lambda: np.array([], dtype=np.float32))
@@ -112,67 +116,114 @@ class ClimateMatrix:
         """Reject malformed matrix shapes before they reach the scorer."""
         cell_count = self.latitudes.shape[0]
 
-        self._validate_base_shapes(cell_count)
-        self._ensure_derived_vector(
-            "typical_highs_c",
-            np.median(self.temperature_max_c, axis=1).astype(np.float32, copy=False),
-            cell_count,
-        )
-        self._ensure_derived_vector(
-            "hottest_month_highs_c",
-            np.max(self.temperature_max_c, axis=1).astype(np.float32, copy=False),
-            cell_count,
-        )
-        self._ensure_derived_vector(
-            "coldest_month_lows_c",
-            np.min(self.temperature_min_c, axis=1).astype(np.float32, copy=False),
-            cell_count,
-        )
-        self._ensure_derived_vector(
-            "median_precipitation_mm",
-            np.median(self.precipitation_mm, axis=1).astype(np.float32, copy=False),
-            cell_count,
-        )
-        self._ensure_derived_vector(
-            "wettest_precipitation_mm",
-            np.max(self.precipitation_mm, axis=1).astype(np.float32, copy=False),
-            cell_count,
-        )
-        self._ensure_derived_vector(
-            "average_cloud_cover_pct",
-            np.rint(np.mean(self.cloud_cover_pct.astype(np.float32), axis=1)).astype(np.float32, copy=False),
-            cell_count,
-        )
-        self._ensure_derived_vector(
-            "gloomiest_cloud_cover_pct",
-            np.max(self.cloud_cover_pct, axis=1).astype(np.float32, copy=False),
-            cell_count,
-        )
+        self._validate_coordinate_shapes(cell_count)
 
-    def _validate_base_shapes(self, cell_count: int) -> None:
+        if self._has_monthly_inputs():
+            self._validate_base_shapes(cell_count)
+            temperature_min_c = cast("NDArray[np.float32]", self.temperature_min_c)
+            temperature_max_c = cast("NDArray[np.float32]", self.temperature_max_c)
+            precipitation_mm = cast("NDArray[np.float32]", self.precipitation_mm)
+            cloud_cover_pct = cast("NDArray[np.uint8]", self.cloud_cover_pct)
+            self._ensure_derived_vector(
+                "typical_highs_c",
+                np.median(temperature_max_c, axis=1).astype(np.float32, copy=False),
+                cell_count,
+            )
+            self._ensure_derived_vector(
+                "hottest_month_highs_c",
+                np.max(temperature_max_c, axis=1).astype(np.float32, copy=False),
+                cell_count,
+            )
+            self._ensure_derived_vector(
+                "coldest_month_lows_c",
+                np.min(temperature_min_c, axis=1).astype(np.float32, copy=False),
+                cell_count,
+            )
+            self._ensure_derived_vector(
+                "median_precipitation_mm",
+                np.median(precipitation_mm, axis=1).astype(np.float32, copy=False),
+                cell_count,
+            )
+            self._ensure_derived_vector(
+                "wettest_precipitation_mm",
+                np.max(precipitation_mm, axis=1).astype(np.float32, copy=False),
+                cell_count,
+            )
+            self._ensure_derived_vector(
+                "average_cloud_cover_pct",
+                np.rint(np.mean(cloud_cover_pct.astype(np.float32), axis=1)).astype(np.float32, copy=False),
+                cell_count,
+            )
+            self._ensure_derived_vector(
+                "gloomiest_cloud_cover_pct",
+                np.max(cloud_cover_pct, axis=1).astype(np.float32, copy=False),
+                cell_count,
+            )
+            return
+
+        self._validate_derived_only_shapes(cell_count)
+
+    def _validate_coordinate_shapes(self, cell_count: int) -> None:
         if self.longitudes.shape != (cell_count,):
             msg = "longitudes must align with latitudes"
             raise ValueError(msg)
+
+    def _has_monthly_inputs(self) -> bool:
+        monthly_arrays = (
+            self.temperature_min_c,
+            self.temperature_max_c,
+            self.precipitation_mm,
+            self.cloud_cover_pct,
+        )
+        has_any = any(array is not None for array in monthly_arrays)
+        has_all = all(array is not None for array in monthly_arrays)
+        if has_any and not has_all:
+            msg = (
+                "temperature_min_c, temperature_max_c, precipitation_mm, and cloud_cover_pct must be provided together"
+            )
+            raise ValueError(msg)
+        return has_all
+
+    def _validate_base_shapes(self, cell_count: int) -> None:
+        temperature_min_c = cast("NDArray[np.float32]", self.temperature_min_c)
+        temperature_max_c = cast("NDArray[np.float32]", self.temperature_max_c)
+        precipitation_mm = cast("NDArray[np.float32]", self.precipitation_mm)
+        cloud_cover_pct = cast("NDArray[np.uint8]", self.cloud_cover_pct)
 
         if self.temperature_c is not None and self.temperature_c.shape != (cell_count, MONTHS_PER_YEAR):
             msg = "temperature_c must be shaped (cells, 12)"
             raise ValueError(msg)
 
-        if self.temperature_min_c.shape != (cell_count, MONTHS_PER_YEAR):
+        if temperature_min_c.shape != (cell_count, MONTHS_PER_YEAR):
             msg = "temperature_min_c must be shaped (cells, 12)"
             raise ValueError(msg)
 
-        if self.temperature_max_c.shape != (cell_count, MONTHS_PER_YEAR):
+        if temperature_max_c.shape != (cell_count, MONTHS_PER_YEAR):
             msg = "temperature_max_c must be shaped (cells, 12)"
             raise ValueError(msg)
 
-        if self.precipitation_mm.shape != (cell_count, MONTHS_PER_YEAR):
+        if precipitation_mm.shape != (cell_count, MONTHS_PER_YEAR):
             msg = "precipitation_mm must be shaped (cells, 12)"
             raise ValueError(msg)
 
-        if self.cloud_cover_pct.shape != (cell_count, MONTHS_PER_YEAR):
+        if cloud_cover_pct.shape != (cell_count, MONTHS_PER_YEAR):
             msg = "cloud_cover_pct must be shaped (cells, 12)"
             raise ValueError(msg)
+
+    def _validate_derived_only_shapes(self, cell_count: int) -> None:
+        for attribute in (
+            "typical_highs_c",
+            "hottest_month_highs_c",
+            "coldest_month_lows_c",
+            "median_precipitation_mm",
+            "wettest_precipitation_mm",
+            "average_cloud_cover_pct",
+            "gloomiest_cloud_cover_pct",
+        ):
+            current = getattr(self, attribute)
+            if current.shape != (cell_count,):
+                msg = f"{attribute} must align with latitudes"
+                raise ValueError(msg)
 
     def _ensure_derived_vector(self, attribute: str, derived: NDArray[np.float32], cell_count: int) -> None:
         current = getattr(self, attribute)
@@ -516,6 +567,15 @@ def score_matrix_row_breakdown(
     preferences: PreferenceInputs,
 ) -> ProbeBreakdown:
     """Build `/probe` metrics from min/max, rain, and cloud rows without cached mean temperatures."""
+    if (
+        climate_matrix.temperature_min_c is None
+        or climate_matrix.temperature_max_c is None
+        or climate_matrix.precipitation_mm is None
+        or climate_matrix.cloud_cover_pct is None
+    ):
+        msg = "score_matrix_row_breakdown requires monthly climate arrays"
+        raise ValueError(msg)
+
     typical_high_value = float(np.median(climate_matrix.temperature_max_c[row_index]))
     hottest_month_high_value = float(np.max(climate_matrix.temperature_max_c[row_index]))
     coldest_month_low_value = float(np.min(climate_matrix.temperature_min_c[row_index]))
@@ -593,6 +653,12 @@ def score_matrix_row_breakdown(
         ),
     )
     return ProbeBreakdown(overall_score=overall_score, metrics=metric_scores)
+
+
+def score_climate_cell_breakdown(cell: ClimateCell, preferences: PreferenceInputs) -> ProbeBreakdown:
+    """Build `/probe` metrics from one on-demand climate row."""
+    climate_matrix = ClimateMatrix.from_cells((cell,))
+    return score_matrix_row_breakdown(climate_matrix, 0, preferences)
 
 
 def score_preferences(preferences: PreferenceInputs) -> list[CellScorePoint]:

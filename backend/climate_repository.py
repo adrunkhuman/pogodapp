@@ -41,20 +41,31 @@ TEMPERATURE_MIN_COLUMNS = tuple(f"tmin_{month}" for month in MONTH_NAMES)
 TEMPERATURE_MAX_COLUMNS = tuple(f"tmax_{month}" for month in MONTH_NAMES)
 PRECIPITATION_COLUMNS = tuple(f"prec_{month}" for month in MONTH_NAMES)
 CLOUD_COLUMNS = tuple(f"cloud_{month}" for month in MONTH_NAMES)
-SELECT_CLIMATE_MATRIX_QUERY = (
-    "SELECT\n    "
-    + ",\n    ".join(
-        (
-            "lat",
-            "lon",
-            *TEMPERATURE_MIN_COLUMNS,
-            *TEMPERATURE_MAX_COLUMNS,
-            *PRECIPITATION_COLUMNS,
-            *CLOUD_COLUMNS,
-        )
-    )
-    + "\nFROM climate_cells"
+TEMPERATURE_MAX_LIST = f"list_value({', '.join(TEMPERATURE_MAX_COLUMNS)})"
+PRECIPITATION_LIST = f"list_value({', '.join(PRECIPITATION_COLUMNS)})"
+CLOUD_LIST = f"list_value({', '.join(CLOUD_COLUMNS)})"
+AVERAGE_CLOUD_EXPR = f"list_avg({CLOUD_LIST})"
+AVERAGE_CLOUD_BANKERS_ROUND_EXPR = (
+    f"CAST(floor({AVERAGE_CLOUD_EXPR}) + CASE "
+    f"WHEN {AVERAGE_CLOUD_EXPR} - floor({AVERAGE_CLOUD_EXPR}) > 0.5 THEN 1 "
+    f"WHEN {AVERAGE_CLOUD_EXPR} - floor({AVERAGE_CLOUD_EXPR}) < 0.5 THEN 0 "
+    f"WHEN mod(CAST(floor({AVERAGE_CLOUD_EXPR}) AS BIGINT), 2) = 0 THEN 0 "
+    f"ELSE 1 END AS FLOAT)"
 )
+SELECT_CLIMATE_MATRIX_QUERY = (
+    f"SELECT\n"
+    f"    lat,\n"
+    f"    lon,\n"
+    f"    list_median({TEMPERATURE_MAX_LIST}) AS typical_highs_c,\n"
+    f"    greatest({', '.join(TEMPERATURE_MAX_COLUMNS)}) AS hottest_month_highs_c,\n"
+    f"    least({', '.join(TEMPERATURE_MIN_COLUMNS)}) AS coldest_month_lows_c,\n"
+    f"    list_median({PRECIPITATION_LIST}) AS median_precipitation_mm,\n"
+    f"    greatest({', '.join(PRECIPITATION_COLUMNS)}) AS wettest_precipitation_mm,\n"
+    f"    {AVERAGE_CLOUD_BANKERS_ROUND_EXPR} AS average_cloud_cover_pct,\n"
+    f"    CAST(greatest({', '.join(CLOUD_COLUMNS)}) AS FLOAT) AS gloomiest_cloud_cover_pct\n"
+    f"FROM climate_cells"
+)
+SELECT_PROBE_CLIMATE_CELL_QUERY = SELECT_CLIMATE_CELLS_QUERY + "\nWHERE round(lat, 4) = ? AND round(lon, 4) = ?"
 
 CITY_BASE_COLUMNS = ("name", "country_code", "lat", "lon", "cell_lat", "cell_lon")
 
@@ -73,11 +84,11 @@ class ClimateRepository(Protocol):
         """Return user-facing cities already mapped onto the dataset."""
 
     def get_climate_matrix(self) -> ClimateMatrix:
-        """Return compact climate arrays ready for vectorized scoring.
+        """Return compact score-time arrays ready for vectorized scoring.
 
-        DuckDB-backed repositories may omit `temperature_c` and return `None`
-        there; callers should rely on the min/max, precipitation, and cloud
-        arrays for hot-path work.
+        DuckDB-backed repositories may omit all monthly arrays and keep only
+        yearly scoring aggregates resident; callers that need monthly probe
+        data must use `get_probe_cell()`.
         """
 
     def get_indexed_cities(self) -> CityRankingCache:
@@ -85,6 +96,9 @@ class ClimateRepository(Protocol):
 
     def get_heatmap_projection(self) -> HeatmapProjection:
         """Return cached heatmap pixel coordinates aligned with the current climate matrix."""
+
+    def get_probe_cell(self, row_index: int) -> ClimateCell:
+        """Return one full climate row for probe rendering."""
 
 
 class StubClimateRepository:
@@ -110,6 +124,10 @@ class StubClimateRepository:
         """Return cached heatmap projection for the stub dataset."""
         climate_matrix = self.get_climate_matrix()
         return HeatmapProjection.from_coordinates(climate_matrix.latitudes, climate_matrix.longitudes)
+
+    def get_probe_cell(self, row_index: int) -> ClimateCell:
+        """Return one stub climate row by row index."""
+        return STUB_CLIMATE_CELLS[row_index]
 
 
 def build_default_climate_repository(database_path: Path) -> ClimateRepository:
@@ -169,10 +187,7 @@ class DuckDbClimateRepository:
         return self._cities
 
     def get_climate_matrix(self) -> ClimateMatrix:
-        """Load the scoring columns once into compact arrays for repeated scoring.
-
-        Monthly mean temperatures are omitted from the cached runtime matrix to
-        reduce RAM.
+        """Load the score-time yearly aggregates once into compact arrays.
 
         Raises:
             ClimateDataError: The database file is missing, unreadable, or does
@@ -185,10 +200,13 @@ class DuckDbClimateRepository:
             columns = self._fetch_numpy_columns(SELECT_CLIMATE_MATRIX_QUERY)
             latitudes = np.asarray(columns["lat"], dtype=FLOAT32_DTYPE)
             longitudes = np.asarray(columns["lon"], dtype=FLOAT32_DTYPE)
-            temperature_min_c = self._build_monthly_matrix(columns, TEMPERATURE_MIN_COLUMNS, dtype=FLOAT32_DTYPE)
-            temperature_max_c = self._build_monthly_matrix(columns, TEMPERATURE_MAX_COLUMNS, dtype=FLOAT32_DTYPE)
-            precipitation_mm = self._build_monthly_matrix(columns, PRECIPITATION_COLUMNS, dtype=FLOAT32_DTYPE)
-            cloud_cover_pct = self._build_monthly_matrix(columns, CLOUD_COLUMNS, dtype=UINT8_DTYPE)
+            typical_highs_c = np.asarray(columns["typical_highs_c"], dtype=FLOAT32_DTYPE)
+            hottest_month_highs_c = np.asarray(columns["hottest_month_highs_c"], dtype=FLOAT32_DTYPE)
+            coldest_month_lows_c = np.asarray(columns["coldest_month_lows_c"], dtype=FLOAT32_DTYPE)
+            median_precipitation_mm = np.asarray(columns["median_precipitation_mm"], dtype=FLOAT32_DTYPE)
+            wettest_precipitation_mm = np.asarray(columns["wettest_precipitation_mm"], dtype=FLOAT32_DTYPE)
+            average_cloud_cover_pct = np.asarray(columns["average_cloud_cover_pct"], dtype=FLOAT32_DTYPE)
+            gloomiest_cloud_cover_pct = np.asarray(columns["gloomiest_cloud_cover_pct"], dtype=FLOAT32_DTYPE)
         except (KeyError, TypeError, ValueError) as error:
             msg = f"Failed to map climate data from {self.database_path} into climate rows: {error}"
             raise ClimateDataError(msg) from error
@@ -197,10 +215,13 @@ class DuckDbClimateRepository:
             latitudes=latitudes,
             longitudes=longitudes,
             temperature_c=None,
-            temperature_min_c=temperature_min_c,
-            temperature_max_c=temperature_max_c,
-            precipitation_mm=precipitation_mm,
-            cloud_cover_pct=cloud_cover_pct,
+            typical_highs_c=typical_highs_c,
+            hottest_month_highs_c=hottest_month_highs_c,
+            coldest_month_lows_c=coldest_month_lows_c,
+            median_precipitation_mm=median_precipitation_mm,
+            wettest_precipitation_mm=wettest_precipitation_mm,
+            average_cloud_cover_pct=average_cloud_cover_pct,
+            gloomiest_cloud_cover_pct=gloomiest_cloud_cover_pct,
         )
         return self._climate_matrix
 
@@ -253,14 +274,83 @@ class DuckDbClimateRepository:
             return None
         return int(sorted_indexes[pos])
 
-    def _fetch_rows(self, query: str, *, table_name: str = "climate_cells") -> list[tuple[object, ...]]:
+    def get_probe_cell(self, row_index: int) -> ClimateCell:
+        """Fetch one full climate row on demand for `/probe`."""
+        climate_matrix = self.get_climate_matrix()
+        probe_lat = round(float(climate_matrix.latitudes[row_index]), 4)
+        probe_lon = round(float(climate_matrix.longitudes[row_index]), 4)
+        rows = self._fetch_rows(SELECT_PROBE_CLIMATE_CELL_QUERY, parameters=(probe_lat, probe_lon))
+        if not rows:
+            msg = f"Failed to read climate data from {self.database_path}: probe row not found for {probe_lat}, {probe_lon}"
+            raise ClimateDataError(msg)
+
+        try:
+            return self._row_to_climate_cell(rows[0])
+        except (TypeError, ValueError) as error:
+            msg = f"Failed to map climate data from {self.database_path} into climate rows: {error}"
+            raise ClimateDataError(msg) from error
+
+    def get_runtime_cache_stats(self) -> dict[str, float]:
+        """Return approximate resident cache sizes for preload logging."""
+        climate_matrix_mb = 0.0
+        if self._climate_matrix is not None:
+            climate_matrix_mb = round(self._climate_matrix_nbytes(self._climate_matrix) / (1024 * 1024), 1)
+
+        city_cache_mb = 0.0
+        if self._indexed_cities is not None:
+            city_cache_mb = round(
+                (
+                    self._indexed_cities.climate_indexes.nbytes
+                    + self._indexed_cities.latitude_radians.nbytes
+                    + self._indexed_cities.longitude_radians.nbytes
+                    + self._indexed_cities.cosine_latitudes.nbytes
+                )
+                / (1024 * 1024),
+                1,
+            )
+
+        probe_lookup_mb = 0.0
+        if self._sorted_climate_keys is not None and self._sorted_climate_indexes is not None:
+            probe_lookup_mb = round(
+                (self._sorted_climate_keys.nbytes + self._sorted_climate_indexes.nbytes) / (1024 * 1024),
+                1,
+            )
+
+        heatmap_projection_mb = 0.0
+        if self._heatmap_projection is not None:
+            heatmap_projection_mb = round(
+                (
+                    self._heatmap_projection.score_indexes.nbytes
+                    + self._heatmap_projection.xs.nbytes
+                    + self._heatmap_projection.ys.nbytes
+                    + self._heatmap_projection.land_mask.nbytes
+                )
+                / (1024 * 1024),
+                1,
+            )
+
+        return {
+            "climate_matrix_mb": climate_matrix_mb,
+            "city_cache_mb": city_cache_mb,
+            "probe_lookup_mb": probe_lookup_mb,
+            "heatmap_projection_mb": heatmap_projection_mb,
+            "runtime_cache_mb": round(climate_matrix_mb + city_cache_mb + probe_lookup_mb + heatmap_projection_mb, 1),
+        }
+
+    def _fetch_rows(
+        self,
+        query: str,
+        *,
+        table_name: str = "climate_cells",
+        parameters: tuple[object, ...] = (),
+    ) -> list[tuple[object, ...]]:
         if not self.database_path.exists():
             msg = f"Climate database file not found: {self.database_path}"
             raise ClimateDataError(msg)
 
         try:
             with duckdb.connect(str(self.database_path), read_only=True) as connection:
-                return connection.execute(query).fetchall()
+                return connection.execute(query, parameters).fetchall()
         except duckdb.Error as error:
             if table_name == "cities" and "Table with name cities does not exist" in str(error):
                 msg = (
@@ -395,3 +485,27 @@ class DuckDbClimateRepository:
         self._sorted_climate_indexes = np.argsort(climate_keys).astype(np.int32, copy=False)
         self._sorted_climate_keys = climate_keys[self._sorted_climate_indexes]
         return self._sorted_climate_keys, self._sorted_climate_indexes
+
+    def _climate_matrix_nbytes(self, climate_matrix: ClimateMatrix) -> int:
+        total = (
+            climate_matrix.latitudes.nbytes
+            + climate_matrix.longitudes.nbytes
+            + climate_matrix.typical_highs_c.nbytes
+            + climate_matrix.hottest_month_highs_c.nbytes
+            + climate_matrix.coldest_month_lows_c.nbytes
+            + climate_matrix.median_precipitation_mm.nbytes
+            + climate_matrix.wettest_precipitation_mm.nbytes
+            + climate_matrix.average_cloud_cover_pct.nbytes
+            + climate_matrix.gloomiest_cloud_cover_pct.nbytes
+        )
+        if climate_matrix.temperature_c is not None:
+            total += climate_matrix.temperature_c.nbytes
+        if climate_matrix.temperature_min_c is not None:
+            total += climate_matrix.temperature_min_c.nbytes
+        if climate_matrix.temperature_max_c is not None:
+            total += climate_matrix.temperature_max_c.nbytes
+        if climate_matrix.precipitation_mm is not None:
+            total += climate_matrix.precipitation_mm.nbytes
+        if climate_matrix.cloud_cover_pct is not None:
+            total += climate_matrix.cloud_cover_pct.nbytes
+        return total

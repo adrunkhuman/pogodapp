@@ -1,7 +1,7 @@
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from fastapi.testclient import TestClient
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from _pytest.logging import LogCaptureFixture
     from _pytest.monkeypatch import MonkeyPatch
 
+    from backend.climate_repository import ClimateRepository
     from backend.score_service import ScoreResponse
 
 
@@ -795,7 +796,7 @@ def test_probe_endpoint_rejects_typical_day_below_winter_limit() -> None:
 
 
 def test_score_endpoint_returns_all_available_cities_when_under_continent_reserve() -> None:
-    many_cities_client = TestClient(create_app(climate_repository=ManyCitiesRepository()))
+    many_cities_client = TestClient(create_app(climate_repository=cast("ClimateRepository", ManyCitiesRepository())))
 
     response = many_cities_client.post(
         "/score",
@@ -814,14 +815,11 @@ def test_score_endpoint_returns_all_available_cities_when_under_continent_reserv
 
 def test_probe_endpoint_returns_scored_breakdown_for_a_valid_cell() -> None:
     class ProbeRepository(StubClimateRepository):
-        def __init__(self) -> None:
-            self._matrix = ClimateMatrix.from_cells(self.list_cells())
-
-        def get_climate_matrix(self) -> ClimateMatrix:
-            return self._matrix
-
         def probe_nearest_cell(self, lat: float, lon: float) -> int | None:
             return 0
+
+        def get_probe_cell(self, row_index: int) -> ClimateCell:
+            return self.list_cells()[row_index]
 
     probe_client = TestClient(create_app(climate_repository=ProbeRepository()))
 
@@ -840,6 +838,32 @@ def test_probe_endpoint_returns_scored_breakdown_for_a_valid_cell() -> None:
     assert all(set(metric) == {"key", "label", "value", "display_value", "score"} for metric in payload["metrics"])
 
 
+def test_probe_endpoint_uses_probe_cell_without_loading_resident_matrix() -> None:
+    class ProbeOnlyRepository(StubClimateRepository):
+        def __init__(self) -> None:
+            self.matrix_calls = 0
+
+        def probe_nearest_cell(self, lat: float, lon: float) -> int | None:
+            return 0
+
+        def get_climate_matrix(self) -> ClimateMatrix:
+            self.matrix_calls += 1
+            return super().get_climate_matrix()
+
+        def get_probe_cell(self, row_index: int) -> ClimateCell:
+            return self.list_cells()[row_index]
+
+    repository = ProbeOnlyRepository()
+    probe_client = TestClient(create_app(climate_repository=cast("ClimateRepository", repository)))
+    matrix_calls_after_startup = repository.matrix_calls
+
+    response = probe_client.get("/probe", params=default_query_params())
+
+    assert response.status_code == 200
+    assert response.json()["found"] is True
+    assert repository.matrix_calls == matrix_calls_after_startup
+
+
 def test_probe_endpoint_returns_empty_payload_when_repository_has_no_probe_support() -> None:
     probe_client = TestClient(create_app(climate_repository=StubClimateRepository()))
 
@@ -854,12 +878,6 @@ def test_probe_endpoint_returns_empty_payload_when_repository_has_no_probe_suppo
 
 def test_probe_endpoint_returns_empty_payload_when_no_cell_is_found() -> None:
     class MissingProbeRepository(StubClimateRepository):
-        def __init__(self) -> None:
-            self._matrix = ClimateMatrix.from_cells(self.list_cells())
-
-        def get_climate_matrix(self) -> ClimateMatrix:
-            return self._matrix
-
         def probe_nearest_cell(self, lat: float, lon: float) -> int | None:
             return None
 
@@ -879,7 +897,7 @@ def test_probe_endpoint_returns_503_for_repository_failures() -> None:
         def probe_nearest_cell(self, lat: float, lon: float) -> int | None:
             return 0
 
-        def get_climate_matrix(self) -> ClimateMatrix:
+        def get_probe_cell(self, row_index: int) -> ClimateCell:
             msg = "Climate database file not found: data/climate.duckdb"
             raise ClimateDataError(msg)
 
@@ -943,3 +961,54 @@ def test_build_probe_response_preserves_metric_order_and_fields() -> None:
     assert response.found is True
     assert [metric.key for metric in response.metrics] == ["temp", "high", "low", "rain", "sun"]
     assert [metric.label for metric in response.metrics] == ["temp", "high", "low", "rain", "sun"]
+
+
+def test_preload_logs_runtime_memory_snapshots(monkeypatch: MonkeyPatch) -> None:
+    class InstrumentedRepository:
+        def get_climate_matrix(self) -> ClimateMatrix:
+            return ClimateMatrix.from_cells((StubClimateRepository().list_cells()[0],))
+
+        def get_indexed_cities(self) -> CityRankingCache:
+            return CityRankingCache.from_cities((), np.array([], dtype=np.int32))
+
+        def get_heatmap_projection(self) -> HeatmapProjection:
+            return HeatmapProjection.from_coordinates(np.array([], dtype=np.float32), np.array([], dtype=np.float32))
+
+        def list_cells(self) -> tuple[ClimateCell, ...]:
+            return ()
+
+        def list_cities(self) -> tuple[CityCandidate, ...]:
+            return ()
+
+        def get_runtime_cache_stats(self) -> dict[str, float]:
+            return {"runtime_cache_mb": 12.3}
+
+    runtime_stages: list[str] = []
+
+    def capture_runtime_memory(stage: str, repository: ClimateRepository) -> None:
+        runtime_stages.append(stage)
+
+    monkeypatch.setattr(backend_main, "_log_runtime_memory", capture_runtime_memory)
+
+    create_app(climate_repository=cast("ClimateRepository", InstrumentedRepository()))
+
+    assert runtime_stages == [
+        "before_preload",
+        "after_climate_matrix",
+        "after_indexed_cities",
+        "after_heatmap_projection",
+        "after_default_score_cache",
+    ]
+
+
+def test_current_rss_mb_returns_none_when_proc_statm_is_unavailable(monkeypatch: MonkeyPatch) -> None:
+    class MissingStatmPath:
+        def __init__(self, value: str) -> None:
+            self.value = value
+
+        def exists(self) -> bool:
+            return False
+
+    monkeypatch.setattr(backend_main, "Path", MissingStatmPath)
+
+    assert backend_main._current_rss_mb() is None  # noqa: SLF001
