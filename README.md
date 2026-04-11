@@ -97,6 +97,8 @@ Notes:
 
 The app can bootstrap `climate.duckdb` on startup, and deployment remains env-driven.
 
+For container deployments, mount persistent storage and point the data env vars at that mount. For example, if your runtime volume is mounted at `/app/data`, set `POGODAPP_DATA_DIR=/app/data`, `POGODAPP_CLIMATE_DB=/app/data/climate.duckdb`, and `POGODAPP_CLIMATE_CACHE_DIR=/app/data/worldclim`.
+
 Relevant environment variables:
 
 - `POGODAPP_DATA_DIR`: base directory for runtime artifacts. Default: `data`.
