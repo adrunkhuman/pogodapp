@@ -42,7 +42,7 @@ It is not a weather app. It scores long-term climate normals against a few user 
 - `/probe` returns `{"found": false, "overall_score": 0.0, "metrics": []}` for ocean points, unmapped cells, or repositories without probe support.
 - FastAPI handles HTTP and validation.
 - Scoring, ranking, and heatmap rendering stay out of the route layer.
-- `frontend/static/map.js` only renders. HTMX submits the form, shows a brief `Calculating...` status in the controls panel, and hands the JSON response to the map code. If scoring fails, the controls panel shows a generic inline error.
+- `frontend/static/map.js` only renders. HTMX submits the form, shows a brief `Calculating...` status in the controls panel, and hands the JSON response to the map code. Any non-`200` `/score` response shows a generic inline error in the controls panel.
 - Tooltip probes snap hover points to the climate grid and cache results by snapped cell plus current preferences.
 
 ## Data

@@ -51,8 +51,8 @@ MAP_PROJECTION = MapProjection(
 
 
 # These ranges define the current UI and `/score` contract.
-# The scoring still runs on monthly mean temperature until the dataset grows
-# dedicated high/low temperature normals.
+# The temperature controls map to the high/low-based scoring inputs described
+# in `backend.scoring.PreferenceInputs`.
 DEFAULT_PREFERENCES: tuple[PreferenceField, ...] = (
     PreferenceField(
         name="preferred_day_temperature",
