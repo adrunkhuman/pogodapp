@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
 from typing import TYPE_CHECKING, cast
 
+import httpx
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.cities import GRID_DEGREES, CityCandidate, CityRankingCache, continent_of
@@ -71,6 +74,17 @@ def default_query_params() -> dict[str, int | float]:
 
 def rendered_default_form_data() -> dict[str, str]:
     return {preference.name: str(preference.value) for preference in DEFAULT_PREFERENCES}
+
+
+async def wait_for_thread_event(event: threading.Event, max_wait_seconds: float = 1.0) -> None:
+    deadline = time.perf_counter() + max_wait_seconds
+    while time.perf_counter() < deadline:
+        if event.is_set():
+            return
+        await asyncio.sleep(0.01)
+
+    msg = "thread event was not set before timeout"
+    raise AssertionError(msg)
 
 
 class ManyCitiesRepository:
@@ -502,6 +516,103 @@ def test_score_endpoint_offloads_scoring_to_threadpool(monkeypatch: MonkeyPatch)
     assert response.status_code == 200
     assert len(calls) == 1
     assert getattr(calls[0][0], "__name__", "") == "_score_response_from_cache_or_repository"
+
+
+@pytest.mark.anyio
+async def test_score_endpoint_serializes_concurrent_requests_per_worker() -> None:
+    entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+    call_count = 0
+    lock = threading.Lock()
+    original_builder = backend_main.__dict__["_score_response_from_cache_or_repository"]
+    app = create_app(climate_repository=StubClimateRepository())
+
+    def slow_builder(*args: object) -> ScoreResponse:
+        nonlocal call_count
+        with lock:
+            call_count += 1
+            current_call = call_count
+
+        if current_call == 1:
+            entered.set()
+            assert release_first.wait(timeout=1)
+        else:
+            second_entered.set()
+
+        return {"scores": [], "heatmap": ""}
+
+    backend_main.__dict__["_score_response_from_cache_or_repository"] = slow_builder
+
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+            first_request = asyncio.create_task(async_client.post("/score", data=default_form_data()))
+            await wait_for_thread_event(entered)
+
+            second_request = asyncio.create_task(async_client.post("/score", data=default_form_data()))
+            await asyncio.sleep(0.05)
+            assert not second_entered.is_set()
+
+            release_first.set()
+
+            first_response = await first_request
+            second_response = await second_request
+    finally:
+        backend_main.__dict__["_score_response_from_cache_or_repository"] = original_builder
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert second_entered.is_set()
+
+
+@pytest.mark.anyio
+async def test_score_endpoint_releases_semaphore_after_failed_request() -> None:
+    entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+    call_count = 0
+    lock = threading.Lock()
+    original_builder = backend_main.__dict__["_score_response_from_cache_or_repository"]
+    app = create_app(climate_repository=StubClimateRepository())
+
+    def flaky_builder(*args: object) -> ScoreResponse:
+        nonlocal call_count
+        with lock:
+            call_count += 1
+            current_call = call_count
+
+        if current_call == 1:
+            entered.set()
+            assert release_first.wait(timeout=1)
+            msg = "boom"
+            raise ClimateDataError(msg)
+
+        second_entered.set()
+        return {"scores": [], "heatmap": ""}
+
+    backend_main.__dict__["_score_response_from_cache_or_repository"] = flaky_builder
+
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+            first_request = asyncio.create_task(async_client.post("/score", data=default_form_data()))
+            await wait_for_thread_event(entered)
+
+            second_request = asyncio.create_task(async_client.post("/score", data=default_form_data()))
+            await asyncio.sleep(0.05)
+            assert not second_entered.is_set()
+
+            release_first.set()
+
+            first_response = await first_request
+            second_response = await second_request
+    finally:
+        backend_main.__dict__["_score_response_from_cache_or_repository"] = original_builder
+
+    assert first_response.status_code == 503
+    assert second_response.status_code == 200
+    assert second_entered.is_set()
 
 
 def test_score_endpoint_uses_gzip_when_requested() -> None:

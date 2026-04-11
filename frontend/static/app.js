@@ -83,8 +83,7 @@ function bindScoreHandoff(form) {
     setLoading(true);
   });
 
-  // Successful `#preferences` submissions return the raw `/score` JSON payload,
-  // which the split map scripts consume through `window.renderScores`.
+  // HTMX returns raw /score JSON here; hand it straight to the map renderer.
   document.body.addEventListener("htmx:afterRequest", (event) => {
     if (event.detail.elt !== form) return;
     setLoading(false);

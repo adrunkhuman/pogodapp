@@ -354,6 +354,7 @@ def create_app(
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
     repository = climate_repository or build_default_climate_repository(resolve_climate_database_path())
     score_cache = _ScoreResponseCache(SCORE_CACHE_SIZE)
+    # Serialize /score work per worker so repeated slider changes do not pile up CPU-bound builds.
     score_request_semaphore = asyncio.Semaphore(1)
     preload_repository(repository)
 
