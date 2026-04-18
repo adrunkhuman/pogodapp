@@ -60,6 +60,23 @@ function syncRangeControl(input, output) {
   if (output) output.value = formatControlValue(input);
 }
 
+function extractScoreErrorMessage(xhr) {
+  if (xhr.status === 422) {
+    try {
+      const payload = JSON.parse(xhr.responseText);
+      const detail = Array.isArray(payload.detail) ? payload.detail : [];
+      const firstMessage = detail.find((item) => typeof item?.msg === "string")?.msg;
+      if (firstMessage) return firstMessage;
+    } catch {
+      return "Invalid preferences.";
+    }
+
+    return "Invalid preferences.";
+  }
+
+  return "Could not calculate scores.";
+}
+
 function bindPreferenceControls(form) {
   const syncAllControls = () => {
     constrainTemperatureControls(form);
@@ -74,9 +91,10 @@ function bindPreferenceControls(form) {
   }
 
   syncAllControls();
+  return syncAllControls;
 }
 
-function bindScoreHandoff(form) {
+function bindScoreHandoff(form, syncControls) {
   const loadingIndicator = document.getElementById("score-loading-indicator");
   const errorIndicator = document.getElementById("score-error-indicator");
 
@@ -93,6 +111,7 @@ function bindScoreHandoff(form) {
 
   document.body.addEventListener("htmx:beforeRequest", (event) => {
     if (event.detail.elt !== form) return;
+    syncControls();
     setError("");
     setLoading(true);
   });
@@ -102,7 +121,7 @@ function bindScoreHandoff(form) {
     if (event.detail.elt !== form) return;
     setLoading(false);
     if (event.detail.xhr.status !== 200) {
-      setError("Could not calculate scores.");
+      setError(extractScoreErrorMessage(event.detail.xhr));
       return;
     }
 
@@ -114,8 +133,8 @@ function bindScoreHandoff(form) {
 function initializeAppShell() {
   const form = document.getElementById("preferences");
   if (!form) return;
-  bindPreferenceControls(form);
-  bindScoreHandoff(form);
+  const syncControls = bindPreferenceControls(form);
+  bindScoreHandoff(form, syncControls);
   if (window.POGODAPP_INITIAL_SCORES) {
     window.renderScores(window.POGODAPP_INITIAL_SCORES);
   }
