@@ -172,3 +172,46 @@ def test_app_runtime_shows_generic_error_and_clears_it_after_success() -> None:
             """
         )
     )
+
+
+def test_app_runtime_resyncs_temperature_controls_before_htmx_submit() -> None:
+    _run_app_runtime_scenario(
+        textwrap.dedent(
+            """
+            preferredDayInput.value = "18";
+            summerHeatInput.min = "-5";
+            summerHeatInput.value = "10";
+            winterColdInput.max = "35";
+            winterColdInput.value = "20";
+
+            triggerBody("htmx:beforeRequest", { elt: form });
+
+            if (summerHeatInput.min !== "18") throw new Error(`expected summer min 18, got ${summerHeatInput.min}`);
+            if (summerHeatInput.value !== "18") throw new Error(`expected summer value clamped to 18, got ${summerHeatInput.value}`);
+            if (winterColdInput.max !== "18") throw new Error(`expected winter max 18, got ${winterColdInput.max}`);
+            if (winterColdInput.value !== "18") throw new Error(`expected winter value clamped to 18, got ${winterColdInput.value}`);
+            """
+        )
+    )
+
+
+def test_app_runtime_surfaces_validation_error_message_for_invalid_preferences() -> None:
+    _run_app_runtime_scenario(
+        textwrap.dedent(
+            """
+            triggerBody("htmx:beforeRequest", { elt: form });
+            triggerBody("htmx:afterRequest", {
+              elt: form,
+              xhr: {
+                status: 422,
+                responseText: '{"detail":[{"msg":"preferred_day_temperature must be greater than or equal to winter_cold_limit"}]}'
+              }
+            });
+
+            if (errorIndicator.hidden) throw new Error("validation error should show");
+            if (errorIndicator.textContent !== "preferred_day_temperature must be greater than or equal to winter_cold_limit") {
+              throw new Error(`unexpected validation text ${errorIndicator.textContent}`);
+            }
+            """
+        )
+    )
