@@ -311,6 +311,69 @@ def _score_log_fields(preferences: PreferenceInputs) -> dict[str, int]:
     }
 
 
+_TEST_REQUEST_SUITES: dict[str, tuple[PreferenceInputs, ...]] = {
+    "smoke": (PreferenceInputs(**{preference.name: preference.value for preference in DEFAULT_PREFERENCES}),),
+    "profile": (
+        PreferenceInputs(
+            preferred_day_temperature=23,
+            summer_heat_limit=30,
+            winter_cold_limit=0,
+            dryness_preference=30,
+            sunshine_preference=50,
+        ),
+        PreferenceInputs(
+            preferred_day_temperature=15,
+            summer_heat_limit=30,
+            winter_cold_limit=0,
+            dryness_preference=30,
+            sunshine_preference=50,
+        ),
+        PreferenceInputs(
+            preferred_day_temperature=8,
+            summer_heat_limit=21,
+            winter_cold_limit=5,
+            dryness_preference=55,
+            sunshine_preference=80,
+        ),
+        PreferenceInputs(
+            preferred_day_temperature=26,
+            summer_heat_limit=40,
+            winter_cold_limit=-5,
+            dryness_preference=55,
+            sunshine_preference=80,
+        ),
+        PreferenceInputs(
+            preferred_day_temperature=4,
+            summer_heat_limit=37,
+            winter_cold_limit=-6,
+            dryness_preference=75,
+            sunshine_preference=50,
+        ),
+        PreferenceInputs(
+            preferred_day_temperature=34,
+            summer_heat_limit=37,
+            winter_cold_limit=-6,
+            dryness_preference=75,
+            sunshine_preference=50,
+        ),
+        PreferenceInputs(
+            preferred_day_temperature=1,
+            summer_heat_limit=31,
+            winter_cold_limit=1,
+            dryness_preference=75,
+            sunshine_preference=50,
+        ),
+        PreferenceInputs(
+            preferred_day_temperature=-5,
+            summer_heat_limit=31,
+            winter_cold_limit=-5,
+            dryness_preference=75,
+            sunshine_preference=50,
+        ),
+    ),
+}
+
+
 def _score_response_from_cache_or_repository(
     score_cache: _ScoreResponseCache,
     heatmap_field_cache: _HeatmapFieldCache,
@@ -496,6 +559,63 @@ def create_app(  # noqa: C901, PLR0915
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+    async def _serve_score_request(preferences: PreferenceInputs) -> _ScoreCacheResult:
+        queue_started = perf_counter()
+        score_request_tracker.mark_waiting()
+        async with score_request_semaphore:
+            score_queue_depth, score_inflight = score_request_tracker.mark_started()
+            queue_wait_ms = round((perf_counter() - queue_started) * 1000, 2)
+            try:
+                raw_cache_result = await run_in_threadpool(
+                    _score_response_from_cache_or_repository,
+                    score_cache,
+                    heatmap_field_cache,
+                    repository,
+                    preferences,
+                )
+            finally:
+                score_request_tracker.mark_finished()
+        cache_result = _coerce_score_cache_result(raw_cache_result)
+        logger.info(
+            "score request served",
+            extra={
+                "event": "score_request_route",
+                "outcome": "ok",
+                "cache_hit": cache_result.cache_hit,
+                "cache_status": cache_result.cache_status,
+                "queue_wait_ms": queue_wait_ms,
+                "score_queue_depth": score_queue_depth,
+                "score_inflight": score_inflight,
+                **_score_log_fields(preferences),
+            },
+        )
+        return cache_result
+
+    async def _serve_heatmap_request(preferences: PreferenceInputs) -> bytes:
+        cache_key = _score_cache_key(preferences)
+        cached_heatmap_field = heatmap_field_cache.get(cache_key)
+        queue_started = perf_counter()
+        async with heatmap_request_semaphore:
+            queue_wait_ms = round((perf_counter() - queue_started) * 1000, 2)
+            heatmap_png = await run_in_threadpool(
+                build_heatmap_response,
+                repository,
+                preferences,
+                cached_heatmap_field=cached_heatmap_field,
+            )
+        outcome = "ok" if heatmap_png else "empty"
+        logger.info(
+            "heatmap request served",
+            extra={
+                "event": "heatmap_request_route",
+                "outcome": outcome,
+                "score_field_cache_hit": cached_heatmap_field is not None,
+                "queue_wait_ms": queue_wait_ms,
+                **_score_log_fields(preferences),
+            },
+        )
+        return heatmap_png
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -512,35 +632,7 @@ def create_app(  # noqa: C901, PLR0915
     @limiter.limit("30/minute")
     async def score(request: Request, preferences: Annotated[PreferenceInputs, Form()]) -> dict[str, object]:
         try:
-            queue_started = perf_counter()
-            score_request_tracker.mark_waiting()
-            async with score_request_semaphore:
-                score_queue_depth, score_inflight = score_request_tracker.mark_started()
-                queue_wait_ms = round((perf_counter() - queue_started) * 1000, 2)
-                try:
-                    raw_cache_result = await run_in_threadpool(
-                        _score_response_from_cache_or_repository,
-                        score_cache,
-                        heatmap_field_cache,
-                        repository,
-                        preferences,
-                    )
-                finally:
-                    score_request_tracker.mark_finished()
-            cache_result = _coerce_score_cache_result(raw_cache_result)
-            logger.info(
-                "score request served",
-                extra={
-                    "event": "score_request_route",
-                    "outcome": "ok",
-                    "cache_hit": cache_result.cache_hit,
-                    "cache_status": cache_result.cache_status,
-                    "queue_wait_ms": queue_wait_ms,
-                    "score_queue_depth": score_queue_depth,
-                    "score_inflight": score_inflight,
-                    **_score_log_fields(preferences),
-                },
-            )
+            cache_result = await _serve_score_request(preferences)
         except ClimateDataError as error:
             logger.exception(
                 "score request failed",
@@ -563,28 +655,7 @@ def create_app(  # noqa: C901, PLR0915
         preferences: Annotated[PreferenceInputs, Depends(probe_preferences_dependency)],
     ) -> Response:
         try:
-            cache_key = _score_cache_key(preferences)
-            cached_heatmap_field = heatmap_field_cache.get(cache_key)
-            queue_started = perf_counter()
-            async with heatmap_request_semaphore:
-                queue_wait_ms = round((perf_counter() - queue_started) * 1000, 2)
-                heatmap_png = await run_in_threadpool(
-                    build_heatmap_response,
-                    repository,
-                    preferences,
-                    cached_heatmap_field=cached_heatmap_field,
-                )
-            outcome = "ok" if heatmap_png else "empty"
-            logger.info(
-                "heatmap request served",
-                extra={
-                    "event": "heatmap_request_route",
-                    "outcome": outcome,
-                    "score_field_cache_hit": cached_heatmap_field is not None,
-                    "queue_wait_ms": queue_wait_ms,
-                    **_score_log_fields(preferences),
-                },
-            )
+            heatmap_png = await _serve_heatmap_request(preferences)
         except ClimateDataError as error:
             logger.exception(
                 "heatmap request failed",
@@ -602,6 +673,53 @@ def create_app(  # noqa: C901, PLR0915
         if not heatmap_png:
             return Response(status_code=204)
         return Response(content=heatmap_png, media_type="image/png")
+
+    @app.get("/test")
+    @limiter.limit("5/minute")
+    async def test_run(
+        request: Request,
+        suite: Annotated[str, Query(pattern="^(smoke|profile)$")] = "profile",
+        include_heatmap: bool = True,
+    ) -> dict[str, object]:
+        preferences_batch = _TEST_REQUEST_SUITES[suite]
+        suite_started = perf_counter()
+        results: list[dict[str, object]] = []
+
+        if preferences_batch:
+            first_preferences = preferences_batch[0]
+            duplicate_results = await asyncio.gather(
+                _serve_score_request(first_preferences),
+                _serve_score_request(first_preferences),
+            )
+            if include_heatmap:
+                await _serve_heatmap_request(first_preferences)
+            results.append(
+                {
+                    "preferences": _score_log_fields(first_preferences),
+                    "score_cache_statuses": [result.cache_status for result in duplicate_results],
+                    "duplicate_run": True,
+                }
+            )
+
+        for preferences in preferences_batch[1:]:
+            cache_result = await _serve_score_request(preferences)
+            if include_heatmap:
+                await _serve_heatmap_request(preferences)
+            results.append(
+                {
+                    "preferences": _score_log_fields(preferences),
+                    "score_cache_statuses": [cache_result.cache_status],
+                    "duplicate_run": False,
+                }
+            )
+
+        return {
+            "suite": suite,
+            "include_heatmap": include_heatmap,
+            "case_count": len(results),
+            "elapsed_ms": round((perf_counter() - suite_started) * 1000, 2),
+            "results": results,
+        }
 
     @app.get("/probe")
     @limiter.limit("120/minute")
