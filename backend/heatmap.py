@@ -23,7 +23,6 @@ WORK_GRID_SCALE = 6
 WORK_WIDTH = (WIDTH + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
 WORK_HEIGHT = (HEIGHT + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
 WORK_BLUR_RADIUS = 3.5
-PEAK_BLEND = 0.60
 NORM_MIN_CELLS = 15  # work tiles with fewer source cells blend toward diluted to suppress single-cell outliers
 UPSCALED_BLEND_BLUR_RADIUS = 0.9
 GLOW_RADIUS = 12.0  # px — post-mask bloom so narrow hotspots radiate into surrounding ocean/gaps
@@ -124,8 +123,6 @@ def _stylize_heatmap_gray(gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
 def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np.ndarray) -> bytes:
     """Rasterize one score vector aligned with the projection's source climate-matrix rows."""
     work_scores = scores[projection.score_indexes]
-    work_ys = projection.work_indexes // WORK_WIDTH
-    work_xs = projection.work_indexes % WORK_WIDTH
 
     summed_grid = (
         np.bincount(
@@ -140,15 +137,12 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
         projection.work_indexes,
         minlength=WORK_WIDTH * WORK_HEIGHT,
     ).reshape((WORK_HEIGHT, WORK_WIDTH))
-    average_grid = np.divide(
+    work_field = np.divide(
         summed_grid,
         hit_count_grid,
         out=np.zeros_like(summed_grid),
         where=hit_count_grid > 0,
     )
-    peak_grid = np.zeros((WORK_HEIGHT, WORK_WIDTH), dtype=np.float32)
-    np.maximum.at(peak_grid, (work_ys, work_xs), work_scores)
-    work_field = average_grid * (1.0 - PEAK_BLEND) + peak_grid * PEAK_BLEND
 
     # Normalized blur: blur numerator and mask separately, then divide.
     # Prevents ocean zero-tiles from diluting isolated coastal hotspots.
