@@ -519,9 +519,13 @@ def rank_indexed_city_scores(
             timings.distance_ms += (perf_counter() - distance_started) * 1000
 
         penalty_started = perf_counter()
-        penalty = winner_score * diversity_strength * np.exp(-distance_km / diversity_decay_km)
-        scores = np.where(active, np.maximum(0.0, scores * (1.0 - penalty)), scores)
         active[winner_index] = False
+        np.divide(distance_km, -diversity_decay_km, out=distance_km)
+        np.exp(distance_km, out=distance_km)
+        np.multiply(distance_km, winner_score * diversity_strength, out=distance_km)
+        np.subtract(1.0, distance_km, out=distance_km)
+        np.multiply(scores, distance_km, out=scores, where=active)
+        np.maximum(scores, 0.0, out=scores, where=active)
         if timings is not None:
             timings.penalty_ms += (perf_counter() - penalty_started) * 1000
 
