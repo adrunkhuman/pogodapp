@@ -19,11 +19,11 @@ if TYPE_CHECKING:
 
 WIDTH = 1600
 HEIGHT = 800
-WORK_GRID_SCALE = 6
+WORK_GRID_SCALE = 3
 WORK_WIDTH = (WIDTH + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
 WORK_HEIGHT = (HEIGHT + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
-WORK_BLUR_RADIUS = 3.5
-NORM_MIN_CELLS = 15  # work tiles with fewer source cells blend toward diluted to suppress single-cell outliers
+WORK_BLUR_RADIUS = 4.0
+NORM_MIN_CELLS = 10  # work tiles with fewer source cells blend toward diluted to suppress single-cell outliers
 UPSCALED_BLEND_BLUR_RADIUS = 0.9
 GLOW_RADIUS = 12.0  # px — post-mask bloom so narrow hotspots radiate into surrounding ocean/gaps
 SCORE_CURVE_GAMMA = 1.35
