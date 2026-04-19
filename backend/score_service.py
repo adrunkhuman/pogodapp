@@ -97,7 +97,7 @@ def _empty_score_response(
     return EMPTY_SCORE_RESPONSE
 
 
-def _finalize_score_response(  # noqa: PLR0913
+def _finalize_score_response(
     timings: ScoreTimings,
     *,
     preferences: PreferenceInputs,

@@ -419,7 +419,7 @@ def _attach_http_request_logging(app: FastAPI) -> None:
         return response
 
 
-def create_app(  # noqa: C901
+def create_app(  # noqa: C901, PLR0915
     climate_repository: ClimateRepository | None = None,
 ) -> FastAPI:
     """Create the FastAPI application.
