@@ -551,21 +551,28 @@ def score_climate_matrix(
         timings.rain_ms = (perf_counter() - rain_started) * 1000
 
     sun_started = perf_counter()
-    average_excess_ratio = (climate_matrix.average_cloud_cover_pct - tolerated_cloud_cover) / cloud_denominator
-    average_sun_scores = np.where(
-        climate_matrix.average_cloud_cover_pct <= tolerated_cloud_cover,
-        1.0,
-        np.clip(1.0 - average_excess_ratio**2, 0.0, 1.0),
+    average_excess_ratio = np.subtract(
+        climate_matrix.average_cloud_cover_pct.astype(np.float32, copy=False),
+        tolerated_cloud_cover,
+        dtype=np.float32,
     )
-    gloom_excess_ratio = (climate_matrix.gloomiest_cloud_cover_pct - tolerated_cloud_cover) / cloud_denominator
-    gloomiest_sun_scores = np.where(
-        climate_matrix.gloomiest_cloud_cover_pct <= tolerated_cloud_cover,
-        1.0,
-        np.clip(1.0 - gloom_excess_ratio**2, 0.0, 1.0),
+    np.divide(average_excess_ratio, cloud_denominator, out=average_excess_ratio)
+    np.clip(average_excess_ratio, 0.0, None, out=average_excess_ratio)
+    average_sun_scores = np.subtract(1.0, average_excess_ratio * average_excess_ratio, dtype=np.float32)
+    np.clip(average_sun_scores, MULTIPLICATIVE_SCORE_FLOOR, 1.0, out=average_sun_scores)
+
+    gloom_excess_ratio = np.subtract(
+        climate_matrix.gloomiest_cloud_cover_pct.astype(np.float32, copy=False),
+        tolerated_cloud_cover,
+        dtype=np.float32,
     )
+    np.divide(gloom_excess_ratio, cloud_denominator, out=gloom_excess_ratio)
+    np.clip(gloom_excess_ratio, 0.0, None, out=gloom_excess_ratio)
+    gloomiest_sun_scores = np.subtract(1.0, gloom_excess_ratio * gloom_excess_ratio, dtype=np.float32)
+    np.clip(gloomiest_sun_scores, MULTIPLICATIVE_SCORE_FLOOR, 1.0, out=gloomiest_sun_scores)
+
     sun_scores = (
-        np.maximum(average_sun_scores, MULTIPLICATIVE_SCORE_FLOOR) ** SUN_PROFILE_AVERAGE_WEIGHT
-        * np.maximum(gloomiest_sun_scores, MULTIPLICATIVE_SCORE_FLOOR) ** SUN_PROFILE_GLOOM_WEIGHT
+        average_sun_scores**SUN_PROFILE_AVERAGE_WEIGHT * gloomiest_sun_scores**SUN_PROFILE_GLOOM_WEIGHT
     ).astype(
         np.float32,
         copy=False,
