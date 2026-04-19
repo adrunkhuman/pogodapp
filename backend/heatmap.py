@@ -20,11 +20,13 @@ if TYPE_CHECKING:
 WIDTH = 1280
 HEIGHT = 640
 BLUR_RADIUS = 3.5  # px — scaled down with the raster size to preserve the same geographic softness
-WORK_GRID_SCALE = 4
+WORK_GRID_SCALE = 3
 WORK_WIDTH = WIDTH // WORK_GRID_SCALE
 WORK_HEIGHT = HEIGHT // WORK_GRID_SCALE
-WORK_BLUR_RADIUS = 2.0
-PEAK_GRID_WEIGHT = 1.0
+WORK_BLUR_RADIUS = 2.4
+PEAK_GRID_WEIGHT = 0.55
+UPSCALED_BLEND_BLUR_RADIUS = 0.9
+SOURCE_POINT_FLOOR_STRENGTH = 0.9
 DETAIL_PRESERVE_THRESHOLD = 0.35
 DETAIL_PRESERVE_STRENGTH = 0.9
 PEAK_BOOST_THRESHOLD = 0.72
@@ -189,11 +191,21 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
     )
     upscaled_peak_gray = np.asarray(
         Image.fromarray((peak_grid * 255).astype(np.uint8), mode="L").resize(
-            (WIDTH, HEIGHT), resample=Image.Resampling.NEAREST
+            (WIDTH, HEIGHT), resample=Image.Resampling.BILINEAR
         ),
         dtype=np.uint8,
     )
     blended_gray = np.maximum(upscaled_blurred_gray, (upscaled_peak_gray * PEAK_GRID_WEIGHT).astype(np.uint8))
+    blended_gray = np.asarray(
+        Image.fromarray(blended_gray, mode="L").filter(ImageFilter.GaussianBlur(radius=UPSCALED_BLEND_BLUR_RADIUS)),
+        dtype=np.uint8,
+    )
+    source_point_floor = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
+    np.maximum.at(source_point_floor, (projection.ys, projection.xs), scores[projection.score_indexes])
+    blended_gray = np.maximum(
+        blended_gray,
+        np.rint(source_point_floor * 255.0 * SOURCE_POINT_FLOOR_STRENGTH).astype(np.uint8),
+    )
     styled_gray = _stylize_heatmap_gray((blended_gray * projection.land_mask).astype(np.uint8))
     styled_gray = (_smooth_styled_heatmap_gray(styled_gray) * projection.land_mask).astype(np.uint8)
     rgba = _COLOR_RAMP_LOOKUP[styled_gray]
