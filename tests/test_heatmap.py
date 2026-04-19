@@ -37,6 +37,8 @@ def test_heatmap_projection_filters_invalid_latitudes_and_keeps_duplicate_pixels
 
     expected_work_idx = (HEIGHT // 2 // WORK_GRID_SCALE) * WORK_WIDTH + (WIDTH // 2 // WORK_GRID_SCALE)
     assert projection.score_indexes.tolist() == [0, 1]
+    assert projection.xs.tolist() == [WIDTH // 2, WIDTH // 2]
+    assert projection.ys.tolist() == [HEIGHT // 2, HEIGHT // 2]
     assert projection.work_indexes.tolist() == [expected_work_idx, expected_work_idx]
 
 
@@ -88,6 +90,23 @@ def test_heatmap_png_same_tile_peak_survives_tile_average() -> None:
 
     assert mixed_window.mean() > averaged_window.mean()
     assert mixed_window.max() > averaged_window.max()
+
+
+def test_heatmap_png_keeps_peak_pixel_visible_when_surrounded_by_weaker_scores() -> None:
+    latitudes = np.array([0.0, 0.0, 0.5, -0.5, 0.0], dtype=np.float32)
+    longitudes = np.array([0.0, -0.5, 0.0, 0.0, 0.5], dtype=np.float32)
+    scores = np.array([1.0, 0.2, 0.2, 0.2, 0.2], dtype=np.float32)
+
+    projection = HeatmapProjection.from_coordinates(latitudes, longitudes)
+    alpha = np.asarray(
+        Image.open(BytesIO(render_heatmap_png_from_projection(projection, scores))).convert("RGBA"),
+        dtype=np.uint8,
+    )[..., 3]
+
+    peak_x = int(projection.xs[0])
+    peak_y = int(projection.ys[0])
+
+    assert alpha[peak_y, peak_x] >= 165
 
 
 def test_heatmap_png_uses_configured_raster_dimensions() -> None:
