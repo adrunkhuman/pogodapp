@@ -660,7 +660,10 @@ def normalize_score_array(scores: NDArray[np.float32]) -> NDArray[np.float32]:
     if max_score == 0.0:
         return scores
 
-    return np.round(scores / max_score, 4).astype(np.float32, copy=False)
+    normalized_scores = scores.copy()
+    np.divide(normalized_scores, np.float32(max_score), out=normalized_scores)
+    np.round(normalized_scores, 4, out=normalized_scores)
+    return normalized_scores
 
 
 def score_matrix_row_breakdown(
