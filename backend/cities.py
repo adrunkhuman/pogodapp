@@ -332,10 +332,9 @@ def _select_population_biased_winner(remaining: list[RankedCityCandidate]) -> Ra
 def _select_population_biased_winner_index(
     city_catalog: CityRankingCache,
     scores: NDArray[np.float32],
-    active: NDArray[np.bool],
+    active_indexes: NDArray[np.int32],
 ) -> int:
     """Prefer larger population centers when effective scores are nearly tied."""
-    active_indexes = np.flatnonzero(active)
     active_scores = scores[active_indexes]
     best_score = float(active_scores.max())
     near_tied_indexes = active_indexes[active_scores >= best_score - POPULATION_TIE_SCORE_WINDOW]
@@ -498,14 +497,14 @@ def rank_indexed_city_scores(
 
     setup_started = perf_counter()
     scores = cell_scores[city_catalog.climate_indexes].astype(np.float32, copy=True)
-    active = np.ones(scores.shape, dtype=bool)
+    active_indexes = np.arange(scores.shape[0], dtype=np.int32)
     ranked: list[CityScorePoint] = []
     if timings is not None:
         timings.setup_ms = (perf_counter() - setup_started) * 1000
 
-    while active.any() and len(ranked) < limit:
+    while active_indexes.size and len(ranked) < limit:
         winner_select_started = perf_counter()
-        winner_index = _select_population_biased_winner_index(city_catalog, scores, active)
+        winner_index = _select_population_biased_winner_index(city_catalog, scores, active_indexes)
         if timings is not None:
             timings.winner_select_ms += (perf_counter() - winner_select_started) * 1000
         winner_city = city_catalog.cities[winner_index]
@@ -513,19 +512,24 @@ def rank_indexed_city_scores(
         diversity_strength = _diversity_strength_for_rank(len(ranked))
         ranked.append(city_score_point(winner_city, winner_score, flag=city_catalog.flags[winner_index]))
 
+        active_indexes = active_indexes[active_indexes != winner_index]
+        if not active_indexes.size:
+            break
+
         distance_started = perf_counter()
-        distance_km = _haversine_distance_vector_km(city_catalog, winner_index)
+        distance_km = _haversine_distance_vector_km(city_catalog, winner_index, active_indexes)
         if timings is not None:
             timings.distance_ms += (perf_counter() - distance_started) * 1000
 
         penalty_started = perf_counter()
-        active[winner_index] = False
         np.divide(distance_km, -diversity_decay_km, out=distance_km)
         np.exp(distance_km, out=distance_km)
         np.multiply(distance_km, winner_score * diversity_strength, out=distance_km)
         np.subtract(1.0, distance_km, out=distance_km)
-        np.multiply(scores, distance_km, out=scores, where=active)
-        np.maximum(scores, 0.0, out=scores, where=active)
+        updated_scores = scores[active_indexes]
+        np.multiply(updated_scores, distance_km, out=updated_scores)
+        np.maximum(updated_scores, 0.0, out=updated_scores)
+        scores[active_indexes] = updated_scores
         if timings is not None:
             timings.penalty_ms += (perf_counter() - penalty_started) * 1000
 
@@ -569,17 +573,18 @@ def haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) ->
 def _haversine_distance_vector_km(
     city_catalog: CityRankingCache,
     winner_index: int,
+    candidate_indexes: NDArray[np.int32],
 ) -> NDArray[np.float32]:
     """Vectorized winner-to-all distances for one diversity-penalty update."""
     sine_latitude = city_catalog.sine_latitudes[winner_index]
     cosine_latitude = city_catalog.cosine_latitudes[winner_index]
     cosine_delta_longitude = (
-        city_catalog.cosine_longitudes[winner_index] * city_catalog.cosine_longitudes
-        + city_catalog.sine_longitudes[winner_index] * city_catalog.sine_longitudes
+        city_catalog.cosine_longitudes[winner_index] * city_catalog.cosine_longitudes[candidate_indexes]
+        + city_catalog.sine_longitudes[winner_index] * city_catalog.sine_longitudes[candidate_indexes]
     )
     central_angle_cosine = (
-        sine_latitude * city_catalog.sine_latitudes
-        + cosine_latitude * city_catalog.cosine_latitudes * cosine_delta_longitude
+        sine_latitude * city_catalog.sine_latitudes[candidate_indexes]
+        + cosine_latitude * city_catalog.cosine_latitudes[candidate_indexes] * cosine_delta_longitude
     )
     return (2.0 * EARTH_RADIUS_KM * np.arcsin(np.sqrt((1.0 - np.clip(central_angle_cosine, -1.0, 1.0)) / 2.0))).astype(
         np.float32,
