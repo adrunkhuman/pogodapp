@@ -17,9 +17,9 @@ if TYPE_CHECKING:
 
     from .scoring import CellScorePoint
 
-WIDTH = 1920
-HEIGHT = 960
-BLUR_RADIUS = 5.25  # px — scaled down with the raster size to preserve the same geographic softness
+WIDTH = 1280
+HEIGHT = 640
+BLUR_RADIUS = 3.5  # px — scaled down with the raster size to preserve the same geographic softness
 DETAIL_PRESERVE_THRESHOLD = 0.35
 DETAIL_PRESERVE_STRENGTH = 0.9
 PEAK_BOOST_THRESHOLD = 0.72
