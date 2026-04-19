@@ -135,8 +135,8 @@ def test_duckdb_climate_repository_loads_compact_matrix_with_expected_order_and_
     assert matrix.coldest_month_lows_c.dtype == np.float32
     assert matrix.median_precipitation_mm.dtype == np.float32
     assert matrix.wettest_precipitation_mm.dtype == np.float32
-    assert matrix.average_cloud_cover_pct.dtype == np.float32
-    assert matrix.gloomiest_cloud_cover_pct.dtype == np.float32
+    assert matrix.average_cloud_cover_pct.dtype == np.uint8
+    assert matrix.gloomiest_cloud_cover_pct.dtype == np.uint8
     assert matrix.typical_highs_c.tolist() == [8.5]
     assert matrix.hottest_month_highs_c.tolist() == [14.0]
     assert matrix.coldest_month_lows_c.tolist() == [-1.0]
