@@ -25,6 +25,7 @@ WORK_HEIGHT = (HEIGHT + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
 WORK_BLUR_RADIUS = 2.4
 PEAK_BLEND = 0.80
 UPSCALED_BLEND_BLUR_RADIUS = 0.9
+GLOW_RADIUS = 5.0  # px — post-mask bloom so narrow hotspots radiate into surrounding ocean/gaps
 SCORE_CURVE_GAMMA = 1.35
 _MERCATOR_MAX_RENDER_LATITUDE = MAP_PROJECTION.max_render_latitude
 
@@ -161,6 +162,11 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
         dtype=np.uint8,
     )
     styled_gray = (_stylize_heatmap_gray(blended_gray) * projection.land_mask).astype(np.uint8)
+    glow_gray = np.asarray(
+        Image.fromarray(styled_gray, mode="L").filter(ImageFilter.GaussianBlur(radius=GLOW_RADIUS)),
+        dtype=np.uint8,
+    )
+    styled_gray = np.maximum(styled_gray, glow_gray)
     rgba = _COLOR_RAMP_LOOKUP[styled_gray]
 
     buf = BytesIO()
