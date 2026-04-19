@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from time import perf_counter
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, TypedDict, cast
 
 import numpy as np
 
@@ -19,6 +19,8 @@ from backend.scoring import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from numpy.typing import NDArray
 
     from backend.climate_repository import ClimateRepository
@@ -51,6 +53,15 @@ class ScoreContext:
 
     climate_cell_count: int
     city_count: int
+
+
+@dataclass(slots=True)
+class HeatmapField:
+    """Reusable normalized score field for one preference tuple."""
+
+    normalized_scores: NDArray[np.float32] | list[CellScorePoint]
+    latitudes: NDArray[np.float32] | None = None
+    longitudes: NDArray[np.float32] | None = None
 
 
 class ScoreResponse(TypedDict):
@@ -299,7 +310,12 @@ def _log_score_timings(  # noqa: PLR0913
     )
 
 
-def build_score_response(repository: ClimateRepository, preferences: PreferenceInputs) -> ScoreResponse:
+def build_score_response(
+    repository: ClimateRepository,
+    preferences: PreferenceInputs,
+    *,
+    store_heatmap_field: Callable[[HeatmapField], None] | None = None,
+) -> ScoreResponse:
     """Score all available climate cells and shape the `/score` API payload.
 
     The route keeps FastAPI concerns only; this function owns the application-level
@@ -310,9 +326,21 @@ def build_score_response(repository: ClimateRepository, preferences: PreferenceI
     timings = ScoreTimings()
 
     if hasattr(repository, "get_climate_matrix") and hasattr(repository, "get_indexed_cities"):
-        return _build_score_response_from_matrix(repository, preferences, request_started, timings)
+        return _build_score_response_from_matrix(
+            repository,
+            preferences,
+            request_started,
+            timings,
+            store_heatmap_field=store_heatmap_field,
+        )
 
-    return _build_score_response_from_cells(repository, preferences, request_started, timings)
+    return _build_score_response_from_cells(
+        repository,
+        preferences,
+        request_started,
+        timings,
+        store_heatmap_field=store_heatmap_field,
+    )
 
 
 def _build_score_response_from_matrix(
@@ -320,6 +348,8 @@ def _build_score_response_from_matrix(
     preferences: PreferenceInputs,
     request_started: float,
     timings: ScoreTimings,
+    *,
+    store_heatmap_field: Callable[[HeatmapField], None] | None,
 ) -> ScoreResponse:
     cells_started = perf_counter()
     climate_matrix = repository.get_climate_matrix()
@@ -356,6 +386,14 @@ def _build_score_response_from_matrix(
     normalize_started = perf_counter()
     normalized_scores = normalize_score_array(raw_scores)
     timings.normalize_ms = _elapsed_ms(normalize_started)
+    if store_heatmap_field is not None:
+        store_heatmap_field(
+            HeatmapField(
+                normalized_scores=normalized_scores,
+                latitudes=climate_matrix.latitudes,
+                longitudes=climate_matrix.longitudes,
+            )
+        )
 
     ranking_started = perf_counter()
     ranking_catalog = _filter_ranking_catalog(indexed_cities)
@@ -380,6 +418,8 @@ def _build_score_response_from_cells(
     preferences: PreferenceInputs,
     request_started: float,
     timings: ScoreTimings,
+    *,
+    store_heatmap_field: Callable[[HeatmapField], None] | None,
 ) -> ScoreResponse:
 
     cells_started = perf_counter()
@@ -423,6 +463,8 @@ def _build_score_response_from_cells(
         for point in raw_scores
     ]
     timings.normalize_ms = _elapsed_ms(normalize_started)
+    if store_heatmap_field is not None:
+        store_heatmap_field(HeatmapField(normalized_scores=normalized_scores))
 
     ranking_started = perf_counter()
     ranking_catalog = _filter_city_candidates(cities)
@@ -440,8 +482,16 @@ def _build_score_response_from_cells(
     )
 
 
-def build_heatmap_response(repository: ClimateRepository, preferences: PreferenceInputs) -> bytes:
+def build_heatmap_response(
+    repository: ClimateRepository,
+    preferences: PreferenceInputs,
+    *,
+    cached_heatmap_field: HeatmapField | None = None,
+) -> bytes:
     """Build the `/heatmap` PNG payload for one user preference request."""
+    if cached_heatmap_field is not None:
+        return _render_heatmap_from_field(repository, cached_heatmap_field)
+
     if hasattr(repository, "get_climate_matrix"):
         return _build_heatmap_response_from_matrix(repository, preferences)
 
@@ -487,3 +537,19 @@ def _build_heatmap_response_from_cells(repository: ClimateRepository, preference
         for point in raw_scores
     ]
     return render_heatmap_png(normalized_scores)
+
+
+def _render_heatmap_from_field(repository: ClimateRepository, heatmap_field: HeatmapField) -> bytes:
+    if heatmap_field.latitudes is not None and heatmap_field.longitudes is not None:
+        if hasattr(repository, "get_heatmap_projection"):
+            return render_heatmap_png_from_projection(
+                repository.get_heatmap_projection(),
+                cast("NDArray[np.float32]", heatmap_field.normalized_scores),
+            )
+        return render_heatmap_png_from_arrays(
+            heatmap_field.latitudes,
+            heatmap_field.longitudes,
+            cast("NDArray[np.float32]", heatmap_field.normalized_scores),
+        )
+
+    return render_heatmap_png(cast("list[CellScorePoint]", heatmap_field.normalized_scores))

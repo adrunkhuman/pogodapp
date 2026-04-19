@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from backend import score_service as backend_score_service
 from backend.cities import GRID_DEGREES, CityCandidate, CityRankingCache, continent_of
 from backend.climate_repository import ClimateDataError, StubClimateRepository
 from backend.config import DEFAULT_PREFERENCES, MAP_PROJECTION, PREFERENCE_FIELD_NAMES
@@ -643,10 +644,15 @@ def test_score_endpoint_reuses_cached_response_for_identical_preferences() -> No
     call_count = 0
     original_builder = backend_main.build_score_response
 
-    def counted_builder(repository: StubClimateRepository, preferences: PreferenceInputs) -> ScoreResponse:
+    def counted_builder(
+        repository: StubClimateRepository,
+        preferences: PreferenceInputs,
+        *,
+        store_heatmap_field: Callable[[backend_score_service.HeatmapField], None] | None = None,
+    ) -> ScoreResponse:
         nonlocal call_count
         call_count += 1
-        return original_builder(repository, preferences)
+        return original_builder(repository, preferences, store_heatmap_field=store_heatmap_field)
 
     backend_main.__dict__["build_score_response"] = counted_builder
     cached_client = TestClient(create_app(climate_repository=StubClimateRepository()))
@@ -666,10 +672,15 @@ def test_score_endpoint_uses_prewarmed_default_preferences_cache() -> None:
     call_count = 0
     original_builder = backend_main.build_score_response
 
-    def counted_builder(repository: StubClimateRepository, preferences: PreferenceInputs) -> ScoreResponse:
+    def counted_builder(
+        repository: StubClimateRepository,
+        preferences: PreferenceInputs,
+        *,
+        store_heatmap_field: Callable[[backend_score_service.HeatmapField], None] | None = None,
+    ) -> ScoreResponse:
         nonlocal call_count
         call_count += 1
-        return original_builder(repository, preferences)
+        return original_builder(repository, preferences, store_heatmap_field=store_heatmap_field)
 
     backend_main.__dict__["build_score_response"] = counted_builder
 
@@ -731,10 +742,15 @@ def test_score_endpoint_evicts_oldest_cached_preferences_after_cache_limit() -> 
     call_count = 0
     original_builder = backend_main.build_score_response
 
-    def counted_builder(repository: StubClimateRepository, preferences: PreferenceInputs) -> ScoreResponse:
+    def counted_builder(
+        repository: StubClimateRepository,
+        preferences: PreferenceInputs,
+        *,
+        store_heatmap_field: Callable[[backend_score_service.HeatmapField], None] | None = None,
+    ) -> ScoreResponse:
         nonlocal call_count
         call_count += 1
-        return original_builder(repository, preferences)
+        return original_builder(repository, preferences, store_heatmap_field=store_heatmap_field)
 
     backend_main.__dict__["build_score_response"] = counted_builder
     cached_client = TestClient(create_app(climate_repository=StubClimateRepository()))
@@ -756,6 +772,34 @@ def test_score_endpoint_evicts_oldest_cached_preferences_after_cache_limit() -> 
     assert repeated_first.status_code == 200
     assert newest_repeat.status_code == 200
     assert call_count == 19  # 1 pre-warm + 17 unique keys + 1 recompute after LRU eviction
+
+
+def test_heatmap_endpoint_reuses_score_field_from_prior_score_request(monkeypatch: MonkeyPatch) -> None:
+    score_calls = 0
+    original_score_matrix = backend_score_service.score_climate_matrix
+    cached_client = TestClient(create_app(climate_repository=StubClimateRepository()))
+    form_data = {
+        "preferred_day_temperature": "24",
+        "summer_heat_limit": "37",
+        "winter_cold_limit": "10",
+        "dryness_preference": "15",
+        "sunshine_preference": "85",
+    }
+
+    def counted_score_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceInputs) -> np.ndarray:
+        nonlocal score_calls
+        score_calls += 1
+        return original_score_matrix(climate_matrix, preferences)
+
+    monkeypatch.setattr(backend_score_service, "score_climate_matrix", counted_score_matrix)
+
+    score_response = cached_client.post("/score", data=form_data)
+    heatmap_response = cached_client.get("/heatmap", params=form_data)
+
+    assert score_response.status_code == 200
+    assert heatmap_response.status_code == 200
+    assert heatmap_response.headers["content-type"] == "image/png"
+    assert score_calls == 1
 
 
 def test_score_response_cache_deduplicates_concurrent_identical_misses() -> None:
