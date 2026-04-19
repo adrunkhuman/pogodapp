@@ -51,8 +51,8 @@ class HeatmapProjection:
     """Cached raster coordinates for one fixed climate grid."""
 
     score_indexes: NDArray[np.int32]
-    xs: NDArray[np.int32]
-    ys: NDArray[np.int32]
+    xs: NDArray[np.uint16]
+    ys: NDArray[np.uint16]
     # Pre-dilated land mask: MaxFilter(7) is grid-fixed, not score-dependent.
     land_mask: NDArray[np.bool_]
 
@@ -64,9 +64,9 @@ class HeatmapProjection:
         valid_latitudes = latitudes[valid]
         valid_longitudes = longitudes[valid]
 
-        xs = ((valid_longitudes + 180.0) / 360.0 * WIDTH).astype(np.int32)
+        xs = ((valid_longitudes + 180.0) / 360.0 * WIDTH).astype(np.uint16)
         y_merc = np.log(np.tan(np.pi / 4 + np.radians(valid_latitudes) / 2))
-        ys = ((_Y_MAX - y_merc) / (2 * _Y_MAX) * HEIGHT).astype(np.int32)
+        ys = ((_Y_MAX - y_merc) / (2 * _Y_MAX) * HEIGHT).astype(np.uint16)
 
         in_bounds = (xs >= 0) & (xs < WIDTH) & (ys >= 0) & (ys < HEIGHT)
         final_xs = xs[in_bounds]

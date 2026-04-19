@@ -205,8 +205,8 @@ class DuckDbClimateRepository:
             coldest_month_lows_c = np.asarray(columns["coldest_month_lows_c"], dtype=FLOAT32_DTYPE)
             median_precipitation_mm = np.asarray(columns["median_precipitation_mm"], dtype=FLOAT32_DTYPE)
             wettest_precipitation_mm = np.asarray(columns["wettest_precipitation_mm"], dtype=FLOAT32_DTYPE)
-            average_cloud_cover_pct = np.asarray(columns["average_cloud_cover_pct"], dtype=FLOAT32_DTYPE)
-            gloomiest_cloud_cover_pct = np.asarray(columns["gloomiest_cloud_cover_pct"], dtype=FLOAT32_DTYPE)
+            average_cloud_cover_pct = np.asarray(columns["average_cloud_cover_pct"], dtype=UINT8_DTYPE)
+            gloomiest_cloud_cover_pct = np.asarray(columns["gloomiest_cloud_cover_pct"], dtype=UINT8_DTYPE)
         except (KeyError, TypeError, ValueError) as error:
             msg = f"Failed to map climate data from {self.database_path} into climate rows: {error}"
             raise ClimateDataError(msg) from error

@@ -111,8 +111,8 @@ class ClimateMatrix:
     coldest_month_lows_c: NDArray[np.float32] = field(default_factory=lambda: np.array([], dtype=np.float32))
     median_precipitation_mm: NDArray[np.float32] = field(default_factory=lambda: np.array([], dtype=np.float32))
     wettest_precipitation_mm: NDArray[np.float32] = field(default_factory=lambda: np.array([], dtype=np.float32))
-    average_cloud_cover_pct: NDArray[np.float32] = field(default_factory=lambda: np.array([], dtype=np.float32))
-    gloomiest_cloud_cover_pct: NDArray[np.float32] = field(default_factory=lambda: np.array([], dtype=np.float32))
+    average_cloud_cover_pct: NDArray[np.uint8] = field(default_factory=lambda: np.array([], dtype=np.uint8))
+    gloomiest_cloud_cover_pct: NDArray[np.uint8] = field(default_factory=lambda: np.array([], dtype=np.uint8))
 
     def __post_init__(self) -> None:
         """Reject malformed matrix shapes before they reach the scorer."""
@@ -153,12 +153,12 @@ class ClimateMatrix:
             )
             self._ensure_derived_vector(
                 "average_cloud_cover_pct",
-                np.rint(np.mean(cloud_cover_pct.astype(np.float32), axis=1)).astype(np.float32, copy=False),
+                np.rint(np.mean(cloud_cover_pct.astype(np.float32), axis=1)).astype(np.uint8, copy=False),
                 cell_count,
             )
             self._ensure_derived_vector(
                 "gloomiest_cloud_cover_pct",
-                np.max(cloud_cover_pct, axis=1).astype(np.float32, copy=False),
+                np.max(cloud_cover_pct, axis=1).astype(np.uint8, copy=False),
                 cell_count,
             )
             return
@@ -227,7 +227,7 @@ class ClimateMatrix:
                 msg = f"{attribute} must align with latitudes"
                 raise ValueError(msg)
 
-    def _ensure_derived_vector(self, attribute: str, derived: NDArray[np.float32], cell_count: int) -> None:
+    def _ensure_derived_vector(self, attribute: str, derived: NDArray[np.generic], cell_count: int) -> None:
         current = getattr(self, attribute)
         if current.shape == (0,):
             object.__setattr__(self, attribute, derived)
