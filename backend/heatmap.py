@@ -24,6 +24,8 @@ WORK_WIDTH = (WIDTH + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
 WORK_HEIGHT = (HEIGHT + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
 WORK_BLUR_RADIUS = 4.0
 NORM_MIN_CELLS = 10  # work tiles with fewer source cells blend toward diluted to suppress single-cell outliers
+PEAK_DETAIL_BLUR_RADIUS = 2.4
+PEAK_DETAIL_BLEND_WEIGHT = 0.55
 UPSCALED_BLEND_BLUR_RADIUS = 0.9
 GLOW_RADIUS = 12.0  # px — post-mask bloom so narrow hotspots radiate into surrounding ocean/gaps
 SCORE_CURVE_GAMMA = 1.35
@@ -120,6 +122,17 @@ def _stylize_heatmap_gray(gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
     return np.rint(curved * 255).astype(np.uint8)
 
 
+def _blur_work_field(field: NDArray[np.float32], radius: float) -> NDArray[np.float32]:
+    """Blur one work-grid field through Pillow's fast grayscale path."""
+    return (
+        np.asarray(
+            Image.fromarray((field * 255).astype(np.uint8), mode="L").filter(ImageFilter.GaussianBlur(radius=radius)),
+            dtype=np.float32,
+        )
+        / 255.0
+    )
+
+
 def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np.ndarray) -> bytes:
     """Rasterize one score vector aligned with the projection's source climate-matrix rows."""
     work_scores = scores[projection.score_indexes]
@@ -143,15 +156,13 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
         out=np.zeros_like(summed_grid),
         where=hit_count_grid > 0,
     )
+    peak_grid = np.zeros(WORK_WIDTH * WORK_HEIGHT, dtype=np.float32)
+    np.maximum.at(peak_grid, projection.work_indexes, work_scores)
+    peak_grid = peak_grid.reshape((WORK_HEIGHT, WORK_WIDTH))
 
     # Normalized blur: blur numerator and mask separately, then divide.
     # Prevents ocean zero-tiles from diluting isolated coastal hotspots.
-    blurred_field = np.asarray(
-        Image.fromarray((work_field * 255).astype(np.uint8), mode="L").filter(
-            ImageFilter.GaussianBlur(radius=WORK_BLUR_RADIUS)
-        ),
-        dtype=np.float32,
-    )
+    blurred_field = _blur_work_field(work_field, WORK_BLUR_RADIUS) * 255.0
     blurred_mask = np.asarray(
         Image.fromarray(((work_field > 0) * 255).astype(np.uint8), mode="L").filter(
             ImageFilter.GaussianBlur(radius=WORK_BLUR_RADIUS)
@@ -162,6 +173,8 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
     plain = blurred_field / 255.0
     confidence = np.clip(hit_count_grid.astype(np.float32) / NORM_MIN_CELLS, 0.0, 1.0)
     work_smooth = (plain * (1.0 - confidence) + normalized * confidence).clip(0.0, 1.0)
+    peak_detail = _blur_work_field(np.clip(peak_grid - work_field, 0.0, 1.0), PEAK_DETAIL_BLUR_RADIUS)
+    work_smooth = np.clip(work_smooth + peak_detail * PEAK_DETAIL_BLEND_WEIGHT, 0.0, 1.0)
     upscaled_blurred_gray = np.asarray(
         Image.fromarray((work_smooth * 255).astype(np.uint8), mode="L").resize(
             (WIDTH, HEIGHT), resample=Image.Resampling.BILINEAR

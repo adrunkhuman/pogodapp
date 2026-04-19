@@ -66,6 +66,30 @@ def test_heatmap_png_hotspot_cluster_outshines_weak_background() -> None:
     assert hotspot_max > background_max
 
 
+def test_heatmap_png_same_tile_peak_survives_tile_average() -> None:
+    latitudes = np.zeros(5, dtype=np.float32)
+    longitudes = np.zeros(5, dtype=np.float32)
+    mixed_scores = np.array([1.0, 0.2, 0.2, 0.2, 0.2], dtype=np.float32)
+    averaged_scores = np.full(5, mixed_scores.mean(), dtype=np.float32)
+
+    projection = HeatmapProjection.from_coordinates(latitudes, longitudes)
+    mixed_alpha = np.asarray(
+        Image.open(BytesIO(render_heatmap_png_from_projection(projection, mixed_scores))).convert("RGBA"),
+        dtype=np.uint8,
+    )[..., 3]
+    averaged_alpha = np.asarray(
+        Image.open(BytesIO(render_heatmap_png_from_projection(projection, averaged_scores))).convert("RGBA"),
+        dtype=np.uint8,
+    )[..., 3]
+
+    cy, cx = HEIGHT // 2, WIDTH // 2
+    mixed_window = mixed_alpha[cy - 8 : cy + 9, cx - 8 : cx + 9]
+    averaged_window = averaged_alpha[cy - 8 : cy + 9, cx - 8 : cx + 9]
+
+    assert mixed_window.mean() > averaged_window.mean()
+    assert mixed_window.max() > averaged_window.max()
+
+
 def test_heatmap_png_uses_configured_raster_dimensions() -> None:
     latitudes = np.array([0.0], dtype=np.float32)
     longitudes = np.array([0.0], dtype=np.float32)
