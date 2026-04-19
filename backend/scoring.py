@@ -290,6 +290,27 @@ class MatrixScoreTimings:
     combine_ms: float = 0.0
 
 
+def _combine_score_blocks(
+    temperature_scores: NDArray[np.float32],
+    rain_scores: NDArray[np.float32],
+    sun_scores: NDArray[np.float32],
+    weights: tuple[float, float, float],
+) -> NDArray[np.float32]:
+    """Combine precomputed score blocks while reusing temporary buffers."""
+    temperature_weight, rain_weight, sun_weight = weights
+    preference_scores = np.empty_like(rain_scores)
+    np.power(rain_scores, rain_weight, out=preference_scores)
+    scores = np.empty_like(sun_scores)
+    np.power(sun_scores, sun_weight, out=scores)
+    np.multiply(preference_scores, scores, out=preference_scores)
+
+    np.power(temperature_scores, temperature_weight, out=scores)
+    np.power(preference_scores, 1 - temperature_weight, out=preference_scores)
+    np.multiply(scores, preference_scores, out=scores)
+    np.clip(scores, 0.0, 1.0, out=scores)
+    return scores
+
+
 STUB_CLIMATE_CELLS: tuple[ClimateCell, ...] = (
     ClimateCell(
         lat=37.5,
@@ -581,12 +602,12 @@ def score_climate_matrix(
         timings.sun_ms = (perf_counter() - sun_started) * 1000
 
     combine_started = perf_counter()
-    preference_scores = (rain_scores**rain_weight * sun_scores**sun_weight).astype(np.float32, copy=False)
-    scores = np.clip(
-        temperature_scores**temperature_weight * preference_scores ** (1 - temperature_weight),
-        0.0,
-        1.0,
-    ).astype(np.float32, copy=False)
+    scores = _combine_score_blocks(
+        temperature_scores,
+        rain_scores,
+        sun_scores,
+        (temperature_weight, rain_weight, sun_weight),
+    )
     if timings is not None:
         timings.combine_ms = (perf_counter() - combine_started) * 1000
     return scores
