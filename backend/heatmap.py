@@ -22,11 +22,11 @@ HEIGHT = 800
 WORK_GRID_SCALE = 3
 WORK_WIDTH = (WIDTH + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
 WORK_HEIGHT = (HEIGHT + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
-WORK_BLUR_RADIUS = 2.4
+WORK_BLUR_RADIUS = 5.0
 PEAK_BLEND = 0.80
-NORM_MIN_CELLS = 4  # work tiles with fewer source cells blend toward diluted to suppress single-cell outliers
+NORM_MIN_CELLS = 6  # work tiles with fewer source cells blend toward diluted to suppress single-cell outliers
 UPSCALED_BLEND_BLUR_RADIUS = 0.9
-GLOW_RADIUS = 14.0  # px — post-mask bloom so narrow hotspots radiate into surrounding ocean/gaps
+GLOW_RADIUS = 10.0  # px — post-mask bloom so narrow hotspots radiate into surrounding ocean/gaps
 SCORE_CURVE_GAMMA = 1.35
 _MERCATOR_MAX_RENDER_LATITUDE = MAP_PROJECTION.max_render_latitude
 
