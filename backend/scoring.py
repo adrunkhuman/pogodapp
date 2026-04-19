@@ -311,6 +311,44 @@ def _combine_score_blocks(
     return scores
 
 
+def _temperature_score_block(
+    climate_matrix: ClimateMatrix,
+    preferred_day_temperature: np.float32,
+    summer_heat_limit: np.float32,
+    winter_cold_limit: np.float32,
+) -> NDArray[np.float32]:
+    """Score the temperature constraints while reusing temporary buffers."""
+    ideal_scores = np.empty_like(climate_matrix.typical_highs_c)
+    np.subtract(climate_matrix.typical_highs_c, preferred_day_temperature, out=ideal_scores)
+    np.absolute(ideal_scores, out=ideal_scores)
+    np.subtract(ideal_scores, TEMPERATURE_COMFORT_BAND_C, out=ideal_scores)
+    np.clip(ideal_scores, 0.0, None, out=ideal_scores)
+    np.divide(ideal_scores, TEMPERATURE_IDEAL_SLOPE_C, out=ideal_scores)
+    np.subtract(1.0, ideal_scores, out=ideal_scores)
+    np.clip(ideal_scores, 0.0, 1.0, out=ideal_scores)
+
+    heat_scores = np.empty_like(climate_matrix.hottest_month_highs_c)
+    np.subtract(climate_matrix.hottest_month_highs_c, summer_heat_limit, out=heat_scores)
+    np.clip(heat_scores, 0.0, None, out=heat_scores)
+    np.divide(heat_scores, TEMPERATURE_LIMIT_SLOPE_C, out=heat_scores)
+    np.subtract(1.0, heat_scores, out=heat_scores)
+    np.clip(heat_scores, 0.0, 1.0, out=heat_scores)
+
+    cold_scores = np.empty_like(climate_matrix.coldest_month_lows_c)
+    np.subtract(winter_cold_limit, climate_matrix.coldest_month_lows_c, out=cold_scores)
+    np.clip(cold_scores, 0.0, None, out=cold_scores)
+    np.divide(cold_scores, TEMPERATURE_LIMIT_SLOPE_C, out=cold_scores)
+    np.subtract(1.0, cold_scores, out=cold_scores)
+    np.clip(cold_scores, 0.0, 1.0, out=cold_scores)
+
+    np.power(ideal_scores, TEMPERATURE_IDEAL_WEIGHT, out=ideal_scores)
+    np.power(heat_scores, TEMPERATURE_HEAT_WEIGHT, out=heat_scores)
+    np.multiply(ideal_scores, heat_scores, out=ideal_scores)
+    np.power(cold_scores, TEMPERATURE_COLD_WEIGHT, out=cold_scores)
+    np.multiply(ideal_scores, cold_scores, out=ideal_scores)
+    return ideal_scores
+
+
 STUB_CLIMATE_CELLS: tuple[ClimateCell, ...] = (
     ClimateCell(
         lat=37.5,
@@ -537,19 +575,12 @@ def score_climate_matrix(
         timings.setup_ms = (perf_counter() - setup_started) * 1000
 
     temperature_started = perf_counter()
-    ideal_distance = np.maximum(
-        np.abs(climate_matrix.typical_highs_c - preferred_day_temperature) - TEMPERATURE_COMFORT_BAND_C, 0.0
+    temperature_scores = _temperature_score_block(
+        climate_matrix,
+        preferred_day_temperature,
+        summer_heat_limit,
+        winter_cold_limit,
     )
-    ideal_scores = np.clip(1.0 - (ideal_distance / TEMPERATURE_IDEAL_SLOPE_C), 0.0, 1.0)
-    heat_excess = np.maximum(climate_matrix.hottest_month_highs_c - summer_heat_limit, 0.0)
-    heat_scores = np.clip(1.0 - (heat_excess / TEMPERATURE_LIMIT_SLOPE_C), 0.0, 1.0)
-    cold_excess = np.maximum(winter_cold_limit - climate_matrix.coldest_month_lows_c, 0.0)
-    cold_scores = np.clip(1.0 - (cold_excess / TEMPERATURE_LIMIT_SLOPE_C), 0.0, 1.0)
-    temperature_scores = (
-        ideal_scores**TEMPERATURE_IDEAL_WEIGHT
-        * heat_scores**TEMPERATURE_HEAT_WEIGHT
-        * cold_scores**TEMPERATURE_COLD_WEIGHT
-    ).astype(np.float32, copy=False)
     if timings is not None:
         timings.temperature_ms = (perf_counter() - temperature_started) * 1000
 
