@@ -61,6 +61,10 @@ def test_build_score_response_logs_step_timings(caplog: LogCaptureFixture) -> No
     assert cast("float", record.__dict__["scoring_ms"]) >= 0
     assert cast("float", record.__dict__["normalize_ms"]) >= 0
     assert cast("float", record.__dict__["ranking_ms"]) >= 0
+    assert cast("float", record.__dict__["ranking_filter_ms"]) >= 0
+    assert cast("float", record.__dict__["ranking_candidates_ms"]) >= 0
+    assert cast("float", record.__dict__["ranking_sidebar_ms"]) >= 0
+    assert cast("float", record.__dict__["ranking_rescore_ms"]) >= 0
     assert record.__dict__["heatmap_ms"] == 0.0
     assert cast("float", record.__dict__["response_ms"]) >= 0
     assert record.__dict__["preferred_day_temperature"] == preferences.preferred_day_temperature

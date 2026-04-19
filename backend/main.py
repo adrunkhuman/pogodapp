@@ -95,12 +95,16 @@ class _ScoreResponseCache:
         key: tuple[int, int, int, int, int],
         build: Callable[[], ScoreResponse],
     ) -> _ScoreCacheResult:
+        waited_on_inflight = False
         while True:
             with self._lock:
                 response = self._entries.get(key)
                 if response is not None:
                     self._entries.move_to_end(key)
-                    return _ScoreCacheResult(response=response, cache_hit=True)
+                    cache_status = "miss_waited" if waited_on_inflight else "hit"
+                    return _ScoreCacheResult(
+                        response=response, cache_hit=not waited_on_inflight, cache_status=cache_status
+                    )
 
                 inflight = self._inflight.get(key)
                 if inflight is None:
@@ -108,6 +112,7 @@ class _ScoreResponseCache:
                     self._inflight[key] = inflight
                     break
 
+            waited_on_inflight = True
             inflight.wait()
 
         try:
@@ -123,12 +128,13 @@ class _ScoreResponseCache:
             if len(self._entries) > self.max_entries:
                 self._entries.popitem(last=False)
             self._inflight.pop(key).set()
-            return _ScoreCacheResult(response=response, cache_hit=False)
+            return _ScoreCacheResult(response=response, cache_hit=False, cache_status="miss_built")
 
 
 class _ScoreCacheResult(NamedTuple):
     response: ScoreResponse
     cache_hit: bool
+    cache_status: str
 
 
 class _HeatmapFieldCache:
@@ -163,6 +169,30 @@ class _HeatmapFieldCache:
         expired_keys = [key for key, (stored_at, _field) in self._entries.items() if now - stored_at > self.ttl_seconds]
         for key in expired_keys:
             self._entries.pop(key, None)
+
+
+class _RequestConcurrencyTracker:
+    """Track waiting and active request counts for one route class."""
+
+    def __init__(self) -> None:
+        self._waiting = 0
+        self._active = 0
+        self._lock = threading.Lock()
+
+    def mark_waiting(self) -> int:
+        with self._lock:
+            self._waiting += 1
+            return self._waiting
+
+    def mark_started(self) -> tuple[int, int]:
+        with self._lock:
+            self._waiting -= 1
+            self._active += 1
+            return self._waiting, self._active
+
+    def mark_finished(self) -> None:
+        with self._lock:
+            self._active -= 1
 
 
 class _SupportsProbeRepository(Protocol):
@@ -300,7 +330,7 @@ def _score_response_from_cache_or_repository(
 def _coerce_score_cache_result(result: _ScoreCacheResult | ScoreResponse) -> _ScoreCacheResult:
     if isinstance(result, _ScoreCacheResult):
         return result
-    return _ScoreCacheResult(response=result, cache_hit=False)
+    return _ScoreCacheResult(response=result, cache_hit=False, cache_status="miss_built")
 
 
 def _heatmap_url(preferences: PreferenceInputs) -> str:
@@ -442,6 +472,7 @@ def create_app(  # noqa: C901, PLR0915
     heatmap_field_cache = _HeatmapFieldCache(HEATMAP_FIELD_CACHE_SIZE, HEATMAP_FIELD_CACHE_TTL_SECONDS)
     # Serialize /score work per worker so repeated slider changes do not pile up CPU-bound builds.
     score_request_semaphore = asyncio.Semaphore(1)
+    score_request_tracker = _RequestConcurrencyTracker()
     heatmap_request_semaphore = asyncio.Semaphore(1)
     preload_repository(repository)
 
@@ -481,15 +512,20 @@ def create_app(  # noqa: C901, PLR0915
     async def score(request: Request, preferences: Annotated[PreferenceInputs, Form()]) -> dict[str, object]:
         try:
             queue_started = perf_counter()
+            score_request_tracker.mark_waiting()
             async with score_request_semaphore:
+                score_queue_depth, score_inflight = score_request_tracker.mark_started()
                 queue_wait_ms = round((perf_counter() - queue_started) * 1000, 2)
-                raw_cache_result = await run_in_threadpool(
-                    _score_response_from_cache_or_repository,
-                    score_cache,
-                    heatmap_field_cache,
-                    repository,
-                    preferences,
-                )
+                try:
+                    raw_cache_result = await run_in_threadpool(
+                        _score_response_from_cache_or_repository,
+                        score_cache,
+                        heatmap_field_cache,
+                        repository,
+                        preferences,
+                    )
+                finally:
+                    score_request_tracker.mark_finished()
             cache_result = _coerce_score_cache_result(raw_cache_result)
             logger.info(
                 "score request served",
@@ -497,7 +533,10 @@ def create_app(  # noqa: C901, PLR0915
                     "event": "score_request_route",
                     "outcome": "ok",
                     "cache_hit": cache_result.cache_hit,
+                    "cache_status": cache_result.cache_status,
                     "queue_wait_ms": queue_wait_ms,
+                    "score_queue_depth": score_queue_depth,
+                    "score_inflight": score_inflight,
                     **_score_log_fields(preferences),
                 },
             )
