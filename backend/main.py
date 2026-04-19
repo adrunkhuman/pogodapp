@@ -525,13 +525,25 @@ def create_app(  # noqa: C901, PLR0915
         try:
             cache_key = _score_cache_key(preferences)
             cached_heatmap_field = heatmap_field_cache.get(cache_key)
+            queue_started = perf_counter()
             async with heatmap_request_semaphore:
+                queue_wait_ms = round((perf_counter() - queue_started) * 1000, 2)
                 heatmap_png = await run_in_threadpool(
                     build_heatmap_response,
                     repository,
                     preferences,
                     cached_heatmap_field=cached_heatmap_field,
                 )
+            logger.info(
+                "heatmap request served",
+                extra={
+                    "event": "heatmap_request_route",
+                    "outcome": "ok",
+                    "score_field_cache_hit": cached_heatmap_field is not None,
+                    "queue_wait_ms": queue_wait_ms,
+                    **_score_log_fields(preferences),
+                },
+            )
         except ClimateDataError as error:
             logger.exception(
                 "heatmap request failed",
