@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from time import perf_counter
 from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
@@ -291,6 +292,16 @@ class RegionalPenaltyCenter:
     strength: float = 1.0
 
 
+@dataclass(slots=True)
+class IndexedRankingTimings:
+    """Optional cold-path timings for indexed city ranking."""
+
+    setup_ms: float = 0.0
+    winner_select_ms: float = 0.0
+    distance_ms: float = 0.0
+    penalty_ms: float = 0.0
+
+
 def city_score_point(city: CityCandidate, score: float, *, flag: str | None = None) -> CityScorePoint:
     """Build the API score shape for one ranked city."""
     return {
@@ -452,26 +463,40 @@ def rank_indexed_city_scores(
     *,
     limit: int,
     diversity_decay_km: float = CITY_DIVERSITY_DECAY_KM,
+    timings: IndexedRankingTimings | None = None,
 ) -> list[CityScorePoint]:
     """Rank cities from climate-matrix-aligned scores while keeping regional diversity suppression."""
     if not city_catalog.cities:
         return []
 
+    setup_started = perf_counter()
     scores = cell_scores[city_catalog.climate_indexes].astype(np.float32, copy=True)
     active = np.ones(scores.shape, dtype=bool)
     ranked: list[CityScorePoint] = []
+    if timings is not None:
+        timings.setup_ms = (perf_counter() - setup_started) * 1000
 
     while active.any() and len(ranked) < limit:
+        winner_select_started = perf_counter()
         winner_index = _select_population_biased_winner_index(city_catalog, scores, active)
+        if timings is not None:
+            timings.winner_select_ms += (perf_counter() - winner_select_started) * 1000
         winner_city = city_catalog.cities[winner_index]
         winner_score = float(scores[winner_index])
         diversity_strength = _diversity_strength_for_rank(len(ranked))
         ranked.append(city_score_point(winner_city, winner_score, flag=city_catalog.flags[winner_index]))
 
+        distance_started = perf_counter()
         distance_km = _haversine_distance_vector_km(city_catalog, winner_index)
+        if timings is not None:
+            timings.distance_ms += (perf_counter() - distance_started) * 1000
+
+        penalty_started = perf_counter()
         penalty = winner_score * diversity_strength * np.exp(-distance_km / diversity_decay_km)
         scores = np.where(active, np.maximum(0.0, scores * (1.0 - penalty)), scores)
         active[winner_index] = False
+        if timings is not None:
+            timings.penalty_ms += (perf_counter() - penalty_started) * 1000
 
     return ranked
 

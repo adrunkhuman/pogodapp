@@ -866,7 +866,11 @@ def test_heatmap_endpoint_reuses_score_field_from_prior_score_request(monkeypatc
         "sunshine_preference": "85",
     }
 
-    def counted_score_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceInputs) -> np.ndarray:
+    def counted_score_matrix(
+        climate_matrix: ClimateMatrix,
+        preferences: PreferenceInputs,
+        **_kwargs: object,
+    ) -> np.ndarray:
         nonlocal score_calls
         score_calls += 1
         return original_score_matrix(climate_matrix, preferences)

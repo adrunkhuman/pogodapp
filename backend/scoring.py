@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from time import perf_counter
 from typing import TYPE_CHECKING, TypedDict, cast
 
 import numpy as np
@@ -278,6 +279,17 @@ class CellScorePoint(TypedDict):
     score: float
 
 
+@dataclass(slots=True)
+class MatrixScoreTimings:
+    """Optional cold-path timings for vectorized matrix scoring."""
+
+    setup_ms: float = 0.0
+    temperature_ms: float = 0.0
+    rain_ms: float = 0.0
+    sun_ms: float = 0.0
+    combine_ms: float = 0.0
+
+
 STUB_CLIMATE_CELLS: tuple[ClimateCell, ...] = (
     ClimateCell(
         lat=37.5,
@@ -480,8 +492,14 @@ def score_climate_cells(climate_cells: tuple[ClimateCell, ...], preferences: Pre
     ]
 
 
-def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceInputs) -> NDArray[np.float32]:
+def score_climate_matrix(
+    climate_matrix: ClimateMatrix,
+    preferences: PreferenceInputs,
+    *,
+    timings: MatrixScoreTimings | None = None,
+) -> NDArray[np.float32]:
     """Score the compact climate matrix with vectorized NumPy operations."""
+    setup_started = perf_counter()
     tolerated_cloud_cover = MAX_TOLERATED_CLOUD_COVER - (
         (MAX_TOLERATED_CLOUD_COVER - MIN_TOLERATED_CLOUD_COVER) * (preferences.sunshine_preference / 100.0)
     )
@@ -494,6 +512,10 @@ def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceI
         preferences.dryness_preference,
         preferences.sunshine_preference,
     )
+    if timings is not None:
+        timings.setup_ms = (perf_counter() - setup_started) * 1000
+
+    temperature_started = perf_counter()
     ideal_distance = np.maximum(
         np.abs(climate_matrix.typical_highs_c - preferred_day_temperature) - TEMPERATURE_COMFORT_BAND_C, 0.0
     )
@@ -507,7 +529,10 @@ def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceI
         * heat_scores**TEMPERATURE_HEAT_WEIGHT
         * cold_scores**TEMPERATURE_COLD_WEIGHT
     ).astype(np.float32, copy=False)
+    if timings is not None:
+        timings.temperature_ms = (perf_counter() - temperature_started) * 1000
 
+    rain_started = perf_counter()
     typical_rain_scores = np.clip(
         1.0 - (climate_matrix.median_precipitation_mm / SATURATING_MONTHLY_RAIN_MM) * dryness_ratio,
         0.0,
@@ -522,7 +547,10 @@ def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceI
         np.maximum(typical_rain_scores, MULTIPLICATIVE_SCORE_FLOOR) ** PRECIPITATION_PROFILE_MEDIAN_WEIGHT
         * np.maximum(wettest_month_scores, MULTIPLICATIVE_SCORE_FLOOR) ** PRECIPITATION_PROFILE_PEAK_WEIGHT
     ).astype(np.float32, copy=False)
+    if timings is not None:
+        timings.rain_ms = (perf_counter() - rain_started) * 1000
 
+    sun_started = perf_counter()
     average_excess_ratio = (climate_matrix.average_cloud_cover_pct - tolerated_cloud_cover) / cloud_denominator
     average_sun_scores = np.where(
         climate_matrix.average_cloud_cover_pct <= tolerated_cloud_cover,
@@ -542,13 +570,19 @@ def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceI
         np.float32,
         copy=False,
     )
+    if timings is not None:
+        timings.sun_ms = (perf_counter() - sun_started) * 1000
 
+    combine_started = perf_counter()
     preference_scores = (rain_scores**rain_weight * sun_scores**sun_weight).astype(np.float32, copy=False)
-    return np.clip(
+    scores = np.clip(
         temperature_scores**temperature_weight * preference_scores ** (1 - temperature_weight),
         0.0,
         1.0,
     ).astype(np.float32, copy=False)
+    if timings is not None:
+        timings.combine_ms = (perf_counter() - combine_started) * 1000
+    return scores
 
 
 def normalize_score_array(scores: NDArray[np.float32]) -> NDArray[np.float32]:
