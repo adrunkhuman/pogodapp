@@ -321,8 +321,7 @@ class DuckDbClimateRepository:
             heatmap_projection_mb = round(
                 (
                     self._heatmap_projection.score_indexes.nbytes
-                    + self._heatmap_projection.xs.nbytes
-                    + self._heatmap_projection.ys.nbytes
+                    + self._heatmap_projection.work_indexes.nbytes
                     + self._heatmap_projection.land_mask.nbytes
                 )
                 / (1024 * 1024),

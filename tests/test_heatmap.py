@@ -6,10 +6,9 @@ from PIL import Image
 from backend.heatmap import (
     HEIGHT,
     WIDTH,
+    WORK_GRID_SCALE,
+    WORK_WIDTH,
     HeatmapProjection,
-    _expand_detail_source,
-    _preserve_local_maxima,
-    _smooth_styled_heatmap_gray,
     _stylize_heatmap_gray,
     render_heatmap_png_from_arrays,
     render_heatmap_png_from_projection,
@@ -36,80 +35,35 @@ def test_heatmap_projection_filters_invalid_latitudes_and_keeps_duplicate_pixels
         np.array([0.0, 0.0, 0.0], dtype=np.float32),
     )
 
+    expected_work_idx = (HEIGHT // 2 // WORK_GRID_SCALE) * WORK_WIDTH + (WIDTH // 2 // WORK_GRID_SCALE)
     assert projection.score_indexes.tolist() == [0, 1]
-    assert projection.xs.tolist() == [WIDTH // 2, WIDTH // 2]
-    assert projection.ys.tolist() == [HEIGHT // 2, HEIGHT // 2]
+    assert projection.work_indexes.tolist() == [expected_work_idx, expected_work_idx]
 
 
-def test_preserve_local_maxima_lifts_peak_above_blurred_neighbors() -> None:
-    base_gray = np.zeros((9, 9), dtype=np.uint8)
-    base_gray[4, 4] = 255
-    base_gray[4, 3] = 40
-    base_gray[4, 5] = 40
+def test_heatmap_png_hotspot_cluster_outshines_weak_background() -> None:
+    # Display-grid renderer works at work-tile granularity, not single-pixel precision.
+    # A dense hotspot cluster must produce visibly higher alpha than a distant weak field.
+    rng = np.random.default_rng(0)
+    bg_lats = rng.uniform(-10.0, 10.0, 300).astype(np.float32)
+    bg_lons = rng.uniform(-60.0, 60.0, 300).astype(np.float32)
+    hot_lats = rng.uniform(-0.3, 0.3, 30).astype(np.float32)
+    hot_lons = rng.uniform(-0.3, 0.3, 30).astype(np.float32)
 
-    blurred_gray = np.full((9, 9), 72, dtype=np.uint8)
-    blurred_gray[4, 4] = 68
+    lats = np.concatenate([bg_lats, hot_lats])
+    lons = np.concatenate([bg_lons, hot_lons])
+    scores = np.concatenate([np.full(300, 0.15, dtype=np.float32), np.full(30, 1.0, dtype=np.float32)])
 
-    preserved = _preserve_local_maxima(base_gray, blurred_gray)
+    projection = HeatmapProjection.from_coordinates(latitudes=lats, longitudes=lons)
+    alpha = np.asarray(
+        Image.open(BytesIO(render_heatmap_png_from_projection(projection, scores))).convert("RGBA"),
+        dtype=np.uint8,
+    )[..., 3]
 
-    assert preserved[4, 4] > blurred_gray[4, 4]
-    assert preserved[4, 4] > preserved[4, 3]
-    assert preserved[3, 4] < preserved[4, 4]
+    cx, cy = WIDTH // 2, HEIGHT // 2
+    hotspot_max = alpha[cy - 6 : cy + 7, cx - 6 : cx + 7].max()
+    background_max = alpha[cy, cx + 40 : cx + 60].max()
 
-
-def test_preserve_local_maxima_keeps_mid_strength_cell_close_to_raw_value() -> None:
-    base_gray = np.zeros((9, 9), dtype=np.uint8)
-    base_gray[4, 4] = 160
-
-    blurred_gray = np.full((9, 9), 72, dtype=np.uint8)
-    blurred_gray[4, 4] = 84
-
-    preserved = _preserve_local_maxima(base_gray, blurred_gray)
-
-    assert preserved[4, 4] >= 144
-    assert preserved[4, 3] >= 144
-
-
-def test_expand_detail_source_bridges_adjacent_rows() -> None:
-    base_gray = np.zeros((5, 5), dtype=np.uint8)
-    base_gray[2, 2] = 160
-
-    expanded = _expand_detail_source(base_gray)
-
-    assert expanded[1, 2] == 160
-    assert expanded[3, 2] == 160
-
-
-def test_heatmap_png_keeps_peak_pixel_opaque_when_surrounded_by_weaker_scores() -> None:
-    latitudes = np.array([0.0, 0.0, 0.5, -0.5, 0.0], dtype=np.float32)
-    longitudes = np.array([0.0, -0.5, 0.0, 0.0, 0.5], dtype=np.float32)
-    scores = np.array([1.0, 0.2, 0.2, 0.2, 0.2], dtype=np.float32)
-
-    projection = HeatmapProjection.from_coordinates(latitudes, longitudes)
-    png_bytes = render_heatmap_png_from_projection(projection, scores)
-    image = Image.open(BytesIO(png_bytes)).convert("RGBA")
-    alpha = np.asarray(image, dtype=np.uint8)[..., 3]
-
-    peak_x = int(projection.xs[0])
-    peak_y = int(projection.ys[0])
-
-    assert alpha[peak_y, peak_x] >= 165
-
-
-def test_heatmap_png_keeps_mid_strength_pixel_visible_when_surrounded_by_weaker_scores() -> None:
-    latitudes = np.array([0.0, 0.0, 0.5, -0.5, 0.0], dtype=np.float32)
-    longitudes = np.array([0.0, -0.5, 0.0, 0.0, 0.5], dtype=np.float32)
-    scores = np.array([0.62, 0.2, 0.2, 0.2, 0.2], dtype=np.float32)
-
-    projection = HeatmapProjection.from_coordinates(latitudes, longitudes)
-    png_bytes = render_heatmap_png_from_projection(projection, scores)
-    image = Image.open(BytesIO(png_bytes)).convert("RGBA")
-    alpha = np.asarray(image, dtype=np.uint8)[..., 3]
-
-    peak_x = int(projection.xs[0])
-    peak_y = int(projection.ys[0])
-
-    assert alpha[peak_y, peak_x] >= 125
+    assert hotspot_max > background_max
 
 
 def test_heatmap_png_uses_configured_raster_dimensions() -> None:
@@ -133,18 +87,3 @@ def test_stylize_heatmap_gray_quantizes_to_limited_band_values() -> None:
     assert np.all(np.diff(styled[0].astype(np.int16)) >= 0)
     assert styled[0, 2] < gray[0, 2]
     assert styled[0, -1] == 255
-
-
-def test_smooth_styled_heatmap_gray_softens_isolated_speckle() -> None:
-    gray = np.array(
-        [
-            [0, 0, 0],
-            [0, 255, 0],
-            [0, 0, 0],
-        ],
-        dtype=np.uint8,
-    )
-
-    smoothed = _smooth_styled_heatmap_gray(gray)
-
-    assert smoothed[1, 1] == 255

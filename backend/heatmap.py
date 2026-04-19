@@ -19,20 +19,13 @@ if TYPE_CHECKING:
 
 WIDTH = 1280
 HEIGHT = 640
-BLUR_RADIUS = 3.5  # px — scaled down with the raster size to preserve the same geographic softness
 WORK_GRID_SCALE = 3
 WORK_WIDTH = (WIDTH + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
 WORK_HEIGHT = (HEIGHT + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
 WORK_BLUR_RADIUS = 2.4
 PEAK_GRID_WEIGHT = 0.55
 UPSCALED_BLEND_BLUR_RADIUS = 0.9
-SOURCE_POINT_FLOOR_STRENGTH = 0.9
-DETAIL_PRESERVE_THRESHOLD = 0.35
-DETAIL_PRESERVE_STRENGTH = 0.9
-PEAK_BOOST_THRESHOLD = 0.72
-PEAK_BOOST_STRENGTH = 1.0
 SCORE_CURVE_GAMMA = 1.35
-FINAL_SMOOTH_BLUR_RADIUS = 0.0
 _MERCATOR_MAX_RENDER_LATITUDE = MAP_PROJECTION.max_render_latitude
 
 if MAP_PROJECTION.name != "mercator" or _MERCATOR_MAX_RENDER_LATITUDE is None:
@@ -58,8 +51,6 @@ class HeatmapProjection:
     """Cached raster coordinates for one fixed climate grid."""
 
     score_indexes: NDArray[np.int32]
-    xs: NDArray[np.uint16]
-    ys: NDArray[np.uint16]
     work_indexes: NDArray[np.int32]
     # Pre-dilated land mask: MaxFilter(7) is grid-fixed, not score-dependent.
     land_mask: NDArray[np.bool_]
@@ -89,8 +80,6 @@ class HeatmapProjection:
 
         return cls(
             score_indexes=valid_indexes[in_bounds],
-            xs=final_xs,
-            ys=final_ys,
             work_indexes=work_indexes,
             land_mask=land_mask,
         )
@@ -124,47 +113,10 @@ def _build_color_ramp_lookup() -> np.ndarray:
 _COLOR_RAMP_LOOKUP = _build_color_ramp_lookup()
 
 
-def _expand_detail_source(base_gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
-    """Bridge row gaps in the projected grid before local-detail preservation.
-
-    The climate grid lands on discrete Mercator scanlines. Once local floors were
-    strengthened, those scanlines became visible at high latitudes. A tiny max
-    filter keeps nearby rows connected without reintroducing the old mushy field.
-    """
-    return np.asarray(Image.fromarray(base_gray, mode="L").filter(ImageFilter.MaxFilter(3)), dtype=np.uint8)
-
-
-def _preserve_local_maxima(base_gray: NDArray[np.uint8], blurred_gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
-    """Keep isolated strong cells visible after the soft blur pass.
-
-    The blur gives the surface a continuous look, but it can also flatten a real
-    local best match into its weaker surroundings. Mid-to-strong source cells keep
-    most of their local intensity so the pixel under a good point still reads like
-    a good point, while only the strongest cells get a full floor.
-    """
-    detail_source_float = _expand_detail_source(base_gray).astype(np.float32)
-    base_float = base_gray.astype(np.float32)
-    blurred_float = blurred_gray.astype(np.float32)
-    detail_mask = detail_source_float >= DETAIL_PRESERVE_THRESHOLD * 255.0
-    detail_floor = np.where(detail_mask, detail_source_float * DETAIL_PRESERVE_STRENGTH, 0.0)
-    peak_mask = base_float >= PEAK_BOOST_THRESHOLD * 255.0
-    peak_floor = np.where(peak_mask, base_float * PEAK_BOOST_STRENGTH, 0.0)
-    preserved = np.maximum(blurred_float, detail_floor)
-    preserved = np.maximum(preserved, peak_floor)
-    return np.clip(preserved, 0, 255).astype(np.uint8)
-
-
 def _stylize_heatmap_gray(gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
     """Compress the low end while keeping a continuous gradient surface."""
     curved = np.power(gray.astype(np.float32) / 255.0, SCORE_CURVE_GAMMA)
     return np.rint(curved * 255).astype(np.uint8)
-
-
-def _smooth_styled_heatmap_gray(gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
-    """Calm coastal chatter in the styled output without smearing the whole field."""
-    if FINAL_SMOOTH_BLUR_RADIUS <= 0.0:
-        return gray
-    return np.asarray(Image.fromarray(gray, mode="L").filter(ImageFilter.GaussianBlur(radius=FINAL_SMOOTH_BLUR_RADIUS)))
 
 
 def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np.ndarray) -> bytes:
@@ -208,14 +160,7 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
         ),
         dtype=np.uint8,
     )
-    source_point_floor = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
-    np.maximum.at(source_point_floor, (projection.ys, projection.xs), scores[projection.score_indexes])
-    blended_gray = np.maximum(
-        blended_gray,
-        np.rint(source_point_floor * 255.0 * SOURCE_POINT_FLOOR_STRENGTH).astype(np.uint8),
-    )
-    styled_gray = _stylize_heatmap_gray((blended_gray * projection.land_mask).astype(np.uint8))
-    styled_gray = (_smooth_styled_heatmap_gray(styled_gray) * projection.land_mask).astype(np.uint8)
+    styled_gray = (_stylize_heatmap_gray(blended_gray) * projection.land_mask).astype(np.uint8)
     rgba = _COLOR_RAMP_LOOKUP[styled_gray]
 
     buf = BytesIO()
