@@ -170,6 +170,8 @@ def _smooth_styled_heatmap_gray(gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
 def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np.ndarray) -> bytes:
     """Rasterize one score vector aligned with the projection's source climate-matrix rows."""
     work_scores = scores[projection.score_indexes]
+    work_ys = projection.work_indexes // WORK_WIDTH
+    work_xs = projection.work_indexes % WORK_WIDTH
 
     summed_grid = (
         np.bincount(
@@ -184,12 +186,15 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
         projection.work_indexes,
         minlength=WORK_WIDTH * WORK_HEIGHT,
     ).reshape((WORK_HEIGHT, WORK_WIDTH))
-    work_field = np.divide(
+    average_grid = np.divide(
         summed_grid,
         hit_count_grid,
         out=np.zeros_like(summed_grid),
         where=hit_count_grid > 0,
     )
+    peak_grid = np.zeros((WORK_HEIGHT, WORK_WIDTH), dtype=np.float32)
+    np.maximum.at(peak_grid, (work_ys, work_xs), work_scores)
+    work_field = np.maximum(average_grid, peak_grid * PEAK_GRID_WEIGHT)
 
     work_gray = (work_field * 255).astype(np.uint8)
     blurred_work_gray = Image.fromarray(work_gray, mode="L").filter(ImageFilter.GaussianBlur(radius=WORK_BLUR_RADIUS))

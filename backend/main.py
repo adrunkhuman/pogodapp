@@ -534,11 +534,12 @@ def create_app(  # noqa: C901, PLR0915
                     preferences,
                     cached_heatmap_field=cached_heatmap_field,
                 )
+            outcome = "ok" if heatmap_png else "empty"
             logger.info(
                 "heatmap request served",
                 extra={
                     "event": "heatmap_request_route",
-                    "outcome": "ok",
+                    "outcome": outcome,
                     "score_field_cache_hit": cached_heatmap_field is not None,
                     "queue_wait_ms": queue_wait_ms,
                     **_score_log_fields(preferences),

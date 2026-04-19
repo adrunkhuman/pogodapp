@@ -782,6 +782,36 @@ def test_heatmap_endpoint_logs_cache_hit_and_miss_route_details(monkeypatch: Mon
     assert custom_event["sunshine_preference"] == 60
 
 
+def test_heatmap_endpoint_logs_empty_outcome_for_no_content(monkeypatch: MonkeyPatch) -> None:
+    route_events: list[dict[str, object]] = []
+    original_info = backend_main.logger.info
+    original_builder = backend_main.build_heatmap_response
+
+    def capture_info(
+        msg: object,
+        *args: object,
+        extra: dict[str, object] | None = None,
+    ) -> None:
+        if msg == "heatmap request served" and extra is not None:
+            route_events.append(extra.copy())
+        original_info(msg, *args, extra=extra)
+
+    monkeypatch.setattr(backend_main.logger, "info", capture_info)
+    monkeypatch.setattr(backend_main, "build_heatmap_response", lambda *args, **kwargs: b"")
+
+    response = TestClient(create_app(climate_repository=StubClimateRepository())).get(
+        "/heatmap",
+        params=default_form_data(),
+    )
+
+    assert response.status_code == 204
+    assert len(route_events) == 1
+    assert route_events[0]["event"] == "heatmap_request_route"
+    assert route_events[0]["outcome"] == "empty"
+
+    monkeypatch.setattr(backend_main, "build_heatmap_response", original_builder)
+
+
 def test_score_endpoint_evicts_oldest_cached_preferences_after_cache_limit() -> None:
     call_count = 0
     original_builder = backend_main.build_score_response
