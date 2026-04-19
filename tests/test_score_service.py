@@ -167,7 +167,7 @@ def test_build_heatmap_response_falls_back_to_array_heatmap_path_when_projection
         make_preferences(),
     )
 
-    assert response.startswith(b"\x89PNG\r\n\x1a\n")
+    assert response.startswith(b"RIFF")
 
 
 def test_build_heatmap_response_logs_step_timings(caplog: LogCaptureFixture) -> None:
@@ -188,7 +188,7 @@ def test_build_heatmap_response_logs_step_timings(caplog: LogCaptureFixture) -> 
         backend_logger.handlers = original_handlers
         backend_logger.propagate = original_propagate
 
-    assert response.startswith(b"\x89PNG\r\n\x1a\n")
+    assert response.startswith(b"RIFF")
     assert caplog.records
     record = caplog.records[-1]
     assert record.message == "heatmap request finished"

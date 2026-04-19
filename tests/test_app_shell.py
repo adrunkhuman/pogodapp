@@ -872,7 +872,7 @@ def test_heatmap_endpoint_reuses_score_field_from_prior_score_request(monkeypatc
 
     assert score_response.status_code == 200
     assert heatmap_response.status_code == 200
-    assert heatmap_response.headers["content-type"] == "image/png"
+    assert heatmap_response.headers["content-type"] == "image/webp"
     assert score_calls == 1
 
 

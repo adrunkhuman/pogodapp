@@ -176,8 +176,8 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
     rgba = _COLOR_RAMP_LOOKUP[styled_gray]
 
     buf = BytesIO()
-    # Lower PNG compression trades a small size increase for materially less CPU per request.
-    Image.fromarray(rgba, mode="RGBA").save(buf, format="PNG", compress_level=1)
+    # WebP method=0 keeps the encode path as cheap as possible for this experiment.
+    Image.fromarray(rgba, mode="RGBA").save(buf, format="WEBP", quality=90, method=0)
     return buf.getvalue()
 
 
@@ -191,7 +191,7 @@ def render_heatmap_png_from_arrays(
 
 
 def render_heatmap_png(scores: list[CellScorePoint]) -> bytes:
-    """Rasterize scored cells in the configured map projection and return a PNG.
+    """Rasterize scored cells in the configured map projection and return an image.
 
     The server and frontend both read `MAP_PROJECTION`, so projection changes stay
     synchronized. Only Mercator is supported today because the rasterization math

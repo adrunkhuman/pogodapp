@@ -575,7 +575,7 @@ def test_heatmap_endpoint_uses_preloaded_projection_without_rebuilding() -> None
     )
 
     assert response.status_code == 200
-    assert response.headers["content-type"] == "image/png"
+    assert response.headers["content-type"] == "image/webp"
     assert repository.matrix_builds == 1
     assert repository.city_cache_builds == 1
     assert repository.heatmap_builds == 1

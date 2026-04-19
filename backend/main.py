@@ -561,7 +561,7 @@ def create_app(  # noqa: C901, PLR0915
             raise HTTPException(status_code=503, detail=str(error)) from error
         if not heatmap_png:
             return Response(status_code=204)
-        return Response(content=heatmap_png, media_type="image/png")
+        return Response(content=heatmap_png, media_type="image/webp")
 
     @app.get("/probe")
     @limiter.limit("120/minute")
