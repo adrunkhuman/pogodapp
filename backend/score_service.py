@@ -36,8 +36,8 @@ if TYPE_CHECKING:
 INITIAL_CITY_RESULTS = 30
 SIDEBAR_CONTINENT_RESERVE = 30
 CONTINENT_COUNT = 6
-# Two diversified passes per continent still leave enough slack for backfill without overpaying the ranking loop.
-RANKING_POOL_SIZE = SIDEBAR_CONTINENT_RESERVE * CONTINENT_COUNT * 2
+# One and a half diversified passes per continent still leaves enough slack for backfill while cutting cold ranking cost.
+RANKING_POOL_SIZE = SIDEBAR_CONTINENT_RESERVE * CONTINENT_COUNT * 3 // 2
 logger = logging.getLogger(__name__)
 
 
