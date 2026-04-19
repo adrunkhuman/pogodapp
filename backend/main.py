@@ -9,6 +9,7 @@ from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Annotated, NamedTuple, Protocol, cast
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -31,7 +32,7 @@ from backend.climate_repository import (
 from backend.config import DEFAULT_PREFERENCES, MAP_PROJECTION
 from backend.logging_config import configure_backend_logging
 from backend.runtime import resolve_climate_database_path
-from backend.score_service import ScoreResponse, build_score_response
+from backend.score_service import HeatmapField, ScoreResponse, build_heatmap_response, build_score_response
 from backend.scoring import (
     ClimateCell,
     PreferenceInputs,
@@ -54,6 +55,8 @@ logger = logging.getLogger(__name__)
 CLIENT_ERROR_STATUS_MIN = 400
 SERVER_ERROR_STATUS_MIN = 500
 SCORE_CACHE_SIZE = 16
+HEATMAP_FIELD_CACHE_SIZE = 2
+HEATMAP_FIELD_CACHE_TTL_SECONDS = 20.0
 
 
 class _ScoreResponseCache:
@@ -126,6 +129,40 @@ class _ScoreResponseCache:
 class _ScoreCacheResult(NamedTuple):
     response: ScoreResponse
     cache_hit: bool
+
+
+class _HeatmapFieldCache:
+    """Keep a tiny, short-lived score-field cache for `/heatmap` reuse."""
+
+    def __init__(self, max_entries: int, ttl_seconds: float) -> None:
+        self.max_entries = max_entries
+        self.ttl_seconds = ttl_seconds
+        self._entries: OrderedDict[tuple[int, int, int, int, int], tuple[float, HeatmapField]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple[int, int, int, int, int]) -> HeatmapField | None:
+        now = perf_counter()
+        with self._lock:
+            self._purge_expired(now)
+            cached = self._entries.get(key)
+            if cached is None:
+                return None
+            self._entries.move_to_end(key)
+            return cached[1]
+
+    def set(self, key: tuple[int, int, int, int, int], heatmap_field: HeatmapField) -> None:
+        now = perf_counter()
+        with self._lock:
+            self._purge_expired(now)
+            self._entries[key] = (now, heatmap_field)
+            self._entries.move_to_end(key)
+            if len(self._entries) > self.max_entries:
+                self._entries.popitem(last=False)
+
+    def _purge_expired(self, now: float) -> None:
+        expired_keys = [key for key, (stored_at, _field) in self._entries.items() if now - stored_at > self.ttl_seconds]
+        for key in expired_keys:
+            self._entries.pop(key, None)
 
 
 class _SupportsProbeRepository(Protocol):
@@ -245,17 +282,37 @@ def _score_log_fields(preferences: PreferenceInputs) -> dict[str, int]:
 
 def _score_response_from_cache_or_repository(
     score_cache: _ScoreResponseCache,
+    heatmap_field_cache: _HeatmapFieldCache,
     repository: ClimateRepository,
     preferences: PreferenceInputs,
 ) -> _ScoreCacheResult:
     cache_key = _score_cache_key(preferences)
-    return score_cache.get_with_status_or_set(cache_key, lambda: build_score_response(repository, preferences))
+    return score_cache.get_with_status_or_set(
+        cache_key,
+        lambda: build_score_response(
+            repository,
+            preferences,
+            store_heatmap_field=lambda heatmap_field: heatmap_field_cache.set(cache_key, heatmap_field),
+        ),
+    )
 
 
 def _coerce_score_cache_result(result: _ScoreCacheResult | ScoreResponse) -> _ScoreCacheResult:
     if isinstance(result, _ScoreCacheResult):
         return result
     return _ScoreCacheResult(response=result, cache_hit=False)
+
+
+def _heatmap_url(preferences: PreferenceInputs) -> str:
+    return "/heatmap?" + urlencode(
+        {
+            "preferred_day_temperature": preferences.preferred_day_temperature,
+            "summer_heat_limit": preferences.summer_heat_limit,
+            "winter_cold_limit": preferences.winter_cold_limit,
+            "dryness_preference": preferences.dryness_preference,
+            "sunshine_preference": preferences.sunshine_preference,
+        }
+    )
 
 
 def _build_probe_response_from_repository(
@@ -362,7 +419,7 @@ def _attach_http_request_logging(app: FastAPI) -> None:
         return response
 
 
-def create_app(
+def create_app(  # noqa: C901, PLR0915
     climate_repository: ClimateRepository | None = None,
 ) -> FastAPI:
     """Create the FastAPI application.
@@ -382,14 +439,24 @@ def create_app(
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
     repository = climate_repository or build_default_climate_repository(resolve_climate_database_path())
     score_cache = _ScoreResponseCache(SCORE_CACHE_SIZE)
+    heatmap_field_cache = _HeatmapFieldCache(HEATMAP_FIELD_CACHE_SIZE, HEATMAP_FIELD_CACHE_TTL_SECONDS)
     # Serialize /score work per worker so repeated slider changes do not pile up CPU-bound builds.
     score_request_semaphore = asyncio.Semaphore(1)
+    heatmap_request_semaphore = asyncio.Semaphore(1)
     preload_repository(repository)
 
     # Pre-warm default scores so the page-load HTMX POST hits cache instead of paying the cold path.
     try:
         default_prefs = PreferenceInputs(**{f.name: f.value for f in DEFAULT_PREFERENCES})
-        score_cache.set(_score_cache_key(default_prefs), build_score_response(repository, default_prefs))
+        default_cache_key = _score_cache_key(default_prefs)
+        score_cache.set(
+            default_cache_key,
+            build_score_response(
+                repository,
+                default_prefs,
+                store_heatmap_field=lambda heatmap_field: heatmap_field_cache.set(default_cache_key, heatmap_field),
+            ),
+        )
         _log_runtime_memory("after_default_score_cache", repository)
         logger.info("startup default score cached", extra={"event": "startup_default_score", "outcome": "ok"})
     except ClimateDataError:
@@ -411,13 +478,17 @@ def create_app(
 
     @app.post("/score")
     @limiter.limit("30/minute")
-    async def score(request: Request, preferences: Annotated[PreferenceInputs, Form()]) -> ScoreResponse:
+    async def score(request: Request, preferences: Annotated[PreferenceInputs, Form()]) -> dict[str, object]:
         try:
             queue_started = perf_counter()
             async with score_request_semaphore:
                 queue_wait_ms = round((perf_counter() - queue_started) * 1000, 2)
                 raw_cache_result = await run_in_threadpool(
-                    _score_response_from_cache_or_repository, score_cache, repository, preferences
+                    _score_response_from_cache_or_repository,
+                    score_cache,
+                    heatmap_field_cache,
+                    repository,
+                    preferences,
                 )
             cache_result = _coerce_score_cache_result(raw_cache_result)
             logger.info(
@@ -440,8 +511,44 @@ def create_app(
                 },
             )
             raise HTTPException(status_code=503, detail=str(error)) from error
-        else:
-            return cache_result.response
+        return {
+            "scores": cache_result.response["scores"],
+            "heatmap_url": _heatmap_url(preferences) if cache_result.response["scores"] else "",
+        }
+
+    @app.get("/heatmap")
+    @limiter.limit("30/minute")
+    async def heatmap(
+        request: Request,
+        preferences: Annotated[PreferenceInputs, Depends(probe_preferences_dependency)],
+    ) -> Response:
+        try:
+            cache_key = _score_cache_key(preferences)
+            cached_heatmap_field = heatmap_field_cache.get(cache_key)
+            async with heatmap_request_semaphore:
+                heatmap_png = await run_in_threadpool(
+                    build_heatmap_response,
+                    repository,
+                    preferences,
+                    cached_heatmap_field=cached_heatmap_field,
+                )
+        except ClimateDataError as error:
+            logger.exception(
+                "heatmap request failed",
+                extra={
+                    "event": "heatmap_request",
+                    "outcome": "error",
+                    "preferred_day_temperature": preferences.preferred_day_temperature,
+                    "summer_heat_limit": preferences.summer_heat_limit,
+                    "winter_cold_limit": preferences.winter_cold_limit,
+                    "dryness_preference": preferences.dryness_preference,
+                    "sunshine_preference": preferences.sunshine_preference,
+                },
+            )
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        if not heatmap_png:
+            return Response(status_code=204)
+        return Response(content=heatmap_png, media_type="image/png")
 
     @app.get("/probe")
     @limiter.limit("120/minute")

@@ -1,14 +1,14 @@
 "use strict";
 
-function applyScoreResponse(scores, heatmap) {
-  applyHeatmap(heatmap);
+function applyScoreResponse(scores, heatmapUrl) {
+  applyHeatmap(heatmapUrl || EMPTY_IMAGE);
   const markers = visibleScoresForList(scores);
   if (markers.length > 0) {
     applyMarkers(markers);
   } else {
     clearMarkers();
   }
-  setMapStatus(heatmap !== EMPTY_IMAGE ? `${scores.length} top matches shown.` : "No matches found.");
+  setMapStatus(heatmapUrl ? `${scores.length} top matches shown.` : "No matches found.");
 }
 
 function initializeMap() {
@@ -89,16 +89,16 @@ function initializeMap() {
 
     if (!pendingResponse) return;
 
-    const { scores, heatmap } = pendingResponse;
-    applyScoreResponse(scores ?? [], heatmap);
+    const { scores, heatmap_url } = pendingResponse;
+    applyScoreResponse(scores ?? [], heatmap_url);
     pendingResponse = null;
   });
 }
 
 // Public handoff used by `app.js` after a successful `/score` HTMX response.
-// Expects the raw backend payload and tolerates empty-result heatmaps.
+// Expects the raw backend payload and lets the map load the heatmap separately.
 window.renderScores = function renderScores(response) {
-  const { scores, heatmap } = response;
+  const { scores, heatmap_url } = response;
   continentVisibleCounts.clear();
   currentScores = scores ?? [];
 
@@ -107,9 +107,9 @@ window.renderScores = function renderScores(response) {
   if (!map) return;
 
   if (mapLoaded) {
-    applyScoreResponse(currentScores, heatmap || EMPTY_IMAGE);
+    applyScoreResponse(currentScores, heatmap_url);
   } else {
-    pendingResponse = { ...response, heatmap: heatmap || EMPTY_IMAGE };
+    pendingResponse = response;
   }
 };
 

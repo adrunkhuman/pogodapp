@@ -454,7 +454,7 @@ def test_create_app_preload_is_best_effort_for_data_errors() -> None:
     assert app.title == "Pogodapp"
 
 
-def test_create_app_preload_warms_caches_without_rebuilding_on_first_request() -> None:
+def test_create_app_preload_warms_caches_without_rebuilding_on_first_score_request() -> None:
     class CountingRepository:
         def __init__(self) -> None:
             self.matrix_builds = 0
@@ -512,6 +512,70 @@ def test_create_app_preload_warms_caches_without_rebuilding_on_first_request() -
     )
 
     assert response.status_code == 200
+    assert repository.matrix_builds == 1
+    assert repository.city_cache_builds == 1
+    assert repository.heatmap_builds == 1
+
+
+def test_heatmap_endpoint_uses_preloaded_projection_without_rebuilding() -> None:
+    class CountingRepository:
+        def __init__(self) -> None:
+            self.matrix_builds = 0
+            self.city_cache_builds = 0
+            self.heatmap_builds = 0
+            self._matrix: ClimateMatrix | None = None
+            self._cities: CityRankingCache | None = None
+            self._projection: HeatmapProjection | None = None
+
+        def list_cells(self) -> tuple[ClimateCell, ...]:
+            return ()
+
+        def list_cities(self) -> tuple[CityCandidate, ...]:
+            return ()
+
+        def get_climate_matrix(self) -> ClimateMatrix:
+            if self._matrix is None:
+                self.matrix_builds += 1
+                self._matrix = ClimateMatrix.from_cells(
+                    (
+                        ClimateCell(
+                            lat=1.0,
+                            lon=2.0,
+                            temperature_c=(22.0,) * 12,
+                            temperature_min_c=(22.0,) * 12,
+                            temperature_max_c=(22.0,) * 12,
+                            precipitation_mm=(0.0,) * 12,
+                            cloud_cover_pct=(15,) * 12,
+                        ),
+                    )
+                )
+            return self._matrix
+
+        def get_indexed_cities(self) -> CityRankingCache:
+            if self._cities is None:
+                self.city_cache_builds += 1
+                self._cities = CityRankingCache.from_cities((), np.array([], dtype=np.int32))
+            return self._cities
+
+        def get_heatmap_projection(self) -> HeatmapProjection:
+            if self._projection is None:
+                self.heatmap_builds += 1
+                climate_matrix = self.get_climate_matrix()
+                self._projection = HeatmapProjection.from_coordinates(
+                    climate_matrix.latitudes, climate_matrix.longitudes
+                )
+            return self._projection
+
+    repository = CountingRepository()
+    client = TestClient(create_app(climate_repository=cast("ClimateRepository", repository)))
+
+    response = client.get(
+        "/heatmap",
+        params=default_form_data(),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
     assert repository.matrix_builds == 1
     assert repository.city_cache_builds == 1
     assert repository.heatmap_builds == 1
