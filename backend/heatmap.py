@@ -24,8 +24,9 @@ WORK_WIDTH = (WIDTH + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
 WORK_HEIGHT = (HEIGHT + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
 WORK_BLUR_RADIUS = 2.4
 PEAK_BLEND = 0.80
+NORM_MIN_CELLS = 4  # work tiles with fewer source cells blend toward diluted to suppress single-cell outliers
 UPSCALED_BLEND_BLUR_RADIUS = 0.9
-GLOW_RADIUS = 18.0  # px — post-mask bloom so narrow hotspots radiate into surrounding ocean/gaps
+GLOW_RADIUS = 14.0  # px — post-mask bloom so narrow hotspots radiate into surrounding ocean/gaps
 SCORE_CURVE_GAMMA = 1.35
 _MERCATOR_MAX_RENDER_LATITUDE = MAP_PROJECTION.max_render_latitude
 
@@ -163,9 +164,10 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
         ),
         dtype=np.float32,
     )
-    work_smooth = np.divide(blurred_field, blurred_mask, out=np.zeros_like(blurred_field), where=blurred_mask > 0).clip(
-        0.0, 1.0
-    )
+    normalized = np.divide(blurred_field, blurred_mask, out=np.zeros_like(blurred_field), where=blurred_mask > 0)
+    plain = blurred_field / 255.0
+    confidence = np.clip(hit_count_grid.astype(np.float32) / NORM_MIN_CELLS, 0.0, 1.0)
+    work_smooth = (plain * (1.0 - confidence) + normalized * confidence).clip(0.0, 1.0)
     upscaled_blurred_gray = np.asarray(
         Image.fromarray((work_smooth * 255).astype(np.uint8), mode="L").resize(
             (WIDTH, HEIGHT), resample=Image.Resampling.BILINEAR
