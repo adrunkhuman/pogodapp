@@ -149,10 +149,27 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
     np.maximum.at(peak_grid, (work_ys, work_xs), work_scores)
     work_field = average_grid * (1.0 - PEAK_BLEND) + peak_grid * PEAK_BLEND
 
-    work_gray = (work_field * 255).astype(np.uint8)
-    blurred_work_gray = Image.fromarray(work_gray, mode="L").filter(ImageFilter.GaussianBlur(radius=WORK_BLUR_RADIUS))
+    # Normalized blur: blur numerator and mask separately, then divide.
+    # Prevents ocean zero-tiles from diluting isolated coastal hotspots.
+    blurred_field = np.asarray(
+        Image.fromarray((work_field * 255).astype(np.uint8), mode="L").filter(
+            ImageFilter.GaussianBlur(radius=WORK_BLUR_RADIUS)
+        ),
+        dtype=np.float32,
+    )
+    blurred_mask = np.asarray(
+        Image.fromarray(((work_field > 0) * 255).astype(np.uint8), mode="L").filter(
+            ImageFilter.GaussianBlur(radius=WORK_BLUR_RADIUS)
+        ),
+        dtype=np.float32,
+    )
+    work_smooth = np.divide(blurred_field, blurred_mask, out=np.zeros_like(blurred_field), where=blurred_mask > 0).clip(
+        0.0, 1.0
+    )
     upscaled_blurred_gray = np.asarray(
-        blurred_work_gray.resize((WIDTH, HEIGHT), resample=Image.Resampling.BILINEAR),
+        Image.fromarray((work_smooth * 255).astype(np.uint8), mode="L").resize(
+            (WIDTH, HEIGHT), resample=Image.Resampling.BILINEAR
+        ),
         dtype=np.uint8,
     )
     blended_gray = np.asarray(
