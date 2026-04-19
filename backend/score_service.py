@@ -36,8 +36,8 @@ if TYPE_CHECKING:
 INITIAL_CITY_RESULTS = 30
 SIDEBAR_CONTINENT_RESERVE = 30
 CONTINENT_COUNT = 6
-# One and a half diversified passes per continent still leaves enough slack for backfill while cutting cold ranking cost.
-RANKING_POOL_SIZE = SIDEBAR_CONTINENT_RESERVE * CONTINENT_COUNT * 3 // 2
+# One diversified pass per continent keeps the candidate pool bounded to the eventual sidebar footprint.
+RANKING_POOL_SIZE = SIDEBAR_CONTINENT_RESERVE * CONTINENT_COUNT
 logger = logging.getLogger(__name__)
 
 
