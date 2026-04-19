@@ -17,9 +17,9 @@ if TYPE_CHECKING:
 
     from .scoring import CellScorePoint
 
-WIDTH = 2560
-HEIGHT = 1280
-BLUR_RADIUS = 7  # px — preserves more local structure while still showing broad regions
+WIDTH = 1920
+HEIGHT = 960
+BLUR_RADIUS = 5.25  # px — scaled down with the raster size to preserve the same geographic softness
 DETAIL_PRESERVE_THRESHOLD = 0.35
 DETAIL_PRESERVE_STRENGTH = 0.9
 PEAK_BOOST_THRESHOLD = 0.72
