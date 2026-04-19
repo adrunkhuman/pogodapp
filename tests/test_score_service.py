@@ -63,6 +63,12 @@ def test_build_score_response_logs_step_timings(caplog: LogCaptureFixture) -> No
     assert cast("float", record.__dict__["normalize_ms"]) >= 0
     assert cast("float", record.__dict__["ranking_ms"]) >= 0
     assert cast("float", record.__dict__["heatmap_ms"]) >= 0
+    assert cast("float", record.__dict__["response_ms"]) >= 0
+    assert record.__dict__["preferred_day_temperature"] == preferences.preferred_day_temperature
+    assert record.__dict__["summer_heat_limit"] == preferences.summer_heat_limit
+    assert record.__dict__["winter_cold_limit"] == preferences.winter_cold_limit
+    assert record.__dict__["dryness_preference"] == preferences.dryness_preference
+    assert record.__dict__["sunshine_preference"] == preferences.sunshine_preference
 
 
 def test_build_score_response_returns_empty_payload_for_empty_matrix() -> None:

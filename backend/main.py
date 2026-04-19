@@ -8,7 +8,7 @@ from collections import OrderedDict
 from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Annotated, Protocol, cast
+from typing import TYPE_CHECKING, Annotated, NamedTuple, Protocol, cast
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -85,12 +85,19 @@ class _ScoreResponseCache:
         key: tuple[int, int, int, int, int],
         build: Callable[[], ScoreResponse],
     ) -> ScoreResponse:
+        return self.get_with_status_or_set(key, build).response
+
+    def get_with_status_or_set(
+        self,
+        key: tuple[int, int, int, int, int],
+        build: Callable[[], ScoreResponse],
+    ) -> _ScoreCacheResult:
         while True:
             with self._lock:
                 response = self._entries.get(key)
                 if response is not None:
                     self._entries.move_to_end(key)
-                    return response
+                    return _ScoreCacheResult(response=response, cache_hit=True)
 
                 inflight = self._inflight.get(key)
                 if inflight is None:
@@ -113,7 +120,12 @@ class _ScoreResponseCache:
             if len(self._entries) > self.max_entries:
                 self._entries.popitem(last=False)
             self._inflight.pop(key).set()
-            return response
+            return _ScoreCacheResult(response=response, cache_hit=False)
+
+
+class _ScoreCacheResult(NamedTuple):
+    response: ScoreResponse
+    cache_hit: bool
 
 
 class _SupportsProbeRepository(Protocol):
@@ -221,13 +233,29 @@ def _score_cache_key(preferences: PreferenceInputs) -> tuple[int, int, int, int,
     )
 
 
+def _score_log_fields(preferences: PreferenceInputs) -> dict[str, int]:
+    return {
+        "preferred_day_temperature": preferences.preferred_day_temperature,
+        "summer_heat_limit": preferences.summer_heat_limit,
+        "winter_cold_limit": preferences.winter_cold_limit,
+        "dryness_preference": preferences.dryness_preference,
+        "sunshine_preference": preferences.sunshine_preference,
+    }
+
+
 def _score_response_from_cache_or_repository(
     score_cache: _ScoreResponseCache,
     repository: ClimateRepository,
     preferences: PreferenceInputs,
-) -> ScoreResponse:
+) -> _ScoreCacheResult:
     cache_key = _score_cache_key(preferences)
-    return score_cache.get_or_set(cache_key, lambda: build_score_response(repository, preferences))
+    return score_cache.get_with_status_or_set(cache_key, lambda: build_score_response(repository, preferences))
+
+
+def _coerce_score_cache_result(result: _ScoreCacheResult | ScoreResponse) -> _ScoreCacheResult:
+    if isinstance(result, _ScoreCacheResult):
+        return result
+    return _ScoreCacheResult(response=result, cache_hit=False)
 
 
 def _build_probe_response_from_repository(
@@ -385,24 +413,35 @@ def create_app(
     @limiter.limit("30/minute")
     async def score(request: Request, preferences: Annotated[PreferenceInputs, Form()]) -> ScoreResponse:
         try:
+            queue_started = perf_counter()
             async with score_request_semaphore:
-                return await run_in_threadpool(
+                queue_wait_ms = round((perf_counter() - queue_started) * 1000, 2)
+                raw_cache_result = await run_in_threadpool(
                     _score_response_from_cache_or_repository, score_cache, repository, preferences
                 )
+            cache_result = _coerce_score_cache_result(raw_cache_result)
+            logger.info(
+                "score request served",
+                extra={
+                    "event": "score_request_route",
+                    "outcome": "ok",
+                    "cache_hit": cache_result.cache_hit,
+                    "queue_wait_ms": queue_wait_ms,
+                    **_score_log_fields(preferences),
+                },
+            )
         except ClimateDataError as error:
             logger.exception(
                 "score request failed",
                 extra={
                     "event": "score_request",
                     "outcome": "error",
-                    "preferred_day_temperature": preferences.preferred_day_temperature,
-                    "summer_heat_limit": preferences.summer_heat_limit,
-                    "winter_cold_limit": preferences.winter_cold_limit,
-                    "dryness_preference": preferences.dryness_preference,
-                    "sunshine_preference": preferences.sunshine_preference,
+                    **_score_log_fields(preferences),
                 },
             )
             raise HTTPException(status_code=503, detail=str(error)) from error
+        else:
+            return cache_result.response
 
     @app.get("/probe")
     @limiter.limit("120/minute")

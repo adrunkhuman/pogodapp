@@ -685,6 +685,50 @@ def test_score_endpoint_uses_prewarmed_default_preferences_cache() -> None:
     assert call_count == 1  # pre-warm only; the first default request should hit cache
 
 
+def test_score_endpoint_logs_cache_hit_and_miss_route_details(monkeypatch: MonkeyPatch) -> None:
+    route_events: list[dict[str, object]] = []
+    original_info = backend_main.logger.info
+
+    def capture_info(
+        msg: object,
+        *args: object,
+        extra: dict[str, object] | None = None,
+    ) -> None:
+        if msg == "score request served" and extra is not None:
+            route_events.append(extra.copy())
+        original_info(msg, *args, extra=extra)
+
+    monkeypatch.setattr(backend_main.logger, "info", capture_info)
+
+    cached_client = TestClient(create_app(climate_repository=StubClimateRepository()))
+    default_response = cached_client.post("/score", data=rendered_default_form_data())
+    custom_response = cached_client.post("/score", data=default_form_data())
+
+    assert default_response.status_code == 200
+    assert custom_response.status_code == 200
+
+    assert len(route_events) == 2
+    default_event, custom_event = route_events
+
+    assert default_event["event"] == "score_request_route"
+    assert default_event["cache_hit"] is True
+    assert cast("float", default_event["queue_wait_ms"]) >= 0
+    assert default_event["preferred_day_temperature"] == 18
+    assert default_event["summer_heat_limit"] == 30
+    assert default_event["winter_cold_limit"] == 0
+    assert default_event["dryness_preference"] == 30
+    assert default_event["sunshine_preference"] == 50
+
+    assert custom_event["event"] == "score_request_route"
+    assert custom_event["cache_hit"] is False
+    assert cast("float", custom_event["queue_wait_ms"]) >= 0
+    assert custom_event["preferred_day_temperature"] == 22
+    assert custom_event["summer_heat_limit"] == 30
+    assert custom_event["winter_cold_limit"] == 5
+    assert custom_event["dryness_preference"] == 60
+    assert custom_event["sunshine_preference"] == 60
+
+
 def test_score_endpoint_evicts_oldest_cached_preferences_after_cache_limit() -> None:
     call_count = 0
     original_builder = backend_main.build_score_response
