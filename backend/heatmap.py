@@ -20,6 +20,11 @@ if TYPE_CHECKING:
 WIDTH = 1280
 HEIGHT = 640
 BLUR_RADIUS = 3.5  # px — scaled down with the raster size to preserve the same geographic softness
+WORK_GRID_SCALE = 4
+WORK_WIDTH = WIDTH // WORK_GRID_SCALE
+WORK_HEIGHT = HEIGHT // WORK_GRID_SCALE
+WORK_BLUR_RADIUS = 2.0
+PEAK_GRID_WEIGHT = 1.0
 DETAIL_PRESERVE_THRESHOLD = 0.35
 DETAIL_PRESERVE_STRENGTH = 0.9
 PEAK_BOOST_THRESHOLD = 0.72
@@ -157,18 +162,40 @@ def _smooth_styled_heatmap_gray(gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
 
 def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np.ndarray) -> bytes:
     """Rasterize one score vector aligned with the projection's source climate-matrix rows."""
-    grid = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
-    np.maximum.at(grid, (projection.ys, projection.xs), scores[projection.score_indexes])
+    work_xs = (projection.xs // WORK_GRID_SCALE).astype(np.intp, copy=False)
+    work_ys = (projection.ys // WORK_GRID_SCALE).astype(np.intp, copy=False)
+    work_scores = scores[projection.score_indexes]
 
-    base_gray = (grid * 255).astype(np.uint8)
-    pil_gray = Image.fromarray(base_gray, mode="L")
-    pil_gray = pil_gray.filter(ImageFilter.GaussianBlur(radius=BLUR_RADIUS))
-    blurred_gray = np.asarray(pil_gray, dtype=np.uint8) * projection.land_mask
-    styled_gray = _stylize_heatmap_gray(_preserve_local_maxima(base_gray, blurred_gray))
-    peak_floor = np.where(base_gray >= PEAK_BOOST_THRESHOLD * 255.0, styled_gray, 0)
-    styled_gray = (np.maximum(_smooth_styled_heatmap_gray(styled_gray), peak_floor) * projection.land_mask).astype(
-        np.uint8
+    summed_grid = np.zeros((WORK_HEIGHT, WORK_WIDTH), dtype=np.float32)
+    hit_count_grid = np.zeros((WORK_HEIGHT, WORK_WIDTH), dtype=np.uint16)
+    peak_grid = np.zeros((WORK_HEIGHT, WORK_WIDTH), dtype=np.float32)
+    np.add.at(summed_grid, (work_ys, work_xs), work_scores)
+    np.add.at(hit_count_grid, (work_ys, work_xs), 1)
+    np.maximum.at(peak_grid, (work_ys, work_xs), work_scores)
+
+    average_grid = np.divide(
+        summed_grid,
+        hit_count_grid,
+        out=np.zeros_like(summed_grid),
+        where=hit_count_grid > 0,
     )
+    work_field = np.maximum(average_grid, peak_grid * PEAK_GRID_WEIGHT)
+
+    work_gray = (work_field * 255).astype(np.uint8)
+    blurred_work_gray = Image.fromarray(work_gray, mode="L").filter(ImageFilter.GaussianBlur(radius=WORK_BLUR_RADIUS))
+    upscaled_blurred_gray = np.asarray(
+        blurred_work_gray.resize((WIDTH, HEIGHT), resample=Image.Resampling.BILINEAR),
+        dtype=np.uint8,
+    )
+    upscaled_peak_gray = np.asarray(
+        Image.fromarray((peak_grid * 255).astype(np.uint8), mode="L").resize(
+            (WIDTH, HEIGHT), resample=Image.Resampling.NEAREST
+        ),
+        dtype=np.uint8,
+    )
+    blended_gray = np.maximum(upscaled_blurred_gray, (upscaled_peak_gray * PEAK_GRID_WEIGHT).astype(np.uint8))
+    styled_gray = _stylize_heatmap_gray((blended_gray * projection.land_mask).astype(np.uint8))
+    styled_gray = (_smooth_styled_heatmap_gray(styled_gray) * projection.land_mask).astype(np.uint8)
     rgba = _COLOR_RAMP_LOOKUP[styled_gray]
 
     buf = BytesIO()
