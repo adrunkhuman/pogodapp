@@ -36,8 +36,8 @@ if TYPE_CHECKING:
 INITIAL_CITY_RESULTS = 30
 SIDEBAR_CONTINENT_RESERVE = 30
 CONTINENT_COUNT = 6
-# Keep a larger diversified pool so continent backfill doesn't fall back to clustered raw-score picks.
-RANKING_POOL_SIZE = SIDEBAR_CONTINENT_RESERVE * CONTINENT_COUNT * 3
+# Two diversified passes per continent still leave enough slack for backfill without overpaying the ranking loop.
+RANKING_POOL_SIZE = SIDEBAR_CONTINENT_RESERVE * CONTINENT_COUNT * 2
 logger = logging.getLogger(__name__)
 
 
