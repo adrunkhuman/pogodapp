@@ -559,23 +559,27 @@ def create_app(  # noqa: C901, PLR0915
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-    async def _serve_score_request(preferences: PreferenceInputs) -> _ScoreCacheResult:
+    async def _serve_score_request(preferences: PreferenceInputs, *, use_cache: bool = True) -> _ScoreCacheResult:
         queue_started = perf_counter()
         score_request_tracker.mark_waiting()
         async with score_request_semaphore:
             score_queue_depth, score_inflight = score_request_tracker.mark_started()
             queue_wait_ms = round((perf_counter() - queue_started) * 1000, 2)
             try:
-                raw_cache_result = await run_in_threadpool(
-                    _score_response_from_cache_or_repository,
-                    score_cache,
-                    heatmap_field_cache,
-                    repository,
-                    preferences,
-                )
+                if use_cache:
+                    raw_cache_result = await run_in_threadpool(
+                        _score_response_from_cache_or_repository,
+                        score_cache,
+                        heatmap_field_cache,
+                        repository,
+                        preferences,
+                    )
+                    cache_result = _coerce_score_cache_result(raw_cache_result)
+                else:
+                    response = await run_in_threadpool(build_score_response, repository, preferences)
+                    cache_result = _ScoreCacheResult(response=response, cache_hit=False, cache_status="bypass")
             finally:
                 score_request_tracker.mark_finished()
-        cache_result = _coerce_score_cache_result(raw_cache_result)
         logger.info(
             "score request served",
             extra={
@@ -591,9 +595,9 @@ def create_app(  # noqa: C901, PLR0915
         )
         return cache_result
 
-    async def _serve_heatmap_request(preferences: PreferenceInputs) -> bytes:
+    async def _serve_heatmap_request(preferences: PreferenceInputs, *, use_cache: bool = True) -> bytes:
         cache_key = _score_cache_key(preferences)
-        cached_heatmap_field = heatmap_field_cache.get(cache_key)
+        cached_heatmap_field = heatmap_field_cache.get(cache_key) if use_cache else None
         queue_started = perf_counter()
         async with heatmap_request_semaphore:
             queue_wait_ms = round((perf_counter() - queue_started) * 1000, 2)
@@ -680,42 +684,27 @@ def create_app(  # noqa: C901, PLR0915
         request: Request,
         suite: Annotated[str, Query(pattern="^(smoke|profile)$")] = "profile",
         include_heatmap: bool = True,
+        use_cache: bool = False,
     ) -> dict[str, object]:
         preferences_batch = _TEST_REQUEST_SUITES[suite]
         suite_started = perf_counter()
         results: list[dict[str, object]] = []
 
-        if preferences_batch:
-            first_preferences = preferences_batch[0]
-            duplicate_results = await asyncio.gather(
-                _serve_score_request(first_preferences),
-                _serve_score_request(first_preferences),
-            )
+        for preferences in preferences_batch:
+            cache_result = await _serve_score_request(preferences, use_cache=use_cache)
             if include_heatmap:
-                await _serve_heatmap_request(first_preferences)
-            results.append(
-                {
-                    "preferences": _score_log_fields(first_preferences),
-                    "score_cache_statuses": [result.cache_status for result in duplicate_results],
-                    "duplicate_run": True,
-                }
-            )
-
-        for preferences in preferences_batch[1:]:
-            cache_result = await _serve_score_request(preferences)
-            if include_heatmap:
-                await _serve_heatmap_request(preferences)
+                await _serve_heatmap_request(preferences, use_cache=use_cache)
             results.append(
                 {
                     "preferences": _score_log_fields(preferences),
                     "score_cache_statuses": [cache_result.cache_status],
-                    "duplicate_run": False,
                 }
             )
 
         return {
             "suite": suite,
             "include_heatmap": include_heatmap,
+            "use_cache": use_cache,
             "case_count": len(results),
             "elapsed_ms": round((perf_counter() - suite_started) * 1000, 2),
             "results": results,

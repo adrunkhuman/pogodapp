@@ -1092,10 +1092,10 @@ def test_test_endpoint_runs_smoke_suite_without_heatmap() -> None:
 
     assert payload["suite"] == "smoke"
     assert payload["include_heatmap"] is False
+    assert payload["use_cache"] is False
     assert payload["case_count"] == 1
     assert payload["elapsed_ms"] >= 0
-    assert payload["results"][0]["duplicate_run"] is True
-    assert len(payload["results"][0]["score_cache_statuses"]) == 2
+    assert payload["results"][0]["score_cache_statuses"] == ["bypass"]
 
 
 def test_probe_endpoint_rejects_typical_day_above_summer_limit() -> None:
