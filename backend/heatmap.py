@@ -23,7 +23,7 @@ WORK_GRID_SCALE = 3
 WORK_WIDTH = (WIDTH + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
 WORK_HEIGHT = (HEIGHT + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
 WORK_BLUR_RADIUS = 2.4
-PEAK_GRID_WEIGHT = 0.55
+PEAK_BLEND = 0.70
 UPSCALED_BLEND_BLUR_RADIUS = 0.9
 SCORE_CURVE_GAMMA = 1.35
 _MERCATOR_MAX_RENDER_LATITUDE = MAP_PROJECTION.max_render_latitude
@@ -146,7 +146,7 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
     )
     peak_grid = np.zeros((WORK_HEIGHT, WORK_WIDTH), dtype=np.float32)
     np.maximum.at(peak_grid, (work_ys, work_xs), work_scores)
-    work_field = np.maximum(average_grid, peak_grid * PEAK_GRID_WEIGHT)
+    work_field = average_grid * (1.0 - PEAK_BLEND) + peak_grid * PEAK_BLEND
 
     work_gray = (work_field * 255).astype(np.uint8)
     blurred_work_gray = Image.fromarray(work_gray, mode="L").filter(ImageFilter.GaussianBlur(radius=WORK_BLUR_RADIUS))
