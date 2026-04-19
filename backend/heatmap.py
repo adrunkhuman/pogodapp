@@ -25,7 +25,7 @@ WORK_HEIGHT = (HEIGHT + WORK_GRID_SCALE - 1) // WORK_GRID_SCALE
 WORK_BLUR_RADIUS = 2.4
 PEAK_BLEND = 0.80
 UPSCALED_BLEND_BLUR_RADIUS = 0.9
-GLOW_RADIUS = 5.0  # px — post-mask bloom so narrow hotspots radiate into surrounding ocean/gaps
+GLOW_RADIUS = 18.0  # px — post-mask bloom so narrow hotspots radiate into surrounding ocean/gaps
 SCORE_CURVE_GAMMA = 1.35
 _MERCATOR_MAX_RENDER_LATITUDE = MAP_PROJECTION.max_render_latitude
 
