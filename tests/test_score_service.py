@@ -59,8 +59,21 @@ def test_build_score_response_logs_step_timings(caplog: LogCaptureFixture) -> No
     assert cast("float", record.__dict__["cells_ms"]) >= 0
     assert cast("float", record.__dict__["cities_ms"]) >= 0
     assert cast("float", record.__dict__["scoring_ms"]) >= 0
+    assert cast("float", record.__dict__["scoring_setup_ms"]) >= 0
+    assert cast("float", record.__dict__["scoring_temperature_ms"]) >= 0
+    assert cast("float", record.__dict__["scoring_rain_ms"]) >= 0
+    assert cast("float", record.__dict__["scoring_sun_ms"]) >= 0
+    assert cast("float", record.__dict__["scoring_combine_ms"]) >= 0
     assert cast("float", record.__dict__["normalize_ms"]) >= 0
     assert cast("float", record.__dict__["ranking_ms"]) >= 0
+    assert cast("float", record.__dict__["ranking_filter_ms"]) >= 0
+    assert cast("float", record.__dict__["ranking_candidates_ms"]) >= 0
+    assert cast("float", record.__dict__["ranking_candidates_setup_ms"]) >= 0
+    assert cast("float", record.__dict__["ranking_candidates_winner_select_ms"]) >= 0
+    assert cast("float", record.__dict__["ranking_candidates_distance_ms"]) >= 0
+    assert cast("float", record.__dict__["ranking_candidates_penalty_ms"]) >= 0
+    assert cast("float", record.__dict__["ranking_sidebar_ms"]) >= 0
+    assert cast("float", record.__dict__["ranking_rescore_ms"]) >= 0
     assert record.__dict__["heatmap_ms"] == 0.0
     assert cast("float", record.__dict__["response_ms"]) >= 0
     assert record.__dict__["preferred_day_temperature"] == preferences.preferred_day_temperature
@@ -126,7 +139,10 @@ def test_build_score_response_returns_empty_payload_for_all_zero_matrix_scores(m
         def get_indexed_cities(self) -> CityRankingCache:
             return CityRankingCache.from_cities((), np.array([], dtype=np.int32))
 
-    monkeypatch.setattr("backend.score_service.score_climate_matrix", lambda *_args: np.array([0.0], dtype=np.float32))
+    monkeypatch.setattr(
+        "backend.score_service.score_climate_matrix",
+        lambda *_args, **_kwargs: np.array([0.0], dtype=np.float32),
+    )
 
     response = build_score_response(
         cast("ClimateRepository", SingleCellRepository()),

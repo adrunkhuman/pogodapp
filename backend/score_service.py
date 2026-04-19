@@ -7,11 +7,19 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 import numpy as np
 
-from backend.cities import CityCandidate, CityRankingCache, CityScorePoint, rank_city_scores, rank_indexed_city_scores
+from backend.cities import (
+    CityCandidate,
+    CityRankingCache,
+    CityScorePoint,
+    IndexedRankingTimings,
+    rank_city_scores,
+    rank_indexed_city_scores,
+)
 from backend.config import RANKING_MIN_POPULATION
 from backend.heatmap import render_heatmap_png, render_heatmap_png_from_arrays, render_heatmap_png_from_projection
 from backend.scoring import (
     CellScorePoint,
+    MatrixScoreTimings,
     PreferenceInputs,
     normalize_score_array,
     score_climate_cells,
@@ -28,8 +36,8 @@ if TYPE_CHECKING:
 INITIAL_CITY_RESULTS = 30
 SIDEBAR_CONTINENT_RESERVE = 30
 CONTINENT_COUNT = 6
-# Keep a larger diversified pool so continent backfill doesn't fall back to clustered raw-score picks.
-RANKING_POOL_SIZE = SIDEBAR_CONTINENT_RESERVE * CONTINENT_COUNT * 3
+# One diversified pass per continent keeps the candidate pool bounded to the eventual sidebar footprint.
+RANKING_POOL_SIZE = SIDEBAR_CONTINENT_RESERVE * CONTINENT_COUNT
 logger = logging.getLogger(__name__)
 
 
@@ -42,6 +50,19 @@ class ScoreTimings:
     scoring_ms: float = 0.0
     normalize_ms: float = 0.0
     ranking_ms: float = 0.0
+    ranking_filter_ms: float = 0.0
+    ranking_candidates_ms: float = 0.0
+    ranking_candidates_setup_ms: float = 0.0
+    ranking_candidates_winner_select_ms: float = 0.0
+    ranking_candidates_distance_ms: float = 0.0
+    ranking_candidates_penalty_ms: float = 0.0
+    ranking_sidebar_ms: float = 0.0
+    ranking_rescore_ms: float = 0.0
+    scoring_setup_ms: float = 0.0
+    scoring_temperature_ms: float = 0.0
+    scoring_rain_ms: float = 0.0
+    scoring_sun_ms: float = 0.0
+    scoring_combine_ms: float = 0.0
     heatmap_ms: float = 0.0
     response_ms: float = 0.0
     total_ms: float = 0.0
@@ -334,8 +355,21 @@ def _log_score_timings(  # noqa: PLR0913
             "cells_ms": timings.cells_ms,
             "cities_ms": timings.cities_ms,
             "scoring_ms": timings.scoring_ms,
+            "scoring_setup_ms": timings.scoring_setup_ms,
+            "scoring_temperature_ms": timings.scoring_temperature_ms,
+            "scoring_rain_ms": timings.scoring_rain_ms,
+            "scoring_sun_ms": timings.scoring_sun_ms,
+            "scoring_combine_ms": timings.scoring_combine_ms,
             "normalize_ms": timings.normalize_ms,
             "ranking_ms": timings.ranking_ms,
+            "ranking_filter_ms": timings.ranking_filter_ms,
+            "ranking_candidates_ms": timings.ranking_candidates_ms,
+            "ranking_candidates_setup_ms": timings.ranking_candidates_setup_ms,
+            "ranking_candidates_winner_select_ms": timings.ranking_candidates_winner_select_ms,
+            "ranking_candidates_distance_ms": timings.ranking_candidates_distance_ms,
+            "ranking_candidates_penalty_ms": timings.ranking_candidates_penalty_ms,
+            "ranking_sidebar_ms": timings.ranking_sidebar_ms,
+            "ranking_rescore_ms": timings.ranking_rescore_ms,
             "heatmap_ms": timings.heatmap_ms,
             "response_ms": timings.response_ms,
             "climate_cells": climate_cell_count,
@@ -401,8 +435,14 @@ def _build_score_response_from_matrix(
     context = ScoreContext(climate_cell_count=len(climate_matrix.latitudes), city_count=len(indexed_cities.cities))
 
     scoring_started = perf_counter()
-    raw_scores = score_climate_matrix(climate_matrix, preferences)
+    scoring_breakdown = MatrixScoreTimings()
+    raw_scores = score_climate_matrix(climate_matrix, preferences, timings=scoring_breakdown)
     timings.scoring_ms = _elapsed_ms(scoring_started)
+    timings.scoring_setup_ms = scoring_breakdown.setup_ms
+    timings.scoring_temperature_ms = scoring_breakdown.temperature_ms
+    timings.scoring_rain_ms = scoring_breakdown.rain_ms
+    timings.scoring_sun_ms = scoring_breakdown.sun_ms
+    timings.scoring_combine_ms = scoring_breakdown.combine_ms
 
     if raw_scores.size == 0:
         return _empty_score_response(
@@ -436,12 +476,30 @@ def _build_score_response_from_matrix(
         )
 
     ranking_started = perf_counter()
+    ranking_filter_started = perf_counter()
     ranking_catalog = _filter_ranking_catalog(indexed_cities)
-    # Build a large diversity-suppressed pool so the continent fill draws from
-    # already-spread candidates rather than raw score clusters.
-    diverse_pool = rank_indexed_city_scores(ranking_catalog, normalized_scores, limit=RANKING_POOL_SIZE)
+    timings.ranking_filter_ms = _elapsed_ms(ranking_filter_started)
+    # Build a diversity-suppressed pool so continent fill draws from already-spread
+    # candidates rather than clustered raw-score picks.
+    ranking_candidates_started = perf_counter()
+    ranking_candidates_breakdown = IndexedRankingTimings()
+    diverse_pool = rank_indexed_city_scores(
+        ranking_catalog,
+        normalized_scores,
+        limit=RANKING_POOL_SIZE,
+        timings=ranking_candidates_breakdown,
+    )
+    timings.ranking_candidates_ms = _elapsed_ms(ranking_candidates_started)
+    timings.ranking_candidates_setup_ms = ranking_candidates_breakdown.setup_ms
+    timings.ranking_candidates_winner_select_ms = ranking_candidates_breakdown.winner_select_ms
+    timings.ranking_candidates_distance_ms = ranking_candidates_breakdown.distance_ms
+    timings.ranking_candidates_penalty_ms = ranking_candidates_breakdown.penalty_ms
+    ranking_sidebar_started = perf_counter()
     top_cities = _build_ranked_sidebar_scores(diverse_pool)
+    timings.ranking_sidebar_ms = _elapsed_ms(ranking_sidebar_started)
+    ranking_rescore_started = perf_counter()
     top_cities = _rescore_city_points_from_cache(ranking_catalog, top_cities, raw_scores)
+    timings.ranking_rescore_ms = _elapsed_ms(ranking_rescore_started)
     timings.ranking_ms = _elapsed_ms(ranking_started)
 
     return _finalize_score_response(
@@ -507,10 +565,18 @@ def _build_score_response_from_cells(
         store_heatmap_field(HeatmapField(normalized_scores=normalized_scores))
 
     ranking_started = perf_counter()
+    ranking_filter_started = perf_counter()
     ranking_catalog = _filter_city_candidates(cities)
+    timings.ranking_filter_ms = _elapsed_ms(ranking_filter_started)
+    ranking_candidates_started = perf_counter()
     diverse_pool = rank_city_scores(ranking_catalog, normalized_scores, limit=RANKING_POOL_SIZE)
+    timings.ranking_candidates_ms = _elapsed_ms(ranking_candidates_started)
+    ranking_sidebar_started = perf_counter()
     top_cities = _build_ranked_sidebar_scores(diverse_pool)
+    timings.ranking_sidebar_ms = _elapsed_ms(ranking_sidebar_started)
+    ranking_rescore_started = perf_counter()
     top_cities = _rescore_city_points_from_cells(ranking_catalog, top_cities, raw_scores)
+    timings.ranking_rescore_ms = _elapsed_ms(ranking_rescore_started)
     timings.ranking_ms = _elapsed_ms(ranking_started)
 
     return _finalize_score_response(

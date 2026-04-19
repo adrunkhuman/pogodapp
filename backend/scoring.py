@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from time import perf_counter
 from typing import TYPE_CHECKING, TypedDict, cast
 
 import numpy as np
@@ -31,6 +32,19 @@ PRECIPITATION_PROFILE_PEAK_WEIGHT = 0.3
 SUN_PROFILE_AVERAGE_WEIGHT = 0.7
 SUN_PROFILE_GLOOM_WEIGHT = 0.3
 MULTIPLICATIVE_SCORE_FLOOR = 0.02
+TEMPERATURE_COMFORT_BAND_C32 = np.float32(TEMPERATURE_COMFORT_BAND_C)
+TEMPERATURE_IDEAL_SLOPE_C32 = np.float32(TEMPERATURE_IDEAL_SLOPE_C)
+TEMPERATURE_LIMIT_SLOPE_C32 = np.float32(TEMPERATURE_LIMIT_SLOPE_C)
+TEMPERATURE_IDEAL_WEIGHT32 = np.float32(TEMPERATURE_IDEAL_WEIGHT)
+TEMPERATURE_HEAT_WEIGHT32 = np.float32(TEMPERATURE_HEAT_WEIGHT)
+TEMPERATURE_COLD_WEIGHT32 = np.float32(TEMPERATURE_COLD_WEIGHT)
+SATURATING_MONTHLY_RAIN_MM32 = np.float32(SATURATING_MONTHLY_RAIN_MM)
+SATURATING_WETTEST_MONTH_RAIN_MM32 = np.float32(SATURATING_WETTEST_MONTH_RAIN_MM)
+PRECIPITATION_PROFILE_MEDIAN_WEIGHT32 = np.float32(PRECIPITATION_PROFILE_MEDIAN_WEIGHT)
+PRECIPITATION_PROFILE_PEAK_WEIGHT32 = np.float32(PRECIPITATION_PROFILE_PEAK_WEIGHT)
+SUN_PROFILE_AVERAGE_WEIGHT32 = np.float32(SUN_PROFILE_AVERAGE_WEIGHT)
+SUN_PROFILE_GLOOM_WEIGHT32 = np.float32(SUN_PROFILE_GLOOM_WEIGHT)
+MULTIPLICATIVE_SCORE_FLOOR32 = np.float32(MULTIPLICATIVE_SCORE_FLOOR)
 
 
 class PreferenceInputs(BaseModel):
@@ -278,6 +292,96 @@ class CellScorePoint(TypedDict):
     score: float
 
 
+@dataclass(slots=True)
+class MatrixScoreTimings:
+    """Optional cold-path timings for vectorized matrix scoring."""
+
+    setup_ms: float = 0.0
+    temperature_ms: float = 0.0
+    rain_ms: float = 0.0
+    sun_ms: float = 0.0
+    combine_ms: float = 0.0
+
+
+def _combine_score_blocks(
+    temperature_scores: NDArray[np.float32],
+    rain_scores: NDArray[np.float32],
+    sun_scores: NDArray[np.float32],
+    weights: tuple[float, float, float],
+) -> NDArray[np.float32]:
+    """Combine precomputed score blocks while reusing temporary buffers."""
+    temperature_weight, rain_weight, sun_weight = weights
+    preference_scores = np.empty_like(rain_scores)
+    np.power(rain_scores, rain_weight, out=preference_scores)
+    scores = np.empty_like(sun_scores)
+    np.power(sun_scores, sun_weight, out=scores)
+    np.multiply(preference_scores, scores, out=preference_scores)
+
+    np.power(temperature_scores, temperature_weight, out=scores)
+    np.power(preference_scores, np.float32(1.0) - temperature_weight, out=preference_scores)
+    np.multiply(scores, preference_scores, out=scores)
+    np.clip(scores, 0.0, 1.0, out=scores)
+    return scores
+
+
+def _temperature_score_block(
+    climate_matrix: ClimateMatrix,
+    preferred_day_temperature: np.float32,
+    summer_heat_limit: np.float32,
+    winter_cold_limit: np.float32,
+) -> NDArray[np.float32]:
+    """Score the temperature constraints while reusing temporary buffers."""
+    ideal_scores = np.empty_like(climate_matrix.typical_highs_c)
+    np.subtract(climate_matrix.typical_highs_c, preferred_day_temperature, out=ideal_scores)
+    np.absolute(ideal_scores, out=ideal_scores)
+    np.subtract(ideal_scores, TEMPERATURE_COMFORT_BAND_C32, out=ideal_scores)
+    np.clip(ideal_scores, 0.0, None, out=ideal_scores)
+    np.divide(ideal_scores, TEMPERATURE_IDEAL_SLOPE_C32, out=ideal_scores)
+    np.subtract(1.0, ideal_scores, out=ideal_scores)
+    np.clip(ideal_scores, 0.0, 1.0, out=ideal_scores)
+
+    heat_scores = np.empty_like(climate_matrix.hottest_month_highs_c)
+    np.subtract(climate_matrix.hottest_month_highs_c, summer_heat_limit, out=heat_scores)
+    np.clip(heat_scores, 0.0, None, out=heat_scores)
+    np.divide(heat_scores, TEMPERATURE_LIMIT_SLOPE_C32, out=heat_scores)
+    np.subtract(1.0, heat_scores, out=heat_scores)
+    np.clip(heat_scores, 0.0, 1.0, out=heat_scores)
+
+    cold_scores = np.empty_like(climate_matrix.coldest_month_lows_c)
+    np.subtract(winter_cold_limit, climate_matrix.coldest_month_lows_c, out=cold_scores)
+    np.clip(cold_scores, 0.0, None, out=cold_scores)
+    np.divide(cold_scores, TEMPERATURE_LIMIT_SLOPE_C32, out=cold_scores)
+    np.subtract(1.0, cold_scores, out=cold_scores)
+    np.clip(cold_scores, 0.0, 1.0, out=cold_scores)
+
+    np.power(ideal_scores, TEMPERATURE_IDEAL_WEIGHT32, out=ideal_scores)
+    np.power(heat_scores, TEMPERATURE_HEAT_WEIGHT32, out=heat_scores)
+    np.multiply(ideal_scores, heat_scores, out=ideal_scores)
+    np.power(cold_scores, TEMPERATURE_COLD_WEIGHT32, out=cold_scores)
+    np.multiply(ideal_scores, cold_scores, out=ideal_scores)
+    return ideal_scores
+
+
+def _rain_score_block(climate_matrix: ClimateMatrix, dryness_ratio: np.float32) -> NDArray[np.float32]:
+    """Score the precipitation constraints while reusing temporary buffers."""
+    typical_rain_scores = np.empty_like(climate_matrix.median_precipitation_mm)
+    np.divide(climate_matrix.median_precipitation_mm, SATURATING_MONTHLY_RAIN_MM32, out=typical_rain_scores)
+    np.multiply(typical_rain_scores, dryness_ratio, out=typical_rain_scores)
+    np.subtract(1.0, typical_rain_scores, out=typical_rain_scores)
+    np.clip(typical_rain_scores, MULTIPLICATIVE_SCORE_FLOOR32, 1.0, out=typical_rain_scores)
+
+    wettest_month_scores = np.empty_like(climate_matrix.wettest_precipitation_mm)
+    np.divide(climate_matrix.wettest_precipitation_mm, SATURATING_WETTEST_MONTH_RAIN_MM32, out=wettest_month_scores)
+    np.multiply(wettest_month_scores, dryness_ratio, out=wettest_month_scores)
+    np.subtract(1.0, wettest_month_scores, out=wettest_month_scores)
+    np.clip(wettest_month_scores, MULTIPLICATIVE_SCORE_FLOOR32, 1.0, out=wettest_month_scores)
+
+    np.power(typical_rain_scores, PRECIPITATION_PROFILE_MEDIAN_WEIGHT32, out=typical_rain_scores)
+    np.power(wettest_month_scores, PRECIPITATION_PROFILE_PEAK_WEIGHT32, out=wettest_month_scores)
+    np.multiply(typical_rain_scores, wettest_month_scores, out=typical_rain_scores)
+    return typical_rain_scores
+
+
 STUB_CLIMATE_CELLS: tuple[ClimateCell, ...] = (
     ClimateCell(
         lat=37.5,
@@ -480,8 +584,17 @@ def score_climate_cells(climate_cells: tuple[ClimateCell, ...], preferences: Pre
     ]
 
 
-def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceInputs) -> NDArray[np.float32]:
-    """Score the compact climate matrix with vectorized NumPy operations."""
+def score_climate_matrix(
+    climate_matrix: ClimateMatrix,
+    preferences: PreferenceInputs,
+    *,
+    timings: MatrixScoreTimings | None = None,
+) -> NDArray[np.float32]:
+    """Score the compact climate matrix with vectorized NumPy operations.
+
+    If provided, ``timings`` is populated in place with per-phase cold-path timings.
+    """
+    setup_started = perf_counter()
     tolerated_cloud_cover = MAX_TOLERATED_CLOUD_COVER - (
         (MAX_TOLERATED_CLOUD_COVER - MIN_TOLERATED_CLOUD_COVER) * (preferences.sunshine_preference / 100.0)
     )
@@ -494,61 +607,64 @@ def score_climate_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceI
         preferences.dryness_preference,
         preferences.sunshine_preference,
     )
-    ideal_distance = np.maximum(
-        np.abs(climate_matrix.typical_highs_c - preferred_day_temperature) - TEMPERATURE_COMFORT_BAND_C, 0.0
-    )
-    ideal_scores = np.clip(1.0 - (ideal_distance / TEMPERATURE_IDEAL_SLOPE_C), 0.0, 1.0)
-    heat_excess = np.maximum(climate_matrix.hottest_month_highs_c - summer_heat_limit, 0.0)
-    heat_scores = np.clip(1.0 - (heat_excess / TEMPERATURE_LIMIT_SLOPE_C), 0.0, 1.0)
-    cold_excess = np.maximum(winter_cold_limit - climate_matrix.coldest_month_lows_c, 0.0)
-    cold_scores = np.clip(1.0 - (cold_excess / TEMPERATURE_LIMIT_SLOPE_C), 0.0, 1.0)
-    temperature_scores = (
-        ideal_scores**TEMPERATURE_IDEAL_WEIGHT
-        * heat_scores**TEMPERATURE_HEAT_WEIGHT
-        * cold_scores**TEMPERATURE_COLD_WEIGHT
-    ).astype(np.float32, copy=False)
+    if timings is not None:
+        timings.setup_ms = (perf_counter() - setup_started) * 1000
 
-    typical_rain_scores = np.clip(
-        1.0 - (climate_matrix.median_precipitation_mm / SATURATING_MONTHLY_RAIN_MM) * dryness_ratio,
-        0.0,
-        1.0,
+    temperature_started = perf_counter()
+    temperature_scores = _temperature_score_block(
+        climate_matrix,
+        preferred_day_temperature,
+        summer_heat_limit,
+        winter_cold_limit,
     )
-    wettest_month_scores = np.clip(
-        1.0 - (climate_matrix.wettest_precipitation_mm / SATURATING_WETTEST_MONTH_RAIN_MM) * dryness_ratio,
-        0.0,
-        1.0,
-    )
-    rain_scores = (
-        np.maximum(typical_rain_scores, MULTIPLICATIVE_SCORE_FLOOR) ** PRECIPITATION_PROFILE_MEDIAN_WEIGHT
-        * np.maximum(wettest_month_scores, MULTIPLICATIVE_SCORE_FLOOR) ** PRECIPITATION_PROFILE_PEAK_WEIGHT
-    ).astype(np.float32, copy=False)
+    if timings is not None:
+        timings.temperature_ms = (perf_counter() - temperature_started) * 1000
 
-    average_excess_ratio = (climate_matrix.average_cloud_cover_pct - tolerated_cloud_cover) / cloud_denominator
-    average_sun_scores = np.where(
-        climate_matrix.average_cloud_cover_pct <= tolerated_cloud_cover,
-        1.0,
-        np.clip(1.0 - average_excess_ratio**2, 0.0, 1.0),
+    rain_started = perf_counter()
+    rain_scores = _rain_score_block(climate_matrix, dryness_ratio)
+    if timings is not None:
+        timings.rain_ms = (perf_counter() - rain_started) * 1000
+
+    sun_started = perf_counter()
+    average_excess_ratio = np.subtract(
+        climate_matrix.average_cloud_cover_pct.astype(np.float32, copy=False),
+        tolerated_cloud_cover,
+        dtype=np.float32,
     )
-    gloom_excess_ratio = (climate_matrix.gloomiest_cloud_cover_pct - tolerated_cloud_cover) / cloud_denominator
-    gloomiest_sun_scores = np.where(
-        climate_matrix.gloomiest_cloud_cover_pct <= tolerated_cloud_cover,
-        1.0,
-        np.clip(1.0 - gloom_excess_ratio**2, 0.0, 1.0),
+    np.divide(average_excess_ratio, cloud_denominator, out=average_excess_ratio)
+    np.clip(average_excess_ratio, 0.0, None, out=average_excess_ratio)
+    average_sun_scores = np.subtract(1.0, average_excess_ratio * average_excess_ratio, dtype=np.float32)
+    np.clip(average_sun_scores, MULTIPLICATIVE_SCORE_FLOOR32, 1.0, out=average_sun_scores)
+
+    gloom_excess_ratio = np.subtract(
+        climate_matrix.gloomiest_cloud_cover_pct.astype(np.float32, copy=False),
+        tolerated_cloud_cover,
+        dtype=np.float32,
     )
+    np.divide(gloom_excess_ratio, cloud_denominator, out=gloom_excess_ratio)
+    np.clip(gloom_excess_ratio, 0.0, None, out=gloom_excess_ratio)
+    gloomiest_sun_scores = np.subtract(1.0, gloom_excess_ratio * gloom_excess_ratio, dtype=np.float32)
+    np.clip(gloomiest_sun_scores, MULTIPLICATIVE_SCORE_FLOOR32, 1.0, out=gloomiest_sun_scores)
+
     sun_scores = (
-        np.maximum(average_sun_scores, MULTIPLICATIVE_SCORE_FLOOR) ** SUN_PROFILE_AVERAGE_WEIGHT
-        * np.maximum(gloomiest_sun_scores, MULTIPLICATIVE_SCORE_FLOOR) ** SUN_PROFILE_GLOOM_WEIGHT
+        average_sun_scores**SUN_PROFILE_AVERAGE_WEIGHT32 * gloomiest_sun_scores**SUN_PROFILE_GLOOM_WEIGHT32
     ).astype(
         np.float32,
         copy=False,
     )
+    if timings is not None:
+        timings.sun_ms = (perf_counter() - sun_started) * 1000
 
-    preference_scores = (rain_scores**rain_weight * sun_scores**sun_weight).astype(np.float32, copy=False)
-    return np.clip(
-        temperature_scores**temperature_weight * preference_scores ** (1 - temperature_weight),
-        0.0,
-        1.0,
-    ).astype(np.float32, copy=False)
+    combine_started = perf_counter()
+    scores = _combine_score_blocks(
+        temperature_scores,
+        rain_scores,
+        sun_scores,
+        (temperature_weight, rain_weight, sun_weight),
+    )
+    if timings is not None:
+        timings.combine_ms = (perf_counter() - combine_started) * 1000
+    return scores
 
 
 def normalize_score_array(scores: NDArray[np.float32]) -> NDArray[np.float32]:
@@ -560,7 +676,10 @@ def normalize_score_array(scores: NDArray[np.float32]) -> NDArray[np.float32]:
     if max_score == 0.0:
         return scores
 
-    return np.round(scores / max_score, 4).astype(np.float32, copy=False)
+    normalized_scores = scores.copy()
+    np.divide(normalized_scores, np.float32(max_score), out=normalized_scores)
+    np.round(normalized_scores, 4, out=normalized_scores)
+    return normalized_scores
 
 
 def score_matrix_row_breakdown(

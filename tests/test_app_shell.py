@@ -4,7 +4,7 @@ import asyncio
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import numpy as np
@@ -520,7 +520,7 @@ def test_score_endpoint_offloads_scoring_to_threadpool(monkeypatch: MonkeyPatch)
 
 
 @pytest.mark.anyio
-async def test_score_endpoint_serializes_concurrent_requests_per_worker() -> None:
+async def test_score_endpoint_allows_two_concurrent_requests_per_worker() -> None:
     entered = threading.Event()
     release_first = threading.Event()
     second_entered = threading.Event()
@@ -553,7 +553,7 @@ async def test_score_endpoint_serializes_concurrent_requests_per_worker() -> Non
 
             second_request = asyncio.create_task(async_client.post("/score", data=default_form_data()))
             await asyncio.sleep(0.05)
-            assert not second_entered.is_set()
+            assert second_entered.is_set()
 
             release_first.set()
 
@@ -568,7 +568,7 @@ async def test_score_endpoint_serializes_concurrent_requests_per_worker() -> Non
 
 
 @pytest.mark.anyio
-async def test_score_endpoint_releases_semaphore_after_failed_request() -> None:
+async def test_score_endpoint_keeps_second_slot_available_after_failed_request() -> None:
     entered = threading.Event()
     release_first = threading.Event()
     second_entered = threading.Event()
@@ -602,7 +602,7 @@ async def test_score_endpoint_releases_semaphore_after_failed_request() -> None:
 
             second_request = asyncio.create_task(async_client.post("/score", data=default_form_data()))
             await asyncio.sleep(0.05)
-            assert not second_entered.is_set()
+            assert second_entered.is_set()
 
             release_first.set()
 
@@ -721,7 +721,10 @@ def test_score_endpoint_logs_cache_hit_and_miss_route_details(monkeypatch: Monke
 
     assert default_event["event"] == "score_request_route"
     assert default_event["cache_hit"] is True
+    assert default_event["cache_status"] == "hit"
     assert cast("float", default_event["queue_wait_ms"]) >= 0
+    assert cast("int", default_event["score_queue_depth"]) >= 0
+    assert cast("int", default_event["score_inflight"]) >= 1
     assert default_event["preferred_day_temperature"] == 18
     assert default_event["summer_heat_limit"] == 30
     assert default_event["winter_cold_limit"] == 0
@@ -730,7 +733,10 @@ def test_score_endpoint_logs_cache_hit_and_miss_route_details(monkeypatch: Monke
 
     assert custom_event["event"] == "score_request_route"
     assert custom_event["cache_hit"] is False
+    assert custom_event["cache_status"] == "miss_built"
     assert cast("float", custom_event["queue_wait_ms"]) >= 0
+    assert cast("int", custom_event["score_queue_depth"]) >= 0
+    assert cast("int", custom_event["score_inflight"]) >= 1
     assert custom_event["preferred_day_temperature"] == 22
     assert custom_event["summer_heat_limit"] == 30
     assert custom_event["winter_cold_limit"] == 5
@@ -860,7 +866,11 @@ def test_heatmap_endpoint_reuses_score_field_from_prior_score_request(monkeypatc
         "sunshine_preference": "85",
     }
 
-    def counted_score_matrix(climate_matrix: ClimateMatrix, preferences: PreferenceInputs) -> np.ndarray:
+    def counted_score_matrix(
+        climate_matrix: ClimateMatrix,
+        preferences: PreferenceInputs,
+        **_kwargs: object,
+    ) -> np.ndarray:
         nonlocal score_calls
         score_calls += 1
         return original_score_matrix(climate_matrix, preferences)
@@ -882,7 +892,7 @@ def test_score_response_cache_deduplicates_concurrent_identical_misses() -> None
     key = (18, 30, 0, 30, 50)
     build_started = threading.Event()
     build_count = 0
-    results: list[dict[str, object]] = []
+    results: list[Any] = []
 
     def build() -> dict[str, object]:
         nonlocal build_count
@@ -892,7 +902,7 @@ def test_score_response_cache_deduplicates_concurrent_identical_misses() -> None
         return {"scores": []}
 
     def worker() -> None:
-        results.append(cache.get_or_set(key, build))
+        results.append(cache.get_with_status_or_set(key, build))
 
     threads = [threading.Thread(target=worker), threading.Thread(target=worker)]
     threads[0].start()
@@ -903,7 +913,8 @@ def test_score_response_cache_deduplicates_concurrent_identical_misses() -> None
         assert not thread.is_alive()
 
     assert build_count == 1
-    assert results == [{"scores": []}, {"scores": []}]
+    assert [result.response for result in results] == [{"scores": []}, {"scores": []}]
+    assert sorted(result.cache_status for result in results) == ["miss_built", "miss_waited"]
 
 
 def test_score_response_cache_recovers_after_failing_inflight_build() -> None:
@@ -913,7 +924,7 @@ def test_score_response_cache_recovers_after_failing_inflight_build() -> None:
     build_started = threading.Event()
     call_count = 0
     failures: list[str] = []
-    successes: list[dict[str, object]] = []
+    successes: list[Any] = []
 
     def flaky_build() -> dict[str, object]:
         nonlocal call_count
@@ -927,7 +938,7 @@ def test_score_response_cache_recovers_after_failing_inflight_build() -> None:
 
     def worker() -> None:
         try:
-            successes.append(cache.get_or_set(key, flaky_build))
+            successes.append(cache.get_with_status_or_set(key, flaky_build))
         except RuntimeError as error:
             failures.append(str(error))
 
@@ -940,7 +951,8 @@ def test_score_response_cache_recovers_after_failing_inflight_build() -> None:
         assert not thread.is_alive()
 
     assert failures == ["boom"]
-    assert successes == [{"scores": []}]
+    assert [result.response for result in successes] == [{"scores": []}]
+    assert [result.cache_status for result in successes] == ["miss_built"]
     assert call_count == 2
     assert cache.get_or_set(key, flaky_build) == {"scores": []}
     assert call_count == 2

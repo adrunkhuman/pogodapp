@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from time import perf_counter
 from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
@@ -291,6 +292,16 @@ class RegionalPenaltyCenter:
     strength: float = 1.0
 
 
+@dataclass(slots=True)
+class IndexedRankingTimings:
+    """Optional cold-path timings for indexed city ranking."""
+
+    setup_ms: float = 0.0
+    winner_select_ms: float = 0.0
+    distance_ms: float = 0.0
+    penalty_ms: float = 0.0
+
+
 def city_score_point(city: CityCandidate, score: float, *, flag: str | None = None) -> CityScorePoint:
     """Build the API score shape for one ranked city."""
     return {
@@ -324,13 +335,16 @@ def _select_population_biased_winner_index(
     active: NDArray[np.bool],
 ) -> int:
     """Prefer larger population centers when effective scores are nearly tied."""
-    active_scores = np.where(active, scores, -1.0)
+    active_indexes = np.flatnonzero(active)
+    active_scores = scores[active_indexes]
     best_score = float(active_scores.max())
-    near_tied = np.flatnonzero(active & (scores >= best_score - POPULATION_TIE_SCORE_WINDOW))
-    return max(
-        near_tied.tolist(),
-        key=lambda index: (_candidate_population(city_catalog.cities[index]), float(scores[index])),
-    )
+    near_tied_indexes = active_indexes[active_scores >= best_score - POPULATION_TIE_SCORE_WINDOW]
+    near_tied_populations = city_catalog.populations[near_tied_indexes]
+    max_population = int(near_tied_populations.max(initial=0))
+    population_tied_indexes = near_tied_indexes[near_tied_populations == max_population]
+    if population_tied_indexes.size == 1:
+        return int(population_tied_indexes[0])
+    return int(population_tied_indexes[np.argmax(scores[population_tied_indexes])])
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,9 +353,13 @@ class CityRankingCache:
 
     cities: tuple[CityCandidate, ...]
     climate_indexes: NDArray[np.int32]
+    populations: NDArray[np.int32]
     latitude_radians: NDArray[np.float32]
     longitude_radians: NDArray[np.float32]
+    sine_latitudes: NDArray[np.float32]
     cosine_latitudes: NDArray[np.float32]
+    sine_longitudes: NDArray[np.float32]
+    cosine_longitudes: NDArray[np.float32]
     flags: tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -356,12 +374,28 @@ class CityRankingCache:
             msg = "latitude_radians must align with cities"
             raise ValueError(msg)
 
+        if self.populations.shape != (city_count,):
+            msg = "populations must align with cities"
+            raise ValueError(msg)
+
         if self.longitude_radians.shape != (city_count,):
             msg = "longitude_radians must align with cities"
             raise ValueError(msg)
 
         if self.cosine_latitudes.shape != (city_count,):
             msg = "cosine_latitudes must align with cities"
+            raise ValueError(msg)
+
+        if self.sine_latitudes.shape != (city_count,):
+            msg = "sine_latitudes must align with cities"
+            raise ValueError(msg)
+
+        if self.sine_longitudes.shape != (city_count,):
+            msg = "sine_longitudes must align with cities"
+            raise ValueError(msg)
+
+        if self.cosine_longitudes.shape != (city_count,):
+            msg = "cosine_longitudes must align with cities"
             raise ValueError(msg)
 
         if len(self.flags) != city_count:
@@ -386,9 +420,13 @@ class CityRankingCache:
         return cls(
             cities=cities,
             climate_indexes=climate_indexes,
+            populations=np.array([_candidate_population(city) for city in cities], dtype=np.int32),
             latitude_radians=latitude_radians,
             longitude_radians=longitude_radians,
+            sine_latitudes=np.sin(latitude_radians).astype(np.float32, copy=False),
             cosine_latitudes=np.cos(latitude_radians).astype(np.float32, copy=False),
+            sine_longitudes=np.sin(longitude_radians).astype(np.float32, copy=False),
+            cosine_longitudes=np.cos(longitude_radians).astype(np.float32, copy=False),
             flags=tuple(country_flag(city.country_code) for city in cities),
         )
 
@@ -452,26 +490,47 @@ def rank_indexed_city_scores(
     *,
     limit: int,
     diversity_decay_km: float = CITY_DIVERSITY_DECAY_KM,
+    timings: IndexedRankingTimings | None = None,
 ) -> list[CityScorePoint]:
-    """Rank cities from climate-matrix-aligned scores while keeping regional diversity suppression."""
+    """Rank cities from climate-matrix-aligned scores with regional diversity suppression.
+
+    If provided, ``timings`` is populated in place with indexed ranking substep timings.
+    """
     if not city_catalog.cities:
         return []
 
+    setup_started = perf_counter()
     scores = cell_scores[city_catalog.climate_indexes].astype(np.float32, copy=True)
     active = np.ones(scores.shape, dtype=bool)
     ranked: list[CityScorePoint] = []
+    if timings is not None:
+        timings.setup_ms = (perf_counter() - setup_started) * 1000
 
     while active.any() and len(ranked) < limit:
+        winner_select_started = perf_counter()
         winner_index = _select_population_biased_winner_index(city_catalog, scores, active)
+        if timings is not None:
+            timings.winner_select_ms += (perf_counter() - winner_select_started) * 1000
         winner_city = city_catalog.cities[winner_index]
         winner_score = float(scores[winner_index])
         diversity_strength = _diversity_strength_for_rank(len(ranked))
         ranked.append(city_score_point(winner_city, winner_score, flag=city_catalog.flags[winner_index]))
 
+        distance_started = perf_counter()
         distance_km = _haversine_distance_vector_km(city_catalog, winner_index)
-        penalty = winner_score * diversity_strength * np.exp(-distance_km / diversity_decay_km)
-        scores = np.where(active, np.maximum(0.0, scores * (1.0 - penalty)), scores)
+        if timings is not None:
+            timings.distance_ms += (perf_counter() - distance_started) * 1000
+
+        penalty_started = perf_counter()
         active[winner_index] = False
+        np.divide(distance_km, -diversity_decay_km, out=distance_km)
+        np.exp(distance_km, out=distance_km)
+        np.multiply(distance_km, winner_score * diversity_strength, out=distance_km)
+        np.subtract(1.0, distance_km, out=distance_km)
+        np.multiply(scores, distance_km, out=scores, where=active)
+        np.maximum(scores, 0.0, out=scores, where=active)
+        if timings is not None:
+            timings.penalty_ms += (perf_counter() - penalty_started) * 1000
 
     return ranked
 
@@ -515,15 +574,20 @@ def _haversine_distance_vector_km(
     winner_index: int,
 ) -> NDArray[np.float32]:
     """Vectorized winner-to-all distances for one diversity-penalty update."""
-    latitude_radians = city_catalog.latitude_radians[winner_index]
-    longitude_radians = city_catalog.longitude_radians[winner_index]
+    sine_latitude = city_catalog.sine_latitudes[winner_index]
     cosine_latitude = city_catalog.cosine_latitudes[winner_index]
-    delta_lat = city_catalog.latitude_radians - latitude_radians
-    delta_lon = city_catalog.longitude_radians - longitude_radians
-    half_chord = (
-        np.sin(delta_lat / 2.0) ** 2 + cosine_latitude * city_catalog.cosine_latitudes * np.sin(delta_lon / 2.0) ** 2
+    cosine_delta_longitude = (
+        city_catalog.cosine_longitudes[winner_index] * city_catalog.cosine_longitudes
+        + city_catalog.sine_longitudes[winner_index] * city_catalog.sine_longitudes
     )
-    return (2.0 * EARTH_RADIUS_KM * np.arcsin(np.sqrt(half_chord))).astype(np.float32, copy=False)
+    central_angle_cosine = (
+        sine_latitude * city_catalog.sine_latitudes
+        + cosine_latitude * city_catalog.cosine_latitudes * cosine_delta_longitude
+    )
+    return (2.0 * EARTH_RADIUS_KM * np.arcsin(np.sqrt((1.0 - np.clip(central_angle_cosine, -1.0, 1.0)) / 2.0))).astype(
+        np.float32,
+        copy=False,
+    )
 
 
 def snap_city_to_cell_key(city: CityCandidate, *, grid_degrees: float = GRID_DEGREES) -> tuple[float, float]:

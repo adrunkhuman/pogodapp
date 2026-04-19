@@ -155,9 +155,22 @@ def test_rank_indexed_city_scores_matches_classic_ranking_behavior() -> None:
     indexed_catalog = CityRankingCache(
         cities=cities,
         climate_indexes=np.array([0, 1, 2], dtype=np.int32),
+        populations=np.array([max(city.population, 0) for city in cities], dtype=np.int32),
         latitude_radians=np.radians(np.array([city.lat for city in cities], dtype=np.float32)),
         longitude_radians=np.radians(np.array([city.lon for city in cities], dtype=np.float32)),
+        sine_latitudes=np.sin(np.radians(np.array([city.lat for city in cities], dtype=np.float32))).astype(
+            np.float32,
+            copy=False,
+        ),
         cosine_latitudes=np.cos(np.radians(np.array([city.lat for city in cities], dtype=np.float32))).astype(
+            np.float32,
+            copy=False,
+        ),
+        sine_longitudes=np.sin(np.radians(np.array([city.lon for city in cities], dtype=np.float32))).astype(
+            np.float32,
+            copy=False,
+        ),
+        cosine_longitudes=np.cos(np.radians(np.array([city.lon for city in cities], dtype=np.float32))).astype(
             np.float32,
             copy=False,
         ),
@@ -226,9 +239,22 @@ def test_rank_indexed_city_scores_prefers_larger_population_center_when_scores_a
     indexed_catalog = CityRankingCache(
         cities=cities,
         climate_indexes=np.array([0, 1], dtype=np.int32),
+        populations=np.array([max(city.population, 0) for city in cities], dtype=np.int32),
         latitude_radians=np.radians(np.array([city.lat for city in cities], dtype=np.float32)),
         longitude_radians=np.radians(np.array([city.lon for city in cities], dtype=np.float32)),
+        sine_latitudes=np.sin(np.radians(np.array([city.lat for city in cities], dtype=np.float32))).astype(
+            np.float32,
+            copy=False,
+        ),
         cosine_latitudes=np.cos(np.radians(np.array([city.lat for city in cities], dtype=np.float32))).astype(
+            np.float32,
+            copy=False,
+        ),
+        sine_longitudes=np.sin(np.radians(np.array([city.lon for city in cities], dtype=np.float32))).astype(
+            np.float32,
+            copy=False,
+        ),
+        cosine_longitudes=np.cos(np.radians(np.array([city.lon for city in cities], dtype=np.float32))).astype(
             np.float32,
             copy=False,
         ),
