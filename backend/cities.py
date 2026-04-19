@@ -335,13 +335,16 @@ def _select_population_biased_winner_index(
     active: NDArray[np.bool],
 ) -> int:
     """Prefer larger population centers when effective scores are nearly tied."""
-    active_scores = np.where(active, scores, -1.0)
+    active_indexes = np.flatnonzero(active)
+    active_scores = scores[active_indexes]
     best_score = float(active_scores.max())
-    near_tied = np.flatnonzero(active & (scores >= best_score - POPULATION_TIE_SCORE_WINDOW))
-    return max(
-        near_tied.tolist(),
-        key=lambda index: (_candidate_population(city_catalog.cities[index]), float(scores[index])),
-    )
+    near_tied_indexes = active_indexes[active_scores >= best_score - POPULATION_TIE_SCORE_WINDOW]
+    near_tied_populations = city_catalog.populations[near_tied_indexes]
+    max_population = int(near_tied_populations.max(initial=0))
+    population_tied_indexes = near_tied_indexes[near_tied_populations == max_population]
+    if population_tied_indexes.size == 1:
+        return int(population_tied_indexes[0])
+    return int(population_tied_indexes[np.argmax(scores[population_tied_indexes])])
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,6 +353,7 @@ class CityRankingCache:
 
     cities: tuple[CityCandidate, ...]
     climate_indexes: NDArray[np.int32]
+    populations: NDArray[np.int32]
     latitude_radians: NDArray[np.float32]
     longitude_radians: NDArray[np.float32]
     sine_latitudes: NDArray[np.float32]
@@ -368,6 +372,10 @@ class CityRankingCache:
 
         if self.latitude_radians.shape != (city_count,):
             msg = "latitude_radians must align with cities"
+            raise ValueError(msg)
+
+        if self.populations.shape != (city_count,):
+            msg = "populations must align with cities"
             raise ValueError(msg)
 
         if self.longitude_radians.shape != (city_count,):
@@ -412,6 +420,7 @@ class CityRankingCache:
         return cls(
             cities=cities,
             climate_indexes=climate_indexes,
+            populations=np.array([_candidate_population(city) for city in cities], dtype=np.int32),
             latitude_radians=latitude_radians,
             longitude_radians=longitude_radians,
             sine_latitudes=np.sin(latitude_radians).astype(np.float32, copy=False),
