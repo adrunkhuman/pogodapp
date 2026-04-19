@@ -170,6 +170,40 @@ def test_build_heatmap_response_falls_back_to_array_heatmap_path_when_projection
     assert response.startswith(b"\x89PNG\r\n\x1a\n")
 
 
+def test_build_heatmap_response_logs_step_timings(caplog: LogCaptureFixture) -> None:
+    preferences = make_preferences()
+
+    configure_backend_logging()
+    backend_logger = logging.getLogger("backend")
+    original_handlers = backend_logger.handlers[:]
+    original_propagate = backend_logger.propagate
+
+    backend_logger.handlers = []
+    backend_logger.propagate = True
+
+    try:
+        with caplog.at_level(logging.INFO, logger="backend"):
+            response = build_heatmap_response(StubClimateRepository(), preferences)
+    finally:
+        backend_logger.handlers = original_handlers
+        backend_logger.propagate = original_propagate
+
+    assert response.startswith(b"\x89PNG\r\n\x1a\n")
+    assert caplog.records
+    record = caplog.records[-1]
+    assert record.message == "heatmap request finished"
+    assert record.__dict__["event"] == "heatmap_request"
+    assert record.__dict__["outcome"] == "ok"
+    assert record.__dict__["score_field_cache_hit"] is False
+    assert cast("float", record.__dict__["total_ms"]) >= 0
+    assert cast("float", record.__dict__["scoring_ms"]) >= 0
+    assert cast("float", record.__dict__["normalize_ms"]) >= 0
+    assert cast("float", record.__dict__["render_ms"]) >= 0
+    assert cast("int", record.__dict__["climate_cells"]) > 0
+    assert cast("int", record.__dict__["png_bytes"]) > 0
+    assert record.__dict__["preferred_day_temperature"] == preferences.preferred_day_temperature
+
+
 def test_deduplicate_city_points_removes_duplicate_substituted_cities() -> None:
     cities: list[CityScorePoint] = [
         {

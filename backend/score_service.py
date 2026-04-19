@@ -47,6 +47,16 @@ class ScoreTimings:
     total_ms: float = 0.0
 
 
+@dataclass(slots=True)
+class HeatmapTimings:
+    """Per-step timing snapshot for one `/heatmap` calculation."""
+
+    scoring_ms: float = 0.0
+    normalize_ms: float = 0.0
+    render_ms: float = 0.0
+    total_ms: float = 0.0
+
+
 @dataclass(slots=True, frozen=True)
 class ScoreContext:
     """Shared score-request counts reused by both ranking paths."""
@@ -115,6 +125,36 @@ def _finalize_score_response(
         outcome="ok",
     )
     return {"scores": ranked_cities}
+
+
+def _log_heatmap_timings(  # noqa: PLR0913
+    timings: HeatmapTimings,
+    *,
+    preferences: PreferenceInputs,
+    climate_cell_count: int,
+    png_bytes: int,
+    field_cache_hit: bool,
+    outcome: str,
+) -> None:
+    logger.info(
+        "heatmap request finished",
+        extra={
+            "event": "heatmap_request",
+            "outcome": outcome,
+            "score_field_cache_hit": field_cache_hit,
+            "total_ms": timings.total_ms,
+            "scoring_ms": timings.scoring_ms,
+            "normalize_ms": timings.normalize_ms,
+            "render_ms": timings.render_ms,
+            "climate_cells": climate_cell_count,
+            "png_bytes": png_bytes,
+            "preferred_day_temperature": preferences.preferred_day_temperature,
+            "summer_heat_limit": preferences.summer_heat_limit,
+            "winter_cold_limit": preferences.winter_cold_limit,
+            "dryness_preference": preferences.dryness_preference,
+            "sunshine_preference": preferences.sunshine_preference,
+        },
+    )
 
 
 def _filter_ranking_catalog(city_catalog: CityRankingCache) -> CityRankingCache:
@@ -489,54 +529,146 @@ def build_heatmap_response(
     cached_heatmap_field: HeatmapField | None = None,
 ) -> bytes:
     """Build the `/heatmap` PNG payload for one user preference request."""
+    request_started = perf_counter()
+    timings = HeatmapTimings()
     if cached_heatmap_field is not None:
-        return _render_heatmap_from_field(repository, cached_heatmap_field)
+        render_started = perf_counter()
+        heatmap_png = _render_heatmap_from_field(repository, cached_heatmap_field)
+        timings.render_ms = _elapsed_ms(render_started)
+        timings.total_ms = _elapsed_ms(request_started)
+        _log_heatmap_timings(
+            timings,
+            preferences=preferences,
+            climate_cell_count=_heatmap_field_cell_count(cached_heatmap_field),
+            png_bytes=len(heatmap_png),
+            field_cache_hit=True,
+            outcome="ok" if heatmap_png else "empty",
+        )
+        return heatmap_png
 
     if hasattr(repository, "get_climate_matrix"):
-        return _build_heatmap_response_from_matrix(repository, preferences)
+        return _build_heatmap_response_from_matrix(repository, preferences, request_started, timings)
 
-    return _build_heatmap_response_from_cells(repository, preferences)
+    return _build_heatmap_response_from_cells(repository, preferences, request_started, timings)
 
 
-def _build_heatmap_response_from_matrix(repository: ClimateRepository, preferences: PreferenceInputs) -> bytes:
+def _build_heatmap_response_from_matrix(
+    repository: ClimateRepository,
+    preferences: PreferenceInputs,
+    request_started: float,
+    timings: HeatmapTimings,
+) -> bytes:
     climate_matrix = repository.get_climate_matrix()
+    scoring_started = perf_counter()
     raw_scores = score_climate_matrix(climate_matrix, preferences)
+    timings.scoring_ms = _elapsed_ms(scoring_started)
 
     if raw_scores.size == 0:
+        timings.total_ms = _elapsed_ms(request_started)
+        _log_heatmap_timings(
+            timings,
+            preferences=preferences,
+            climate_cell_count=len(climate_matrix.latitudes),
+            png_bytes=0,
+            field_cache_hit=False,
+            outcome="empty",
+        )
         return b""
 
     max_score = float(raw_scores.max())
     if max_score == 0.0:
+        timings.total_ms = _elapsed_ms(request_started)
+        _log_heatmap_timings(
+            timings,
+            preferences=preferences,
+            climate_cell_count=len(climate_matrix.latitudes),
+            png_bytes=0,
+            field_cache_hit=False,
+            outcome="all_zero",
+        )
         return b""
 
+    normalize_started = perf_counter()
     normalized_scores = normalize_score_array(raw_scores)
+    timings.normalize_ms = _elapsed_ms(normalize_started)
 
     # Some injected repositories only support the cached matrix/ranking fast path.
+    render_started = perf_counter()
     if hasattr(repository, "get_heatmap_projection"):
-        return render_heatmap_png_from_projection(repository.get_heatmap_projection(), normalized_scores)
-
-    return render_heatmap_png_from_arrays(
-        climate_matrix.latitudes,
-        climate_matrix.longitudes,
-        normalized_scores,
+        heatmap_png = render_heatmap_png_from_projection(repository.get_heatmap_projection(), normalized_scores)
+    else:
+        heatmap_png = render_heatmap_png_from_arrays(
+            climate_matrix.latitudes,
+            climate_matrix.longitudes,
+            normalized_scores,
+        )
+    timings.render_ms = _elapsed_ms(render_started)
+    timings.total_ms = _elapsed_ms(request_started)
+    _log_heatmap_timings(
+        timings,
+        preferences=preferences,
+        climate_cell_count=len(climate_matrix.latitudes),
+        png_bytes=len(heatmap_png),
+        field_cache_hit=False,
+        outcome="ok",
     )
+    return heatmap_png
 
 
-def _build_heatmap_response_from_cells(repository: ClimateRepository, preferences: PreferenceInputs) -> bytes:
+def _build_heatmap_response_from_cells(
+    repository: ClimateRepository,
+    preferences: PreferenceInputs,
+    request_started: float,
+    timings: HeatmapTimings,
+) -> bytes:
+    scoring_started = perf_counter()
     raw_scores = score_climate_cells(repository.list_cells(), preferences)
+    timings.scoring_ms = _elapsed_ms(scoring_started)
 
     if not raw_scores:
+        timings.total_ms = _elapsed_ms(request_started)
+        _log_heatmap_timings(
+            timings,
+            preferences=preferences,
+            climate_cell_count=0,
+            png_bytes=0,
+            field_cache_hit=False,
+            outcome="empty",
+        )
         return b""
 
     max_score = max(point["score"] for point in raw_scores)
     if max_score == 0:
+        timings.total_ms = _elapsed_ms(request_started)
+        _log_heatmap_timings(
+            timings,
+            preferences=preferences,
+            climate_cell_count=len(raw_scores),
+            png_bytes=0,
+            field_cache_hit=False,
+            outcome="all_zero",
+        )
         return b""
 
+    normalize_started = perf_counter()
     normalized_scores: list[CellScorePoint] = [
         {"lat": point["lat"], "lon": point["lon"], "score": round(point["score"] / max_score, 4)}
         for point in raw_scores
     ]
-    return render_heatmap_png(normalized_scores)
+    timings.normalize_ms = _elapsed_ms(normalize_started)
+    render_started = perf_counter()
+    heatmap_png = render_heatmap_png(normalized_scores)
+    timings.render_ms = _elapsed_ms(render_started)
+    timings.total_ms = _elapsed_ms(request_started)
+    _log_heatmap_timings(
+        timings,
+        preferences=preferences,
+        climate_cell_count=len(raw_scores),
+        png_bytes=len(heatmap_png),
+        field_cache_hit=False,
+        outcome="ok",
+    )
+    return heatmap_png
 
 
 def _render_heatmap_from_field(repository: ClimateRepository, heatmap_field: HeatmapField) -> bytes:
@@ -553,3 +685,9 @@ def _render_heatmap_from_field(repository: ClimateRepository, heatmap_field: Hea
         )
 
     return render_heatmap_png(cast("list[CellScorePoint]", heatmap_field.normalized_scores))
+
+
+def _heatmap_field_cell_count(heatmap_field: HeatmapField) -> int:
+    if heatmap_field.latitudes is not None:
+        return len(heatmap_field.latitudes)
+    return len(cast("list[CellScorePoint]", heatmap_field.normalized_scores))

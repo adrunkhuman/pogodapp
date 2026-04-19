@@ -738,6 +738,80 @@ def test_score_endpoint_logs_cache_hit_and_miss_route_details(monkeypatch: Monke
     assert custom_event["sunshine_preference"] == 60
 
 
+def test_heatmap_endpoint_logs_cache_hit_and_miss_route_details(monkeypatch: MonkeyPatch) -> None:
+    route_events: list[dict[str, object]] = []
+    original_info = backend_main.logger.info
+
+    def capture_info(
+        msg: object,
+        *args: object,
+        extra: dict[str, object] | None = None,
+    ) -> None:
+        if msg == "heatmap request served" and extra is not None:
+            route_events.append(extra.copy())
+        original_info(msg, *args, extra=extra)
+
+    monkeypatch.setattr(backend_main.logger, "info", capture_info)
+
+    cached_client = TestClient(create_app(climate_repository=StubClimateRepository()))
+    default_heatmap_response = cached_client.get("/heatmap", params=rendered_default_form_data())
+    custom_heatmap_response = cached_client.get("/heatmap", params=default_form_data())
+
+    assert default_heatmap_response.status_code == 200
+    assert custom_heatmap_response.status_code == 200
+
+    assert len(route_events) == 2
+    default_event, custom_event = route_events
+
+    assert default_event["event"] == "heatmap_request_route"
+    assert default_event["score_field_cache_hit"] is True
+    assert cast("float", default_event["queue_wait_ms"]) >= 0
+    assert default_event["preferred_day_temperature"] == 18
+    assert default_event["summer_heat_limit"] == 30
+    assert default_event["winter_cold_limit"] == 0
+    assert default_event["dryness_preference"] == 30
+    assert default_event["sunshine_preference"] == 50
+
+    assert custom_event["event"] == "heatmap_request_route"
+    assert custom_event["score_field_cache_hit"] is False
+    assert cast("float", custom_event["queue_wait_ms"]) >= 0
+    assert custom_event["preferred_day_temperature"] == 22
+    assert custom_event["summer_heat_limit"] == 30
+    assert custom_event["winter_cold_limit"] == 5
+    assert custom_event["dryness_preference"] == 60
+    assert custom_event["sunshine_preference"] == 60
+
+
+def test_heatmap_endpoint_logs_empty_outcome_for_no_content(monkeypatch: MonkeyPatch) -> None:
+    route_events: list[dict[str, object]] = []
+    original_info = backend_main.logger.info
+    original_builder = backend_main.build_heatmap_response
+
+    def capture_info(
+        msg: object,
+        *args: object,
+        extra: dict[str, object] | None = None,
+    ) -> None:
+        if msg == "heatmap request served" and extra is not None:
+            route_events.append(extra.copy())
+        original_info(msg, *args, extra=extra)
+
+    monkeypatch.setattr(backend_main.logger, "info", capture_info)
+    monkeypatch.setattr(backend_main, "build_heatmap_response", lambda *args, **kwargs: b"")
+
+    response = TestClient(create_app(climate_repository=StubClimateRepository())).get(
+        "/heatmap",
+        params=default_form_data(),
+    )
+
+    assert response.status_code == 204
+    assert len(route_events) == 1
+    assert route_events[0]["event"] == "heatmap_request_route"
+    assert route_events[0]["outcome"] == "empty"
+
+    monkeypatch.setattr(backend_main, "build_heatmap_response", original_builder)
+
+
 def test_score_endpoint_evicts_oldest_cached_preferences_after_cache_limit() -> None:
     call_count = 0
     original_builder = backend_main.build_score_response
