@@ -57,6 +57,7 @@ SERVER_ERROR_STATUS_MIN = 500
 SCORE_CACHE_SIZE = 16
 HEATMAP_FIELD_CACHE_SIZE = 2
 HEATMAP_FIELD_CACHE_TTL_SECONDS = 20.0
+SCORE_REQUEST_CONCURRENCY = 2
 
 
 class _ScoreResponseCache:
@@ -470,8 +471,8 @@ def create_app(  # noqa: C901, PLR0915
     repository = climate_repository or build_default_climate_repository(resolve_climate_database_path())
     score_cache = _ScoreResponseCache(SCORE_CACHE_SIZE)
     heatmap_field_cache = _HeatmapFieldCache(HEATMAP_FIELD_CACHE_SIZE, HEATMAP_FIELD_CACHE_TTL_SECONDS)
-    # Serialize /score work per worker so repeated slider changes do not pile up CPU-bound builds.
-    score_request_semaphore = asyncio.Semaphore(1)
+    # Let a small number of /score builds overlap so slider bursts do not serialize behind one miss.
+    score_request_semaphore = asyncio.Semaphore(SCORE_REQUEST_CONCURRENCY)
     score_request_tracker = _RequestConcurrencyTracker()
     heatmap_request_semaphore = asyncio.Semaphore(1)
     preload_repository(repository)

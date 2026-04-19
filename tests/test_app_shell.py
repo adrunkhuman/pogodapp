@@ -520,7 +520,7 @@ def test_score_endpoint_offloads_scoring_to_threadpool(monkeypatch: MonkeyPatch)
 
 
 @pytest.mark.anyio
-async def test_score_endpoint_serializes_concurrent_requests_per_worker() -> None:
+async def test_score_endpoint_allows_two_concurrent_requests_per_worker() -> None:
     entered = threading.Event()
     release_first = threading.Event()
     second_entered = threading.Event()
@@ -553,7 +553,7 @@ async def test_score_endpoint_serializes_concurrent_requests_per_worker() -> Non
 
             second_request = asyncio.create_task(async_client.post("/score", data=default_form_data()))
             await asyncio.sleep(0.05)
-            assert not second_entered.is_set()
+            assert second_entered.is_set()
 
             release_first.set()
 
@@ -568,7 +568,7 @@ async def test_score_endpoint_serializes_concurrent_requests_per_worker() -> Non
 
 
 @pytest.mark.anyio
-async def test_score_endpoint_releases_semaphore_after_failed_request() -> None:
+async def test_score_endpoint_keeps_second_slot_available_after_failed_request() -> None:
     entered = threading.Event()
     release_first = threading.Event()
     second_entered = threading.Event()
@@ -602,7 +602,7 @@ async def test_score_endpoint_releases_semaphore_after_failed_request() -> None:
 
             second_request = asyncio.create_task(async_client.post("/score", data=default_form_data()))
             await asyncio.sleep(0.05)
-            assert not second_entered.is_set()
+            assert second_entered.is_set()
 
             release_first.set()
 
