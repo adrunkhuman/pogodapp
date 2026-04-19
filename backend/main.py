@@ -311,69 +311,6 @@ def _score_log_fields(preferences: PreferenceInputs) -> dict[str, int]:
     }
 
 
-_TEST_REQUEST_SUITES: dict[str, tuple[PreferenceInputs, ...]] = {
-    "smoke": (PreferenceInputs(**{preference.name: preference.value for preference in DEFAULT_PREFERENCES}),),
-    "profile": (
-        PreferenceInputs(
-            preferred_day_temperature=23,
-            summer_heat_limit=30,
-            winter_cold_limit=0,
-            dryness_preference=30,
-            sunshine_preference=50,
-        ),
-        PreferenceInputs(
-            preferred_day_temperature=15,
-            summer_heat_limit=30,
-            winter_cold_limit=0,
-            dryness_preference=30,
-            sunshine_preference=50,
-        ),
-        PreferenceInputs(
-            preferred_day_temperature=8,
-            summer_heat_limit=21,
-            winter_cold_limit=5,
-            dryness_preference=55,
-            sunshine_preference=80,
-        ),
-        PreferenceInputs(
-            preferred_day_temperature=26,
-            summer_heat_limit=40,
-            winter_cold_limit=-5,
-            dryness_preference=55,
-            sunshine_preference=80,
-        ),
-        PreferenceInputs(
-            preferred_day_temperature=4,
-            summer_heat_limit=37,
-            winter_cold_limit=-6,
-            dryness_preference=75,
-            sunshine_preference=50,
-        ),
-        PreferenceInputs(
-            preferred_day_temperature=34,
-            summer_heat_limit=37,
-            winter_cold_limit=-6,
-            dryness_preference=75,
-            sunshine_preference=50,
-        ),
-        PreferenceInputs(
-            preferred_day_temperature=1,
-            summer_heat_limit=31,
-            winter_cold_limit=1,
-            dryness_preference=75,
-            sunshine_preference=50,
-        ),
-        PreferenceInputs(
-            preferred_day_temperature=-5,
-            summer_heat_limit=31,
-            winter_cold_limit=-5,
-            dryness_preference=75,
-            sunshine_preference=50,
-        ),
-    ),
-}
-
-
 def _score_response_from_cache_or_repository(
     score_cache: _ScoreResponseCache,
     heatmap_field_cache: _HeatmapFieldCache,
@@ -559,27 +496,23 @@ def create_app(  # noqa: C901, PLR0915
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-    async def _serve_score_request(preferences: PreferenceInputs, *, use_cache: bool = True) -> _ScoreCacheResult:
+    async def _serve_score_request(preferences: PreferenceInputs) -> _ScoreCacheResult:
         queue_started = perf_counter()
         score_request_tracker.mark_waiting()
         async with score_request_semaphore:
             score_queue_depth, score_inflight = score_request_tracker.mark_started()
             queue_wait_ms = round((perf_counter() - queue_started) * 1000, 2)
             try:
-                if use_cache:
-                    raw_cache_result = await run_in_threadpool(
-                        _score_response_from_cache_or_repository,
-                        score_cache,
-                        heatmap_field_cache,
-                        repository,
-                        preferences,
-                    )
-                    cache_result = _coerce_score_cache_result(raw_cache_result)
-                else:
-                    response = await run_in_threadpool(build_score_response, repository, preferences)
-                    cache_result = _ScoreCacheResult(response=response, cache_hit=False, cache_status="bypass")
+                raw_cache_result = await run_in_threadpool(
+                    _score_response_from_cache_or_repository,
+                    score_cache,
+                    heatmap_field_cache,
+                    repository,
+                    preferences,
+                )
             finally:
                 score_request_tracker.mark_finished()
+        cache_result = _coerce_score_cache_result(raw_cache_result)
         logger.info(
             "score request served",
             extra={
@@ -595,9 +528,9 @@ def create_app(  # noqa: C901, PLR0915
         )
         return cache_result
 
-    async def _serve_heatmap_request(preferences: PreferenceInputs, *, use_cache: bool = True) -> bytes:
+    async def _serve_heatmap_request(preferences: PreferenceInputs) -> bytes:
         cache_key = _score_cache_key(preferences)
-        cached_heatmap_field = heatmap_field_cache.get(cache_key) if use_cache else None
+        cached_heatmap_field = heatmap_field_cache.get(cache_key)
         queue_started = perf_counter()
         async with heatmap_request_semaphore:
             queue_wait_ms = round((perf_counter() - queue_started) * 1000, 2)
@@ -677,38 +610,6 @@ def create_app(  # noqa: C901, PLR0915
         if not heatmap_png:
             return Response(status_code=204)
         return Response(content=heatmap_png, media_type="image/png")
-
-    @app.get("/test")
-    @limiter.limit("5/minute")
-    async def test_run(
-        request: Request,
-        suite: Annotated[str, Query(pattern="^(smoke|profile)$")] = "profile",
-        include_heatmap: bool = True,
-        use_cache: bool = False,
-    ) -> dict[str, object]:
-        preferences_batch = _TEST_REQUEST_SUITES[suite]
-        suite_started = perf_counter()
-        results: list[dict[str, object]] = []
-
-        for preferences in preferences_batch:
-            cache_result = await _serve_score_request(preferences, use_cache=use_cache)
-            if include_heatmap:
-                await _serve_heatmap_request(preferences, use_cache=use_cache)
-            results.append(
-                {
-                    "preferences": _score_log_fields(preferences),
-                    "score_cache_statuses": [cache_result.cache_status],
-                }
-            )
-
-        return {
-            "suite": suite,
-            "include_heatmap": include_heatmap,
-            "use_cache": use_cache,
-            "case_count": len(results),
-            "elapsed_ms": round((perf_counter() - suite_started) * 1000, 2),
-            "results": results,
-        }
 
     @app.get("/probe")
     @limiter.limit("120/minute")

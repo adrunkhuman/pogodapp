@@ -1084,20 +1084,6 @@ def test_score_endpoint_accepts_mild_winter_limit_above_20_when_ordered() -> Non
     assert response.status_code == 200
 
 
-def test_test_endpoint_runs_smoke_suite_without_heatmap() -> None:
-    response = client.get("/test", params={"suite": "smoke", "include_heatmap": False})
-
-    assert response.status_code == 200
-    payload = response.json()
-
-    assert payload["suite"] == "smoke"
-    assert payload["include_heatmap"] is False
-    assert payload["use_cache"] is False
-    assert payload["case_count"] == 1
-    assert payload["elapsed_ms"] >= 0
-    assert payload["results"][0]["score_cache_statuses"] == ["bypass"]
-
-
 def test_probe_endpoint_rejects_typical_day_above_summer_limit() -> None:
     response = client.get(
         "/probe",

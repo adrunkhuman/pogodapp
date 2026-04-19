@@ -479,8 +479,8 @@ def _build_score_response_from_matrix(
     ranking_filter_started = perf_counter()
     ranking_catalog = _filter_ranking_catalog(indexed_cities)
     timings.ranking_filter_ms = _elapsed_ms(ranking_filter_started)
-    # Build a large diversity-suppressed pool so the continent fill draws from
-    # already-spread candidates rather than raw score clusters.
+    # Build a diversity-suppressed pool so continent fill draws from already-spread
+    # candidates rather than clustered raw-score picks.
     ranking_candidates_started = perf_counter()
     ranking_candidates_breakdown = IndexedRankingTimings()
     diverse_pool = rank_indexed_city_scores(

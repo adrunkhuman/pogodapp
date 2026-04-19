@@ -590,7 +590,10 @@ def score_climate_matrix(
     *,
     timings: MatrixScoreTimings | None = None,
 ) -> NDArray[np.float32]:
-    """Score the compact climate matrix with vectorized NumPy operations."""
+    """Score the compact climate matrix with vectorized NumPy operations.
+
+    If provided, ``timings`` is populated in place with per-phase cold-path timings.
+    """
     setup_started = perf_counter()
     tolerated_cloud_cover = MAX_TOLERATED_CLOUD_COVER - (
         (MAX_TOLERATED_CLOUD_COVER - MIN_TOLERATED_CLOUD_COVER) * (preferences.sunshine_preference / 100.0)

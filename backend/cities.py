@@ -492,7 +492,10 @@ def rank_indexed_city_scores(
     diversity_decay_km: float = CITY_DIVERSITY_DECAY_KM,
     timings: IndexedRankingTimings | None = None,
 ) -> list[CityScorePoint]:
-    """Rank cities from climate-matrix-aligned scores while keeping regional diversity suppression."""
+    """Rank cities from climate-matrix-aligned scores with regional diversity suppression.
+
+    If provided, ``timings`` is populated in place with indexed ranking substep timings.
+    """
     if not city_catalog.cities:
         return []
 
