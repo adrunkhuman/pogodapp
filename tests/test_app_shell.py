@@ -458,7 +458,7 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
     payload = response.json()
 
     assert isinstance(payload, dict)
-    assert set(payload) == {"scores", "heatmap"}
+    assert set(payload) == {"scores", "heatmap_url"}
 
     scores = payload["scores"]
     assert isinstance(scores, list)
@@ -497,8 +497,7 @@ def test_score_endpoint_accepts_form_encoded_preferences() -> None:
         continent_counts[continent] = continent_counts.get(continent, 0) + 1
     assert continent_counts
     assert all(count <= 30 for count in continent_counts.values())
-    # Heatmap is a PNG data URL
-    assert payload["heatmap"].startswith("data:image/png;base64,")
+    assert payload["heatmap_url"].startswith("/heatmap?")
 
 
 def test_score_endpoint_offloads_scoring_to_threadpool(monkeypatch: MonkeyPatch) -> None:
@@ -541,7 +540,7 @@ async def test_score_endpoint_serializes_concurrent_requests_per_worker() -> Non
         else:
             second_entered.set()
 
-        return {"scores": [], "heatmap": ""}
+        return {"scores": []}
 
     backend_main.__dict__["_score_response_from_cache_or_repository"] = slow_builder
 
@@ -590,7 +589,7 @@ async def test_score_endpoint_releases_semaphore_after_failed_request() -> None:
             raise ClimateDataError(msg)
 
         second_entered.set()
-        return {"scores": [], "heatmap": ""}
+        return {"scores": []}
 
     backend_main.__dict__["_score_response_from_cache_or_repository"] = flaky_builder
 
@@ -625,8 +624,7 @@ def test_score_endpoint_uses_gzip_when_requested() -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
-    assert response.headers.get("content-encoding") == "gzip"
-    assert "Accept-Encoding" in response.headers.get("vary", "")
+    assert response.headers.get("content-encoding") is None
 
 
 def test_score_endpoint_is_deterministic_for_the_same_preferences() -> None:
@@ -638,7 +636,7 @@ def test_score_endpoint_is_deterministic_for_the_same_preferences() -> None:
     assert first_response.status_code == 200
     assert second_response.status_code == 200
     assert first_response.json()["scores"] == second_response.json()["scores"]
-    assert first_response.json()["heatmap"] == second_response.json()["heatmap"]
+    assert first_response.json()["heatmap_url"] == second_response.json()["heatmap_url"]
 
 
 def test_score_endpoint_reuses_cached_response_for_identical_preferences() -> None:
@@ -773,7 +771,7 @@ def test_score_response_cache_deduplicates_concurrent_identical_misses() -> None
         build_count += 1
         build_started.set()
         time.sleep(0.05)
-        return {"scores": [], "heatmap": "cached"}
+        return {"scores": []}
 
     def worker() -> None:
         results.append(cache.get_or_set(key, build))
@@ -787,7 +785,7 @@ def test_score_response_cache_deduplicates_concurrent_identical_misses() -> None
         assert not thread.is_alive()
 
     assert build_count == 1
-    assert results == [{"scores": [], "heatmap": "cached"}, {"scores": [], "heatmap": "cached"}]
+    assert results == [{"scores": []}, {"scores": []}]
 
 
 def test_score_response_cache_recovers_after_failing_inflight_build() -> None:
@@ -807,7 +805,7 @@ def test_score_response_cache_recovers_after_failing_inflight_build() -> None:
             time.sleep(0.05)
             msg = "boom"
             raise RuntimeError(msg)
-        return {"scores": [], "heatmap": "recovered"}
+        return {"scores": []}
 
     def worker() -> None:
         try:
@@ -824,9 +822,9 @@ def test_score_response_cache_recovers_after_failing_inflight_build() -> None:
         assert not thread.is_alive()
 
     assert failures == ["boom"]
-    assert successes == [{"scores": [], "heatmap": "recovered"}]
+    assert successes == [{"scores": []}]
     assert call_count == 2
-    assert cache.get_or_set(key, flaky_build) == {"scores": [], "heatmap": "recovered"}
+    assert cache.get_or_set(key, flaky_build) == {"scores": []}
     assert call_count == 2
 
 

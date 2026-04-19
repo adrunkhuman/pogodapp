@@ -8,7 +8,7 @@ import numpy as np
 from backend.cities import CityCandidate, CityRankingCache, CityScorePoint
 from backend.climate_repository import StubClimateRepository
 from backend.logging_config import configure_backend_logging
-from backend.score_service import _deduplicate_city_points, build_score_response
+from backend.score_service import _deduplicate_city_points, build_heatmap_response, build_score_response
 from backend.scoring import ClimateCell, ClimateMatrix, PreferenceInputs
 
 if TYPE_CHECKING:
@@ -50,7 +50,6 @@ def test_build_score_response_logs_step_timings(caplog: LogCaptureFixture) -> No
 
     assert response["scores"]
     assert "markers" not in response
-    assert response["heatmap"].startswith("data:image/png;base64,")
     assert caplog.records
     record = caplog.records[-1]
     assert record.message == "score request finished"
@@ -62,7 +61,7 @@ def test_build_score_response_logs_step_timings(caplog: LogCaptureFixture) -> No
     assert cast("float", record.__dict__["scoring_ms"]) >= 0
     assert cast("float", record.__dict__["normalize_ms"]) >= 0
     assert cast("float", record.__dict__["ranking_ms"]) >= 0
-    assert cast("float", record.__dict__["heatmap_ms"]) >= 0
+    assert record.__dict__["heatmap_ms"] == 0.0
     assert cast("float", record.__dict__["response_ms"]) >= 0
     assert record.__dict__["preferred_day_temperature"] == preferences.preferred_day_temperature
     assert record.__dict__["summer_heat_limit"] == preferences.summer_heat_limit
@@ -98,7 +97,7 @@ def test_build_score_response_returns_empty_payload_for_empty_matrix() -> None:
         make_preferences(),
     )
 
-    assert response == {"scores": [], "heatmap": ""}
+    assert response == {"scores": []}
 
 
 def test_build_score_response_returns_empty_payload_for_all_zero_matrix_scores(monkeypatch: MonkeyPatch) -> None:
@@ -134,10 +133,10 @@ def test_build_score_response_returns_empty_payload_for_all_zero_matrix_scores(m
         make_preferences(),
     )
 
-    assert response == {"scores": [], "heatmap": ""}
+    assert response == {"scores": []}
 
 
-def test_build_score_response_falls_back_to_array_heatmap_path_when_projection_cache_is_absent() -> None:
+def test_build_heatmap_response_falls_back_to_array_heatmap_path_when_projection_cache_is_absent() -> None:
     class MatrixOnlyRepository:
         def list_cells(self) -> tuple[ClimateCell, ...]:
             return ()
@@ -163,13 +162,12 @@ def test_build_score_response_falls_back_to_array_heatmap_path_when_projection_c
         def get_indexed_cities(self) -> CityRankingCache:
             return CityRankingCache.from_cities((), np.array([], dtype=np.int32))
 
-    response = build_score_response(
+    response = build_heatmap_response(
         cast("ClimateRepository", MatrixOnlyRepository()),
         make_preferences(),
     )
 
-    assert response["scores"] == []
-    assert response["heatmap"].startswith("data:image/png;base64,")
+    assert response.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_deduplicate_city_points_removes_duplicate_substituted_cities() -> None:

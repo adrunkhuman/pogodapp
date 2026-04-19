@@ -164,7 +164,7 @@ def test_app_runtime_shows_generic_error_and_clears_it_after_success() -> None:
             if (renderCalls.length !== 0) throw new Error("failed request should not render scores");
 
             triggerBody("htmx:beforeRequest", { elt: form });
-            triggerBody("htmx:afterRequest", { elt: form, xhr: { status: 200, responseText: '{"scores":[],"heatmap":""}' } });
+            triggerBody("htmx:afterRequest", { elt: form, xhr: { status: 200, responseText: '{"scores":[],"heatmap_url":""}' } });
 
             if (!errorIndicator.hidden) throw new Error("successful request should clear error indicator");
             if (!loadingIndicator.hidden) throw new Error("loading indicator should stay hidden after success");

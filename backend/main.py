@@ -9,6 +9,7 @@ from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Annotated, NamedTuple, Protocol, cast
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -31,7 +32,7 @@ from backend.climate_repository import (
 from backend.config import DEFAULT_PREFERENCES, MAP_PROJECTION
 from backend.logging_config import configure_backend_logging
 from backend.runtime import resolve_climate_database_path
-from backend.score_service import ScoreResponse, build_score_response
+from backend.score_service import ScoreResponse, build_heatmap_response, build_score_response
 from backend.scoring import (
     ClimateCell,
     PreferenceInputs,
@@ -258,6 +259,18 @@ def _coerce_score_cache_result(result: _ScoreCacheResult | ScoreResponse) -> _Sc
     return _ScoreCacheResult(response=result, cache_hit=False)
 
 
+def _heatmap_url(preferences: PreferenceInputs) -> str:
+    return "/heatmap?" + urlencode(
+        {
+            "preferred_day_temperature": preferences.preferred_day_temperature,
+            "summer_heat_limit": preferences.summer_heat_limit,
+            "winter_cold_limit": preferences.winter_cold_limit,
+            "dryness_preference": preferences.dryness_preference,
+            "sunshine_preference": preferences.sunshine_preference,
+        }
+    )
+
+
 def _build_probe_response_from_repository(
     repository: _SupportsProbeRepository,
     lat: float,
@@ -362,7 +375,7 @@ def _attach_http_request_logging(app: FastAPI) -> None:
         return response
 
 
-def create_app(
+def create_app(  # noqa: C901
     climate_repository: ClimateRepository | None = None,
 ) -> FastAPI:
     """Create the FastAPI application.
@@ -384,6 +397,7 @@ def create_app(
     score_cache = _ScoreResponseCache(SCORE_CACHE_SIZE)
     # Serialize /score work per worker so repeated slider changes do not pile up CPU-bound builds.
     score_request_semaphore = asyncio.Semaphore(1)
+    heatmap_request_semaphore = asyncio.Semaphore(1)
     preload_repository(repository)
 
     # Pre-warm default scores so the page-load HTMX POST hits cache instead of paying the cold path.
@@ -411,7 +425,7 @@ def create_app(
 
     @app.post("/score")
     @limiter.limit("30/minute")
-    async def score(request: Request, preferences: Annotated[PreferenceInputs, Form()]) -> ScoreResponse:
+    async def score(request: Request, preferences: Annotated[PreferenceInputs, Form()]) -> dict[str, object]:
         try:
             queue_started = perf_counter()
             async with score_request_semaphore:
@@ -440,8 +454,37 @@ def create_app(
                 },
             )
             raise HTTPException(status_code=503, detail=str(error)) from error
-        else:
-            return cache_result.response
+        return {
+            "scores": cache_result.response["scores"],
+            "heatmap_url": _heatmap_url(preferences) if cache_result.response["scores"] else "",
+        }
+
+    @app.get("/heatmap")
+    @limiter.limit("30/minute")
+    async def heatmap(
+        request: Request,
+        preferences: Annotated[PreferenceInputs, Depends(probe_preferences_dependency)],
+    ) -> Response:
+        try:
+            async with heatmap_request_semaphore:
+                heatmap_png = await run_in_threadpool(build_heatmap_response, repository, preferences)
+        except ClimateDataError as error:
+            logger.exception(
+                "heatmap request failed",
+                extra={
+                    "event": "heatmap_request",
+                    "outcome": "error",
+                    "preferred_day_temperature": preferences.preferred_day_temperature,
+                    "summer_heat_limit": preferences.summer_heat_limit,
+                    "winter_cold_limit": preferences.winter_cold_limit,
+                    "dryness_preference": preferences.dryness_preference,
+                    "sunshine_preference": preferences.sunshine_preference,
+                },
+            )
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        if not heatmap_png:
+            return Response(status_code=204)
+        return Response(content=heatmap_png, media_type="image/png")
 
     @app.get("/probe")
     @limiter.limit("120/minute")
