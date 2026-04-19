@@ -42,6 +42,7 @@ class ScoreTimings:
     normalize_ms: float = 0.0
     ranking_ms: float = 0.0
     heatmap_ms: float = 0.0
+    response_ms: float = 0.0
     total_ms: float = 0.0
 
 
@@ -70,6 +71,7 @@ def _elapsed_ms(start_time: float) -> float:
 def _empty_score_response(
     timings: ScoreTimings,
     *,
+    preferences: PreferenceInputs,
     request_started: float,
     context: ScoreContext,
     outcome: str,
@@ -77,6 +79,7 @@ def _empty_score_response(
     timings.total_ms = _elapsed_ms(request_started)
     _log_score_timings(
         timings,
+        preferences=preferences,
         climate_cell_count=context.climate_cell_count,
         city_count=context.city_count,
         ranked_city_count=0,
@@ -85,26 +88,31 @@ def _empty_score_response(
     return EMPTY_SCORE_RESPONSE
 
 
-def _finalize_score_response(
+def _finalize_score_response(  # noqa: PLR0913
     timings: ScoreTimings,
     *,
+    preferences: PreferenceInputs,
     request_started: float,
     context: ScoreContext,
     ranked_cities: list[CityScorePoint],
     heatmap_png: bytes,
 ) -> ScoreResponse:
+    response_started = perf_counter()
+    response: ScoreResponse = {
+        "scores": ranked_cities,
+        "heatmap": "data:image/png;base64," + base64.b64encode(heatmap_png).decode(),
+    }
+    timings.response_ms = _elapsed_ms(response_started)
     timings.total_ms = _elapsed_ms(request_started)
     _log_score_timings(
         timings,
+        preferences=preferences,
         climate_cell_count=context.climate_cell_count,
         city_count=context.city_count,
         ranked_city_count=len(ranked_cities),
         outcome="ok",
     )
-    return {
-        "scores": ranked_cities,
-        "heatmap": "data:image/png;base64," + base64.b64encode(heatmap_png).decode(),
-    }
+    return response
 
 
 def _filter_ranking_catalog(city_catalog: CityRankingCache) -> CityRankingCache:
@@ -266,9 +274,10 @@ def _rescore_city_points_from_cells(
     return _deduplicate_city_points(sorted(rescored, key=lambda city: city["score"], reverse=True))
 
 
-def _log_score_timings(
+def _log_score_timings(  # noqa: PLR0913
     timings: ScoreTimings,
     *,
+    preferences: PreferenceInputs,
     climate_cell_count: int,
     city_count: int,
     ranked_city_count: int,
@@ -286,9 +295,15 @@ def _log_score_timings(
             "normalize_ms": timings.normalize_ms,
             "ranking_ms": timings.ranking_ms,
             "heatmap_ms": timings.heatmap_ms,
+            "response_ms": timings.response_ms,
             "climate_cells": climate_cell_count,
             "cities": city_count,
             "ranked_cities": ranked_city_count,
+            "preferred_day_temperature": preferences.preferred_day_temperature,
+            "summer_heat_limit": preferences.summer_heat_limit,
+            "winter_cold_limit": preferences.winter_cold_limit,
+            "dryness_preference": preferences.dryness_preference,
+            "sunshine_preference": preferences.sunshine_preference,
         },
     )
 
@@ -331,6 +346,7 @@ def _build_score_response_from_matrix(
     if raw_scores.size == 0:
         return _empty_score_response(
             timings,
+            preferences=preferences,
             request_started=request_started,
             context=context,
             outcome="empty",
@@ -340,6 +356,7 @@ def _build_score_response_from_matrix(
     if max_score == 0.0:
         return _empty_score_response(
             timings,
+            preferences=preferences,
             request_started=request_started,
             context=context,
             outcome="all_zero",
@@ -371,6 +388,7 @@ def _build_score_response_from_matrix(
     timings.heatmap_ms = _elapsed_ms(heatmap_started)
     return _finalize_score_response(
         timings,
+        preferences=preferences,
         request_started=request_started,
         context=context,
         ranked_cities=top_cities,
@@ -401,6 +419,7 @@ def _build_score_response_from_cells(
     if not raw_scores:
         return _empty_score_response(
             timings,
+            preferences=preferences,
             request_started=request_started,
             context=context,
             outcome="empty",
@@ -411,6 +430,7 @@ def _build_score_response_from_cells(
         # An all-zero result carries no useful ranking or map signal for the UI.
         return _empty_score_response(
             timings,
+            preferences=preferences,
             request_started=request_started,
             context=context,
             outcome="all_zero",
@@ -437,6 +457,7 @@ def _build_score_response_from_cells(
     timings.heatmap_ms = _elapsed_ms(heatmap_started)
     return _finalize_score_response(
         timings,
+        preferences=preferences,
         request_started=request_started,
         context=context,
         ranked_cities=top_cities,
