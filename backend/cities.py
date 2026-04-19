@@ -352,7 +352,10 @@ class CityRankingCache:
     climate_indexes: NDArray[np.int32]
     latitude_radians: NDArray[np.float32]
     longitude_radians: NDArray[np.float32]
+    sine_latitudes: NDArray[np.float32]
     cosine_latitudes: NDArray[np.float32]
+    sine_longitudes: NDArray[np.float32]
+    cosine_longitudes: NDArray[np.float32]
     flags: tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -373,6 +376,18 @@ class CityRankingCache:
 
         if self.cosine_latitudes.shape != (city_count,):
             msg = "cosine_latitudes must align with cities"
+            raise ValueError(msg)
+
+        if self.sine_latitudes.shape != (city_count,):
+            msg = "sine_latitudes must align with cities"
+            raise ValueError(msg)
+
+        if self.sine_longitudes.shape != (city_count,):
+            msg = "sine_longitudes must align with cities"
+            raise ValueError(msg)
+
+        if self.cosine_longitudes.shape != (city_count,):
+            msg = "cosine_longitudes must align with cities"
             raise ValueError(msg)
 
         if len(self.flags) != city_count:
@@ -399,7 +414,10 @@ class CityRankingCache:
             climate_indexes=climate_indexes,
             latitude_radians=latitude_radians,
             longitude_radians=longitude_radians,
+            sine_latitudes=np.sin(latitude_radians).astype(np.float32, copy=False),
             cosine_latitudes=np.cos(latitude_radians).astype(np.float32, copy=False),
+            sine_longitudes=np.sin(longitude_radians).astype(np.float32, copy=False),
+            cosine_longitudes=np.cos(longitude_radians).astype(np.float32, copy=False),
             flags=tuple(country_flag(city.country_code) for city in cities),
         )
 
@@ -540,15 +558,20 @@ def _haversine_distance_vector_km(
     winner_index: int,
 ) -> NDArray[np.float32]:
     """Vectorized winner-to-all distances for one diversity-penalty update."""
-    latitude_radians = city_catalog.latitude_radians[winner_index]
-    longitude_radians = city_catalog.longitude_radians[winner_index]
+    sine_latitude = city_catalog.sine_latitudes[winner_index]
     cosine_latitude = city_catalog.cosine_latitudes[winner_index]
-    delta_lat = city_catalog.latitude_radians - latitude_radians
-    delta_lon = city_catalog.longitude_radians - longitude_radians
-    half_chord = (
-        np.sin(delta_lat / 2.0) ** 2 + cosine_latitude * city_catalog.cosine_latitudes * np.sin(delta_lon / 2.0) ** 2
+    cosine_delta_longitude = (
+        city_catalog.cosine_longitudes[winner_index] * city_catalog.cosine_longitudes
+        + city_catalog.sine_longitudes[winner_index] * city_catalog.sine_longitudes
     )
-    return (2.0 * EARTH_RADIUS_KM * np.arcsin(np.sqrt(half_chord))).astype(np.float32, copy=False)
+    central_angle_cosine = (
+        sine_latitude * city_catalog.sine_latitudes
+        + cosine_latitude * city_catalog.cosine_latitudes * cosine_delta_longitude
+    )
+    return (2.0 * EARTH_RADIUS_KM * np.arcsin(np.sqrt((1.0 - np.clip(central_angle_cosine, -1.0, 1.0)) / 2.0))).astype(
+        np.float32,
+        copy=False,
+    )
 
 
 def snap_city_to_cell_key(city: CityCandidate, *, grid_degrees: float = GRID_DEGREES) -> tuple[float, float]:
