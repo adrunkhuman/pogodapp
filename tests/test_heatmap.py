@@ -9,7 +9,6 @@ from backend.heatmap import (
     HeatmapProjection,
     _expand_detail_source,
     _preserve_local_maxima,
-    _smooth_styled_heatmap_gray,
     _stylize_heatmap_gray,
     render_heatmap_png_from_arrays,
     render_heatmap_png_from_projection,
@@ -133,18 +132,3 @@ def test_stylize_heatmap_gray_quantizes_to_limited_band_values() -> None:
     assert np.all(np.diff(styled[0].astype(np.int16)) >= 0)
     assert styled[0, 2] < gray[0, 2]
     assert styled[0, -1] == 255
-
-
-def test_smooth_styled_heatmap_gray_softens_isolated_speckle() -> None:
-    gray = np.array(
-        [
-            [0, 0, 0],
-            [0, 255, 0],
-            [0, 0, 0],
-        ],
-        dtype=np.uint8,
-    )
-
-    smoothed = _smooth_styled_heatmap_gray(gray)
-
-    assert smoothed[1, 1] == 255

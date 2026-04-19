@@ -32,7 +32,6 @@ DETAIL_PRESERVE_STRENGTH = 0.9
 PEAK_BOOST_THRESHOLD = 0.72
 PEAK_BOOST_STRENGTH = 1.0
 SCORE_CURVE_GAMMA = 1.35
-FINAL_SMOOTH_BLUR_RADIUS = 0.0
 _MERCATOR_MAX_RENDER_LATITUDE = MAP_PROJECTION.max_render_latitude
 
 if MAP_PROJECTION.name != "mercator" or _MERCATOR_MAX_RENDER_LATITUDE is None:
@@ -160,13 +159,6 @@ def _stylize_heatmap_gray(gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
     return np.rint(curved * 255).astype(np.uint8)
 
 
-def _smooth_styled_heatmap_gray(gray: NDArray[np.uint8]) -> NDArray[np.uint8]:
-    """Calm coastal chatter in the styled output without smearing the whole field."""
-    if FINAL_SMOOTH_BLUR_RADIUS <= 0.0:
-        return gray
-    return np.asarray(Image.fromarray(gray, mode="L").filter(ImageFilter.GaussianBlur(radius=FINAL_SMOOTH_BLUR_RADIUS)))
-
-
 def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np.ndarray) -> bytes:
     """Rasterize one score vector aligned with the projection's source climate-matrix rows."""
     work_scores = scores[projection.score_indexes]
@@ -209,13 +201,12 @@ def render_heatmap_png_from_projection(projection: HeatmapProjection, scores: np
         dtype=np.uint8,
     )
     source_point_floor = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
-    np.maximum.at(source_point_floor, (projection.ys, projection.xs), scores[projection.score_indexes])
+    np.maximum.at(source_point_floor, (projection.ys, projection.xs), work_scores)
     blended_gray = np.maximum(
         blended_gray,
         np.rint(source_point_floor * 255.0 * SOURCE_POINT_FLOOR_STRENGTH).astype(np.uint8),
     )
     styled_gray = _stylize_heatmap_gray((blended_gray * projection.land_mask).astype(np.uint8))
-    styled_gray = (_smooth_styled_heatmap_gray(styled_gray) * projection.land_mask).astype(np.uint8)
     rgba = _COLOR_RAMP_LOOKUP[styled_gray]
 
     buf = BytesIO()
