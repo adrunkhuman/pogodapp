@@ -298,36 +298,15 @@ class DuckDbClimateRepository:
 
         city_cache_mb = 0.0
         if self._indexed_cities is not None:
-            city_cache_mb = round(
-                (
-                    self._indexed_cities.climate_indexes.nbytes
-                    + self._indexed_cities.latitude_radians.nbytes
-                    + self._indexed_cities.longitude_radians.nbytes
-                    + self._indexed_cities.cosine_latitudes.nbytes
-                )
-                / (1024 * 1024),
-                1,
-            )
+            city_cache_mb = round(self._city_cache_nbytes(self._indexed_cities) / (1024 * 1024), 1)
 
         probe_lookup_mb = 0.0
         if self._sorted_climate_keys is not None and self._sorted_climate_indexes is not None:
-            probe_lookup_mb = round(
-                (self._sorted_climate_keys.nbytes + self._sorted_climate_indexes.nbytes) / (1024 * 1024),
-                1,
-            )
+            probe_lookup_mb = round(self._probe_lookup_nbytes() / (1024 * 1024), 1)
 
         heatmap_projection_mb = 0.0
         if self._heatmap_projection is not None:
-            heatmap_projection_mb = round(
-                (
-                    self._heatmap_projection.score_indexes.nbytes
-                    + self._heatmap_projection.xs.nbytes
-                    + self._heatmap_projection.ys.nbytes
-                    + self._heatmap_projection.land_mask.nbytes
-                )
-                / (1024 * 1024),
-                1,
-            )
+            heatmap_projection_mb = round(self._heatmap_projection_nbytes(self._heatmap_projection) / (1024 * 1024), 1)
 
         return {
             "climate_matrix_mb": climate_matrix_mb,
@@ -509,3 +488,25 @@ class DuckDbClimateRepository:
         if climate_matrix.cloud_cover_pct is not None:
             total += climate_matrix.cloud_cover_pct.nbytes
         return total
+
+    def _city_cache_nbytes(self, city_cache: CityRankingCache) -> int:
+        return (
+            city_cache.climate_indexes.nbytes
+            + city_cache.latitude_radians.nbytes
+            + city_cache.longitude_radians.nbytes
+            + city_cache.cosine_latitudes.nbytes
+        )
+
+    def _probe_lookup_nbytes(self) -> int:
+        if self._sorted_climate_keys is None or self._sorted_climate_indexes is None:
+            return 0
+        return self._sorted_climate_keys.nbytes + self._sorted_climate_indexes.nbytes
+
+    def _heatmap_projection_nbytes(self, heatmap_projection: HeatmapProjection) -> int:
+        return (
+            heatmap_projection.score_indexes.nbytes
+            + heatmap_projection.xs.nbytes
+            + heatmap_projection.ys.nbytes
+            + heatmap_projection.work_indexes.nbytes
+            + heatmap_projection.land_mask.nbytes
+        )
