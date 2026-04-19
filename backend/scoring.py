@@ -349,6 +349,26 @@ def _temperature_score_block(
     return ideal_scores
 
 
+def _rain_score_block(climate_matrix: ClimateMatrix, dryness_ratio: np.float32) -> NDArray[np.float32]:
+    """Score the precipitation constraints while reusing temporary buffers."""
+    typical_rain_scores = np.empty_like(climate_matrix.median_precipitation_mm)
+    np.divide(climate_matrix.median_precipitation_mm, SATURATING_MONTHLY_RAIN_MM, out=typical_rain_scores)
+    np.multiply(typical_rain_scores, dryness_ratio, out=typical_rain_scores)
+    np.subtract(1.0, typical_rain_scores, out=typical_rain_scores)
+    np.clip(typical_rain_scores, MULTIPLICATIVE_SCORE_FLOOR, 1.0, out=typical_rain_scores)
+
+    wettest_month_scores = np.empty_like(climate_matrix.wettest_precipitation_mm)
+    np.divide(climate_matrix.wettest_precipitation_mm, SATURATING_WETTEST_MONTH_RAIN_MM, out=wettest_month_scores)
+    np.multiply(wettest_month_scores, dryness_ratio, out=wettest_month_scores)
+    np.subtract(1.0, wettest_month_scores, out=wettest_month_scores)
+    np.clip(wettest_month_scores, MULTIPLICATIVE_SCORE_FLOOR, 1.0, out=wettest_month_scores)
+
+    np.power(typical_rain_scores, PRECIPITATION_PROFILE_MEDIAN_WEIGHT, out=typical_rain_scores)
+    np.power(wettest_month_scores, PRECIPITATION_PROFILE_PEAK_WEIGHT, out=wettest_month_scores)
+    np.multiply(typical_rain_scores, wettest_month_scores, out=typical_rain_scores)
+    return typical_rain_scores
+
+
 STUB_CLIMATE_CELLS: tuple[ClimateCell, ...] = (
     ClimateCell(
         lat=37.5,
@@ -585,20 +605,7 @@ def score_climate_matrix(
         timings.temperature_ms = (perf_counter() - temperature_started) * 1000
 
     rain_started = perf_counter()
-    typical_rain_scores = np.clip(
-        1.0 - (climate_matrix.median_precipitation_mm / SATURATING_MONTHLY_RAIN_MM) * dryness_ratio,
-        0.0,
-        1.0,
-    )
-    wettest_month_scores = np.clip(
-        1.0 - (climate_matrix.wettest_precipitation_mm / SATURATING_WETTEST_MONTH_RAIN_MM) * dryness_ratio,
-        0.0,
-        1.0,
-    )
-    rain_scores = (
-        np.maximum(typical_rain_scores, MULTIPLICATIVE_SCORE_FLOOR) ** PRECIPITATION_PROFILE_MEDIAN_WEIGHT
-        * np.maximum(wettest_month_scores, MULTIPLICATIVE_SCORE_FLOOR) ** PRECIPITATION_PROFILE_PEAK_WEIGHT
-    ).astype(np.float32, copy=False)
+    rain_scores = _rain_score_block(climate_matrix, dryness_ratio)
     if timings is not None:
         timings.rain_ms = (perf_counter() - rain_started) * 1000
 
