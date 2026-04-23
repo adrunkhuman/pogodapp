@@ -34,9 +34,10 @@ PEAK_BOOST_STRENGTH = 1.0
 SCORE_CURVE_GAMMA = 1.35
 _MERCATOR_MAX_RENDER_LATITUDE = MAP_PROJECTION.max_render_latitude
 
-if MAP_PROJECTION.name != "mercator" or _MERCATOR_MAX_RENDER_LATITUDE is None:
-    msg = f"Unsupported heatmap projection: {MAP_PROJECTION.name}"
-    raise ValueError(msg)
+if MAP_PROJECTION.name != "mercator":
+    raise AssertionError(f"Unsupported heatmap projection: {MAP_PROJECTION.name}")
+if _MERCATOR_MAX_RENDER_LATITUDE is None:
+    raise AssertionError(f"Unsupported heatmap projection: {MAP_PROJECTION.name}")
 
 # Mercator y at the maximum latitude, used to normalise y to [0, HEIGHT].
 _Y_MAX = math.log(math.tan(math.pi / 4 + _MERCATOR_MAX_RENDER_LATITUDE * math.pi / 360))

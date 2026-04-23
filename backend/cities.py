@@ -363,44 +363,27 @@ class CityRankingCache:
     flags: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        """Reject malformed ranking arrays before they reach the hot path."""
+        """Keep cached ranking arrays aligned with the city tuple."""
         city_count = len(self.cities)
 
         if self.climate_indexes.shape != (city_count,):
-            msg = "climate_indexes must align with cities"
-            raise ValueError(msg)
-
+            raise AssertionError("climate_indexes must align with cities")
         if self.latitude_radians.shape != (city_count,):
-            msg = "latitude_radians must align with cities"
-            raise ValueError(msg)
-
+            raise AssertionError("latitude_radians must align with cities")
         if self.populations.shape != (city_count,):
-            msg = "populations must align with cities"
-            raise ValueError(msg)
-
+            raise AssertionError("populations must align with cities")
         if self.longitude_radians.shape != (city_count,):
-            msg = "longitude_radians must align with cities"
-            raise ValueError(msg)
-
+            raise AssertionError("longitude_radians must align with cities")
         if self.cosine_latitudes.shape != (city_count,):
-            msg = "cosine_latitudes must align with cities"
-            raise ValueError(msg)
-
+            raise AssertionError("cosine_latitudes must align with cities")
         if self.sine_latitudes.shape != (city_count,):
-            msg = "sine_latitudes must align with cities"
-            raise ValueError(msg)
-
+            raise AssertionError("sine_latitudes must align with cities")
         if self.sine_longitudes.shape != (city_count,):
-            msg = "sine_longitudes must align with cities"
-            raise ValueError(msg)
-
+            raise AssertionError("sine_longitudes must align with cities")
         if self.cosine_longitudes.shape != (city_count,):
-            msg = "cosine_longitudes must align with cities"
-            raise ValueError(msg)
-
+            raise AssertionError("cosine_longitudes must align with cities")
         if len(self.flags) != city_count:
-            msg = "flags must align with cities"
-            raise ValueError(msg)
+            raise AssertionError("flags must align with cities")
 
     @classmethod
     def from_cities(
