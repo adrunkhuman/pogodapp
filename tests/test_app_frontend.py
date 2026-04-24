@@ -122,6 +122,66 @@ def _run_app_runtime_scenario(scenario: str) -> None:
     assert result.returncode == 0, result.stderr or result.stdout
 
 
+def _run_sidebar_runtime_scenario(scenario: str) -> None:
+    root = Path(__file__).resolve().parents[1]
+    sidebar_script = (root / "frontend" / "static" / "map-sidebar.js").read_text(encoding="utf-8")
+    script = textwrap.dedent(
+        rf"""
+        const vm = require("node:vm");
+
+        class ElementStub {{
+          constructor(tagName) {{
+            this.tagName = tagName;
+            this.children = [];
+            this.className = "";
+            this.tabIndex = null;
+            this.textContent = "";
+            this.title = "";
+            this.type = "";
+            this.listeners = new Map();
+          }}
+
+          append(...children) {{
+            this.children.push(...children);
+          }}
+
+          replaceChildren(...children) {{
+            this.children = [...children];
+          }}
+
+          addEventListener(name, handler) {{
+            this.listeners.set(name, handler);
+          }}
+        }}
+
+        const results = new ElementStub("ul");
+        const focusCalls = [];
+
+        globalThis.document = {{
+          createElement(tagName) {{ return new ElementStub(tagName); }},
+          getElementById(id) {{ return id === "score-results-list" ? results : null; }},
+        }};
+        globalThis.CONTINENT_ORDER = ["Europe", "Asia", "Africa", "North America", "South America", "Oceania"];
+        globalThis.continentVisibleCounts = new Map();
+        globalThis.visibleCountForContinent = (continent) => globalThis.continentVisibleCounts.get(continent) ?? 5;
+        globalThis.nextVisibleCount = (currentVisibleCount) => Math.ceil((currentVisibleCount + 1) / 5) * 5;
+        globalThis.currentScores = [];
+        globalThis.mapLoaded = false;
+        globalThis.countryNames = {{ of(code) {{ return code === "CO" ? "Colombia" : code; }} }};
+        globalThis.focusCityFromList = (point) => focusCalls.push(point);
+        globalThis.applyMarkers = () => {{}};
+        globalThis.visibleMarkers = () => [];
+
+        vm.runInThisContext({sidebar_script!r});
+
+        {scenario}
+        """
+    )
+
+    result = subprocess.run(["node", "-e", script], cwd=root, capture_output=True, text=True, check=False)  # noqa: S603,S607
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
 def test_app_runtime_preserves_original_slider_bounds_when_typical_day_changes() -> None:
     _run_app_runtime_scenario(
         textwrap.dedent(
@@ -212,6 +272,40 @@ def test_app_runtime_surfaces_validation_error_message_for_invalid_preferences()
             if (errorIndicator.textContent !== "preferred_day_temperature must be greater than or equal to winter_cold_limit") {
               throw new Error(`unexpected validation text ${errorIndicator.textContent}`);
             }
+            """
+        )
+    )
+
+
+def test_sidebar_runtime_renders_city_labels_and_focus_handlers() -> None:
+    _run_sidebar_runtime_scenario(
+        textwrap.dedent(
+            """
+            const scores = [{
+              name: "Bogota",
+              continent: "South America",
+              country_code: "CO",
+              flag: "🇨🇴",
+              score: 0.91,
+              lat: 4.711,
+              lon: -74.0721,
+              probe_lat: 4.7083,
+              probe_lon: -74.0417,
+            }];
+
+            renderScoreList(scores);
+
+            const cityItem = results.children.find((item) => item.className === "score-results__item");
+            if (!cityItem) throw new Error("missing rendered city item");
+            const renderedText = cityItem.children.map((child) => child.textContent).join(" ");
+            if (!renderedText.includes("Bogota")) throw new Error(`missing city name in ${renderedText}`);
+            if (!renderedText.includes("🇨🇴")) throw new Error(`missing flag in ${renderedText}`);
+            if (renderedText.includes("4.711")) throw new Error(`rendered coordinates instead of label: ${renderedText}`);
+
+            cityItem.listeners.get("click")();
+
+            if (focusCalls.length !== 1) throw new Error(`expected one focus call, got ${focusCalls.length}`);
+            if (focusCalls[0].name !== "Bogota") throw new Error("focused wrong city");
             """
         )
     )
