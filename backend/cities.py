@@ -362,46 +362,6 @@ class CityRankingCache:
     cosine_longitudes: NDArray[np.float32]
     flags: tuple[str, ...]
 
-    def __post_init__(self) -> None:
-        """Reject malformed ranking arrays before they reach the hot path."""
-        city_count = len(self.cities)
-
-        if self.climate_indexes.shape != (city_count,):
-            msg = "climate_indexes must align with cities"
-            raise ValueError(msg)
-
-        if self.latitude_radians.shape != (city_count,):
-            msg = "latitude_radians must align with cities"
-            raise ValueError(msg)
-
-        if self.populations.shape != (city_count,):
-            msg = "populations must align with cities"
-            raise ValueError(msg)
-
-        if self.longitude_radians.shape != (city_count,):
-            msg = "longitude_radians must align with cities"
-            raise ValueError(msg)
-
-        if self.cosine_latitudes.shape != (city_count,):
-            msg = "cosine_latitudes must align with cities"
-            raise ValueError(msg)
-
-        if self.sine_latitudes.shape != (city_count,):
-            msg = "sine_latitudes must align with cities"
-            raise ValueError(msg)
-
-        if self.sine_longitudes.shape != (city_count,):
-            msg = "sine_longitudes must align with cities"
-            raise ValueError(msg)
-
-        if self.cosine_longitudes.shape != (city_count,):
-            msg = "cosine_longitudes must align with cities"
-            raise ValueError(msg)
-
-        if len(self.flags) != city_count:
-            msg = "flags must align with cities"
-            raise ValueError(msg)
-
     @classmethod
     def from_cities(
         cls,
