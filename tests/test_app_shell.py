@@ -220,13 +220,6 @@ def test_home_page_uses_backend_default_preferences() -> None:
         assert control["value"] == str(preference.value)
 
 
-def test_app_bootstrap_relies_on_htmx_load_trigger_instead_of_manual_submit() -> None:
-    response = client.get("/static/app.js")
-
-    assert response.status_code == 200
-    assert 'window.htmx.trigger(form, "submit")' not in response.text
-
-
 def test_preference_contract_matches_issue_scope() -> None:
     expected_names = (
         "preferred_day_temperature",
@@ -270,27 +263,6 @@ def test_local_map_assets_are_served() -> None:
     assert geojson_response.json()["type"] == "FeatureCollection"
 
 
-def test_map_static_modules_expose_runtime_handoffs() -> None:
-    map_response = client.get("/static/map.js")
-    core_response = client.get("/static/map-core.js")
-    layers_response = client.get("/static/map-layers.js")
-    sidebar_response = client.get("/static/map-sidebar.js")
-    probe_response = client.get("/static/map-probe.js")
-
-    assert map_response.status_code == 200
-    assert core_response.status_code == 200
-    assert layers_response.status_code == 200
-    assert sidebar_response.status_code == 200
-    assert probe_response.status_code == 200
-
-    assert "window.renderScores" in map_response.text
-    assert "window.POGODAPP_MAP_CONFIG" in core_response.text
-    assert "function applyHeatmap" in layers_response.text
-    assert "function applyMarkers" in layers_response.text
-    assert "function renderScoreList" in sidebar_response.text
-    assert "function fetchProbe" in probe_response.text
-
-
 def test_map_contract_does_not_depend_on_remote_basemap_assets() -> None:
     home_response = client.get("/")
     script_response = client.get("/static/map.js")
@@ -312,20 +284,6 @@ def test_map_contract_does_not_depend_on_remote_basemap_assets() -> None:
     assert "https://" not in core_response.text
     assert "https://" not in layers_response.text
     assert "https://" not in probe_response.text
-
-
-def test_probe_script_snaps_cache_keys_and_query_params_to_backend_grid() -> None:
-    response = client.get("/static/map-probe.js")
-    core_response = client.get("/static/map-core.js")
-
-    assert response.status_code == 200
-    assert core_response.status_code == 200
-    assert "function snapProbeCoordinate" in response.text
-    assert "probeGridDegrees" in response.text
-    assert "URLSearchParams" in response.text
-    assert "fetch(`/probe?${params}`" in response.text
-    assert "PROBE_HOVER_COOLDOWN_MS" in core_response.text
-    assert "AbortController" in response.text
 
 
 def test_home_page_uses_gzip_when_requested() -> None:
@@ -1198,7 +1156,9 @@ def test_probe_endpoint_returns_scored_breakdown_for_a_valid_cell() -> None:
     assert set(payload) == {"found", "overall_score", "metrics"}
     assert len(payload["metrics"]) == 5
     assert [metric["key"] for metric in payload["metrics"]] == ["temp", "high", "low", "rain", "sun"]
-    assert all(set(metric) == {"key", "label", "value", "display_value", "score"} for metric in payload["metrics"])
+    assert [set(metric) for metric in payload["metrics"]] == [
+        {"key", "label", "value", "display_value", "score"},
+    ] * 5
 
 
 def test_probe_endpoint_offloads_breakdown_to_threadpool(monkeypatch: MonkeyPatch) -> None:

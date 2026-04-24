@@ -156,6 +156,24 @@ def test_probe_runtime_ignores_inflight_layer_response_after_mouseleave() -> Non
     )
 
 
+def test_probe_runtime_snaps_query_params_to_backend_grid() -> None:
+    _run_probe_runtime_scenario(
+        textwrap.dedent(
+            """
+            fetchProbe(37.51, -122.02, 10, 20, null, { cooldownMs: 0, requestToken: ++probeRequestToken });
+
+            if (pendingFetches.length !== 1) throw new Error(`expected 1 probe request, got ${pendingFetches.length}`);
+            const url = new URL(pendingFetches[0].url, "https://example.test");
+
+            if (url.pathname !== "/probe") throw new Error(`unexpected probe path ${url.pathname}`);
+            if (url.searchParams.get("lat") !== "37.5417") throw new Error(`unexpected snapped lat ${url.searchParams.get("lat")}`);
+            if (url.searchParams.get("lon") !== "-122.0417") throw new Error(`unexpected snapped lon ${url.searchParams.get("lon")}`);
+            if (url.searchParams.get("preferred_day_temperature") !== "22") throw new Error("missing preferences in probe query");
+            """
+        )
+    )
+
+
 def test_probe_runtime_cancels_queued_hover_probe_after_preference_change() -> None:
     _run_probe_runtime_scenario(
         textwrap.dedent(
