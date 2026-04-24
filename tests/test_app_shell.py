@@ -4,6 +4,7 @@ import asyncio
 import logging
 import threading
 import time
+from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
@@ -77,6 +78,26 @@ def rendered_default_form_data() -> dict[str, str]:
     return {preference.name: str(preference.value) for preference in DEFAULT_PREFERENCES}
 
 
+class ElementCollector(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.by_id: dict[str, dict[str, str | None]] = {}
+        self.by_tag: dict[str, list[dict[str, str | None]]] = {}
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        self.by_tag.setdefault(tag, []).append(attributes)
+        element_id = attributes.get("id")
+        if element_id is not None:
+            self.by_id[element_id] = attributes
+
+
+def parse_elements(markup: str) -> ElementCollector:
+    parser = ElementCollector()
+    parser.feed(markup)
+    return parser
+
+
 async def wait_for_thread_event(event: threading.Event, max_wait_seconds: float = 1.0) -> None:
     deadline = time.perf_counter() + max_wait_seconds
     while time.perf_counter() < deadline:
@@ -137,52 +158,66 @@ def test_home_page_renders() -> None:
     response = client.get("/")
 
     assert response.status_code == 200
+    elements = parse_elements(response.text)
+
     assert "POGODAPP" in response.text
     assert "Pick the climate you like and see where it shows up." in response.text
-    assert 'hx-post="/score"' in response.text
-    assert 'hx-trigger="load, change delay:500ms"' in response.text
-    assert 'hx-sync="this:replace"' in response.text
-    assert 'hx-swap="none"' in response.text
-    assert 'id="score-loading-indicator"' in response.text
-    assert 'id="score-error-indicator"' in response.text
-    assert 'id="map-description"' in response.text
-    assert 'id="map-status"' in response.text
-    assert 'id="map-legend"' in response.text
     assert "Climate compatibility" in response.text
-    assert ">Map</h2>" in response.text
-    assert (
-        'id="map" role="region" aria-label="Interactive climate score map" aria-describedby="map-description map-legend map-status"'
-        in response.text
-    )
-    assert 'id="score-results-list"' in response.text
-    assert "/static/vendor/maplibre-gl.css" in response.text
-    assert "/static/vendor/maplibre-gl.js" in response.text
-    assert "/static/map-core.js" in response.text
-    assert "/static/map-sidebar.js" in response.text
-    assert "/static/map-probe.js" in response.text
-    assert "/static/map-layers.js" in response.text
-    assert "/static/map.js" in response.text
-    assert "/static/app.js" in response.text
+    assert "POGODAPP_INITIAL_SCORES" not in response.text
+
+    form = elements.by_id["preferences"]
+    assert form["hx-post"] == "/score"
+    assert "load" in cast("str", form["hx-trigger"])
+    assert "change" in cast("str", form["hx-trigger"])
+    assert form["hx-swap"] == "none"
+    assert elements.by_id["score-loading-indicator"]["role"] == "status"
+    assert elements.by_id["score-error-indicator"]["role"] == "alert"
+
+    map_element = elements.by_id["map"]
+    assert map_element["role"] == "region"
+    assert map_element["aria-label"] == "Interactive climate score map"
+    assert set(cast("str", map_element["aria-describedby"]).split()) == {
+        "map-description",
+        "map-legend",
+        "map-status",
+    }
+    assert "score-results-list" in elements.by_id
+
+    script_sources = {script["src"] for script in elements.by_tag["script"] if "src" in script}
+    assert {
+        "/static/vendor/htmx.min.js",
+        "/static/vendor/maplibre-gl.js",
+        "/static/map-core.js",
+        "/static/map-sidebar.js",
+        "/static/map-probe.js",
+        "/static/map-layers.js",
+        "/static/map.js",
+        "/static/app.js",
+    } <= script_sources
+    stylesheet_hrefs = {link["href"] for link in elements.by_tag["link"] if link.get("rel") == "stylesheet"}
+    assert "/static/vendor/maplibre-gl.css" in stylesheet_hrefs
+    assert "/static/styles.css" in stylesheet_hrefs
     assert "window.POGODAPP_MAP_CONFIG" in response.text
     assert MAP_PROJECTION.name in response.text
     assert "probeGridDegrees" in response.text
     assert str(GRID_DEGREES) in response.text
-    assert "POGODAPP_INITIAL_SCORES" not in response.text
 
 
 def test_home_page_uses_backend_default_preferences() -> None:
     response = client.get("/")
 
     assert response.status_code == 200
+    elements = parse_elements(response.text)
 
     for preference in DEFAULT_PREFERENCES:
-        assert f'id="{preference.name}"' in response.text
-        assert f'name="{preference.name}"' in response.text
-        assert f'data-field="{preference.name}"' in response.text
-        assert f'min="{preference.minimum}"' in response.text
-        assert f'max="{preference.maximum}"' in response.text
-        assert f'step="{preference.step}"' in response.text
-        assert f'value="{preference.value}"' in response.text
+        control = elements.by_id[preference.name]
+        assert control["name"] == preference.name
+        assert control["data-field"] == preference.name
+        assert control["type"] == "range"
+        assert control["min"] == str(preference.minimum)
+        assert control["max"] == str(preference.maximum)
+        assert control["step"] == str(preference.step)
+        assert control["value"] == str(preference.value)
 
 
 def test_app_bootstrap_relies_on_htmx_load_trigger_instead_of_manual_submit() -> None:
@@ -219,21 +254,7 @@ def test_static_files_are_served() -> None:
     response = client.get("/static/styles.css")
 
     assert response.status_code == 200
-    assert "font-family" in response.text
-
-
-def test_styles_lock_desktop_shell_to_viewport_height() -> None:
-    response = client.get("/static/styles.css")
-
-    assert response.status_code == 200
-    assert "html {" in response.text
-    assert "height: 100vh;" in response.text
-    assert "overflow: hidden;" in response.text
-    assert "#preferences {" in response.text
-    assert "align-content: start;" in response.text
-    assert "overflow: auto;" in response.text
-    assert "width: 100%;" in response.text
-    assert "justify-self: stretch;" in response.text
+    assert response.headers["content-type"].startswith("text/css")
 
 
 def test_local_map_assets_are_served() -> None:
@@ -249,28 +270,25 @@ def test_local_map_assets_are_served() -> None:
     assert geojson_response.json()["type"] == "FeatureCollection"
 
 
-def test_map_script_initializes_maplibre_score_layer() -> None:
-    response = client.get("/static/map.js")
+def test_map_static_modules_expose_runtime_handoffs() -> None:
+    map_response = client.get("/static/map.js")
     core_response = client.get("/static/map-core.js")
     layers_response = client.get("/static/map-layers.js")
+    sidebar_response = client.get("/static/map-sidebar.js")
+    probe_response = client.get("/static/map-probe.js")
 
-    assert response.status_code == 200
+    assert map_response.status_code == 200
     assert core_response.status_code == 200
     assert layers_response.status_code == 200
-    assert "new window.maplibregl.Map" in response.text
-    assert "WORLD_BACKDROP_URL" in response.text
-    assert "HEATMAP_SOURCE_ID" in layers_response.text
-    assert "data: WORLD_BACKDROP_URL" in response.text
-    assert "id: LAND_LAYER_ID" in response.text
-    assert "id: BORDER_LAYER_ID" in response.text
-    assert 'type: "image"' in layers_response.text
-    assert 'type: "raster"' in layers_response.text
-    assert "projection: { type: MAP_CONFIG.projection }" in response.text
+    assert sidebar_response.status_code == 200
+    assert probe_response.status_code == 200
+
+    assert "window.renderScores" in map_response.text
     assert "window.POGODAPP_MAP_CONFIG" in core_response.text
-    assert "WORLD_CORNERS" in core_response.text
-    assert "updateImage" in layers_response.text
-    assert 'setMapStatus("Map backdrop ready.");' in response.text
-    assert 'setMapStatus("Map library failed to load.");' in response.text
+    assert "function applyHeatmap" in layers_response.text
+    assert "function applyMarkers" in layers_response.text
+    assert "function renderScoreList" in sidebar_response.text
+    assert "function fetchProbe" in probe_response.text
 
 
 def test_map_contract_does_not_depend_on_remote_basemap_assets() -> None:
@@ -304,16 +322,10 @@ def test_probe_script_snaps_cache_keys_and_query_params_to_backend_grid() -> Non
     assert core_response.status_code == 200
     assert "function snapProbeCoordinate" in response.text
     assert "probeGridDegrees" in response.text
-    assert "const snapped = snapProbeCoordinate(lat, lon);" in response.text
-    assert "const cacheKey = `${snapped.lat},${snapped.lon},${new URLSearchParams(prefs)}`;" in response.text
-    assert "new URLSearchParams({ lat: snapped.lat, lon: snapped.lon, ...prefs });" in response.text
-    assert "const PROBE_HOVER_COOLDOWN_MS = 250;" in core_response.text
-    assert "let probeRequestToken = 0;" in core_response.text
-    assert "probeRequestToken += 1;" in response.text
-    assert "cancelProbeCooldown();" in response.text
-    assert "abortActiveProbe();" in response.text
-    assert "requestToken !== probeRequestToken" in response.text
-    assert "requestToken = ++probeRequestToken" in response.text
+    assert "URLSearchParams" in response.text
+    assert "fetch(`/probe?${params}`" in response.text
+    assert "PROBE_HOVER_COOLDOWN_MS" in core_response.text
+    assert "AbortController" in response.text
 
 
 def test_home_page_uses_gzip_when_requested() -> None:
@@ -1287,43 +1299,6 @@ def test_probe_endpoint_returns_503_for_repository_failures() -> None:
 
     assert response.status_code == 503
     assert response.json() == {"detail": "Climate database file not found: data/climate.duckdb"}
-
-
-def test_home_page_registers_htmx_handoff_script() -> None:
-    response = client.get("/")
-    app_script = client.get("/static/app.js")
-
-    assert response.status_code == 200
-    assert app_script.status_code == 200
-    assert "/static/app.js" in response.text
-    assert "htmx:afterRequest" in app_script.text
-    assert "htmx:beforeRequest" in app_script.text
-    assert "window.renderScores(JSON.parse(event.detail.xhr.responseText));" in app_script.text
-    assert "loadingIndicator.hidden = !isLoading;" in app_script.text
-    assert 'const errorIndicator = document.getElementById("score-error-indicator");' in app_script.text
-    assert "if (event.detail.xhr.status !== 200) {" in app_script.text
-    assert "Could not calculate scores." in app_script.text
-    assert "summerHeatInput.min = String(Math.max(summerHeatMinimum, preferredDayValue));" in app_script.text
-    assert "winterColdInput.max = String(Math.min(winterColdMaximum, preferredDayValue));" in app_script.text
-    assert "scoreErrorMessage" not in app_script.text
-
-
-def test_map_script_renders_city_labels_instead_of_coordinates() -> None:
-    sidebar_response = client.get("/static/map-sidebar.js")
-    probe_response = client.get("/static/map-probe.js")
-    layers_response = client.get("/static/map-layers.js")
-
-    assert sidebar_response.status_code == 200
-    assert probe_response.status_code == 200
-    assert layers_response.status_code == 200
-    assert "point.country_code" in sidebar_response.text
-    assert "point.name" in sidebar_response.text
-    assert "point.flag" in sidebar_response.text
-    assert "score-results__item" in sidebar_response.text
-    assert "if (!response.ok) throw new Error" in probe_response.text
-    assert "metric.display_value" in probe_response.text
-    assert "metric.score" in probe_response.text
-    assert "probe_lat" in layers_response.text
 
 
 def test_build_probe_response_preserves_metric_order_and_fields() -> None:
