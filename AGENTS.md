@@ -11,8 +11,9 @@
 
 - `POST /score` accepts standard form fields through FastAPI `Form()` parameters.
 - `POST /score` returns raw JSON, not HTML fragments.
-- The response contract is `{"scores": [{"name", "country_code", "flag", "score"}, ...], "heatmap": "data:image/png;base64,..."}`.
-- Empty or all-zero results return `{"scores": [], "heatmap": ""}`.
+- The response contract is `{"scores": [{"name", "country_code", "flag", "score"}, ...], "heatmap_url": "/heatmap?..."}`.
+- `GET /heatmap` returns the rendered PNG for the current preferences, or `204` when nothing matches.
+- Empty or all-zero `/score` results return `{"scores": [], "heatmap_url": ""}`.
 - `score` stays normalized to the `0..1` range.
 
 ## Frontend Boundaries
