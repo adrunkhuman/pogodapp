@@ -55,7 +55,10 @@ Rate limits:
 - Source: WorldClim 2.1 monthly normals.
 - Default runtime dataset: native `5m` resolution.
 - Main database: `data/climate.duckdb`.
-- If the database is missing, the app falls back to a small in-repo stub dataset.
+- `climate.duckdb` is generated, not committed to the repo.
+- If the database is missing, the app falls back to a small in-repo stub dataset by default.
+- Set `POGODAPP_BUILD_CLIMATE_DB_IF_MISSING=true` to generate and validate `climate.duckdb` during app launch.
+- Production deployments should use persistent `data/` storage so startup generation is a one-time bootstrap.
 - Older databases from before the `tmin_*` and `tmax_*` schema change are not compatible. Rebuild them.
 
 ## Run locally
@@ -92,7 +95,7 @@ Supported resolutions: `10m`, `5m`, `2.5m`, `30s`.
 - `POGODAPP_DATA_DIR`: base directory for runtime data. Default: `data`
 - `POGODAPP_CLIMATE_DB`: DuckDB path. Default: `{POGODAPP_DATA_DIR}/climate.duckdb`
 - `POGODAPP_CLIMATE_CACHE_DIR`: download cache directory. Default: `{POGODAPP_DATA_DIR}/worldclim`
-- `POGODAPP_BUILD_CLIMATE_DB_IF_MISSING`: build the database on startup when missing
+- `POGODAPP_BUILD_CLIMATE_DB_IF_MISSING`: build the database on startup when missing. Default: disabled, using stub data instead
 - `POGODAPP_CLIMATE_RESOLUTION`: bootstrap resolution. Default: `5m`
 - `POGODAPP_HOST`: bind host override
 - `PORT`: bind port. Default: `8000`
