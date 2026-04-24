@@ -56,6 +56,7 @@ def _run_app_runtime_scenario(scenario: str) -> None:
         const bodyHandlers = new Map();
         const documentHandlers = new Map();
         const renderCalls = [];
+        const heatmapRenderCalls = [];
 
         const preferredDayInput = new HTMLInputElementStub("preferred_day_temperature", "preferred_day_temperature", -5, 35, 22, "preferred_day_temperature");
         const summerHeatInput = new HTMLInputElementStub("summer_heat_limit", "summer_heat_limit", -5, 42, 10, "summer_heat_limit");
@@ -104,6 +105,9 @@ def _run_app_runtime_scenario(scenario: str) -> None:
         }};
         globalThis.renderScores = (payload) => {{
           renderCalls.push(payload);
+        }};
+        globalThis.renderHeatmap = (heatmapUrl) => {{
+          heatmapRenderCalls.push(heatmapUrl);
         }};
 
         vm.runInThisContext({app_script!r});
@@ -250,6 +254,32 @@ def test_app_runtime_resyncs_temperature_controls_before_htmx_submit() -> None:
             if (summerHeatInput.value !== "18") throw new Error(`expected summer value clamped to 18, got ${summerHeatInput.value}`);
             if (winterColdInput.max !== "18") throw new Error(`expected winter max 18, got ${winterColdInput.max}`);
             if (winterColdInput.value !== "18") throw new Error(`expected winter value clamped to 18, got ${winterColdInput.value}`);
+            """
+        )
+    )
+
+
+def test_app_runtime_starts_heatmap_load_before_score_response() -> None:
+    _run_app_runtime_scenario(
+        textwrap.dedent(
+            """
+            preferredDayInput.value = "18";
+            summerHeatInput.value = "28";
+            winterColdInput.value = "2";
+            drynessInput.value = "40";
+            sunshineInput.value = "80";
+
+            triggerBody("htmx:beforeRequest", { elt: form });
+
+            if (heatmapRenderCalls.length !== 1) throw new Error(`expected one heatmap render call, got ${heatmapRenderCalls.length}`);
+            const heatmapUrl = heatmapRenderCalls[0];
+            if (!heatmapUrl.startsWith("/heatmap?")) throw new Error(`unexpected heatmap url ${heatmapUrl}`);
+            if (!heatmapUrl.includes("preferred_day_temperature=18")) throw new Error(`missing preferred temperature in ${heatmapUrl}`);
+            if (!heatmapUrl.includes("summer_heat_limit=28")) throw new Error(`missing summer limit in ${heatmapUrl}`);
+            if (!heatmapUrl.includes("winter_cold_limit=2")) throw new Error(`missing winter limit in ${heatmapUrl}`);
+            if (!heatmapUrl.includes("dryness_preference=40")) throw new Error(`missing dryness preference in ${heatmapUrl}`);
+            if (!heatmapUrl.includes("sunshine_preference=80")) throw new Error(`missing sunshine preference in ${heatmapUrl}`);
+            if (renderCalls.length !== 0) throw new Error("score response should not have rendered yet");
             """
         )
     )

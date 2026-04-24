@@ -11,6 +11,12 @@ function applyScoreResponse(scores, heatmapUrl) {
   setMapStatus(heatmapUrl ? `${scores.length} top matches shown.` : "No matches found.");
 }
 
+window.renderHeatmap = function renderHeatmap(heatmapUrl) {
+  pendingHeatmapUrl = heatmapUrl;
+  if (!map || !mapLoaded) return;
+  applyHeatmap(heatmapUrl || EMPTY_IMAGE);
+};
+
 function initializeMap() {
   const mapRoot = document.getElementById("map");
 
@@ -86,6 +92,10 @@ function initializeMap() {
 
     mapLoaded = true;
     setMapStatus("Map backdrop ready.");
+
+    if (pendingHeatmapUrl !== null) {
+      applyHeatmap(pendingHeatmapUrl || EMPTY_IMAGE);
+    }
 
     if (!pendingResponse) return;
 

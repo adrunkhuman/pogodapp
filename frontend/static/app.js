@@ -94,6 +94,14 @@ function bindPreferenceControls(form) {
   return syncAllControls;
 }
 
+function buildHeatmapUrl(form) {
+  const params = new URLSearchParams();
+  for (const input of form.querySelectorAll("input[type='range']")) {
+    params.set(input.name, input.value);
+  }
+  return `/heatmap?${params.toString()}`;
+}
+
 function bindScoreHandoff(form, syncControls) {
   const loadingIndicator = document.getElementById("score-loading-indicator");
   const errorIndicator = document.getElementById("score-error-indicator");
@@ -112,6 +120,9 @@ function bindScoreHandoff(form, syncControls) {
   document.body.addEventListener("htmx:beforeRequest", (event) => {
     if (event.detail.elt !== form) return;
     syncControls();
+    if (typeof window.renderHeatmap === "function") {
+      window.renderHeatmap(buildHeatmapUrl(form));
+    }
     setError("");
     setLoading(true);
   });

@@ -56,6 +56,7 @@ const countryNames = typeof Intl.DisplayNames === "function"
   : null;
 let mapLoaded = false;
 let pendingResponse = null;
+let pendingHeatmapUrl = null;
 let probeTimer = null;
 let probeCooldownTimer = null;
 let probeController = null;
