@@ -37,7 +37,9 @@
 - Current baseline is the native WorldClim `5m` dataset, not the old `0.5deg` placeholder path.
 - Preserve compatibility with possible later moves to finer native resolutions if the product chooses that direction.
 - Keep the climate row schema stable unless there is a deliberate migration.
-- Treat `climate.duckdb` distribution strategy as unresolved until explicitly decided.
+- `climate.duckdb` is generated runtime data, not a committed artifact.
+- When `POGODAPP_BUILD_CLIMATE_DB_IF_MISSING=true`, app launch builds and validates a missing `climate.duckdb`; otherwise the app intentionally falls back to stub data.
+- Production should keep generated climate data on persistent `data/` storage so bootstrap is not repeated every deploy.
 
 ## Delivery
 
