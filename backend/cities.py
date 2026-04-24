@@ -362,29 +362,6 @@ class CityRankingCache:
     cosine_longitudes: NDArray[np.float32]
     flags: tuple[str, ...]
 
-    def __post_init__(self) -> None:
-        """Keep cached ranking arrays aligned with the city tuple."""
-        city_count = len(self.cities)
-
-        if self.climate_indexes.shape != (city_count,):
-            raise AssertionError("climate_indexes must align with cities")
-        if self.latitude_radians.shape != (city_count,):
-            raise AssertionError("latitude_radians must align with cities")
-        if self.populations.shape != (city_count,):
-            raise AssertionError("populations must align with cities")
-        if self.longitude_radians.shape != (city_count,):
-            raise AssertionError("longitude_radians must align with cities")
-        if self.cosine_latitudes.shape != (city_count,):
-            raise AssertionError("cosine_latitudes must align with cities")
-        if self.sine_latitudes.shape != (city_count,):
-            raise AssertionError("sine_latitudes must align with cities")
-        if self.sine_longitudes.shape != (city_count,):
-            raise AssertionError("sine_longitudes must align with cities")
-        if self.cosine_longitudes.shape != (city_count,):
-            raise AssertionError("cosine_longitudes must align with cities")
-        if len(self.flags) != city_count:
-            raise AssertionError("flags must align with cities")
-
     @classmethod
     def from_cities(
         cls,

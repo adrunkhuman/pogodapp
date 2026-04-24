@@ -162,7 +162,7 @@ class DuckDbClimateRepository:
 
         try:
             return tuple(self._row_to_climate_cell(row) for row in rows)
-        except (AssertionError, TypeError, ValueError) as error:
+        except (TypeError, ValueError) as error:
             msg = f"Failed to map climate data from {self.database_path} into climate rows: {error}"
             raise ClimateDataError(msg) from error
 
@@ -180,7 +180,7 @@ class DuckDbClimateRepository:
 
         try:
             self._cities = tuple(self._row_to_city(row) for row in rows)
-        except (AssertionError, TypeError, ValueError) as error:
+        except (TypeError, ValueError) as error:
             msg = f"Failed to map city data from {self.database_path} into city rows: {error}"
             raise ClimateDataError(msg) from error
 
@@ -207,7 +207,7 @@ class DuckDbClimateRepository:
             wettest_precipitation_mm = np.asarray(columns["wettest_precipitation_mm"], dtype=FLOAT32_DTYPE)
             average_cloud_cover_pct = np.asarray(columns["average_cloud_cover_pct"], dtype=UINT8_DTYPE)
             gloomiest_cloud_cover_pct = np.asarray(columns["gloomiest_cloud_cover_pct"], dtype=UINT8_DTYPE)
-        except (AssertionError, KeyError, TypeError, ValueError) as error:
+        except (KeyError, TypeError, ValueError) as error:
             msg = f"Failed to map climate data from {self.database_path} into climate rows: {error}"
             raise ClimateDataError(msg) from error
 
@@ -286,7 +286,7 @@ class DuckDbClimateRepository:
 
         try:
             return self._row_to_climate_cell(rows[0])
-        except (AssertionError, TypeError, ValueError) as error:
+        except (TypeError, ValueError) as error:
             msg = f"Failed to map climate data from {self.database_path} into climate rows: {error}"
             raise ClimateDataError(msg) from error
 
