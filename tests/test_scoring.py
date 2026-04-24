@@ -289,7 +289,7 @@ def test_score_matrix_row_breakdown_returns_structured_probe_metrics() -> None:
     assert 0 <= breakdown.overall_score <= 1
     assert [metric.key for metric in breakdown.metrics] == ["temp", "high", "low", "rain", "sun"]
     assert [metric.label for metric in breakdown.metrics] == ["temp", "high", "low", "rain", "sun"]
-    assert all(metric.display_value for metric in breakdown.metrics)
+    assert [metric.display_value for metric in breakdown.metrics] == ["21.0C", "26.0C", "6.0C", "45mm/mo", "64% sun"]
 
 
 def test_score_matrix_row_breakdown_works_without_cached_average_temperatures() -> None:

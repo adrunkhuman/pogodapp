@@ -25,7 +25,6 @@ from backend.climate_pipeline import (
 from backend.climate_repository import (
     ClimateDataError,
     DuckDbClimateRepository,
-    StubClimateRepository,
 )
 from backend.heatmap import HeatmapProjection
 from backend.main import create_app
@@ -40,24 +39,6 @@ def default_form_data() -> dict[str, str]:
         "dryness_preference": "60",
         "sunshine_preference": "60",
     }
-
-
-def test_stub_climate_repository_returns_climate_cells() -> None:
-    repository = StubClimateRepository()
-
-    cells = repository.list_cells()
-
-    assert cells
-    assert all(isinstance(cell, ClimateCell) for cell in cells)
-
-
-def test_stub_climate_repository_returns_city_candidates() -> None:
-    repository = StubClimateRepository()
-
-    cities = repository.list_cities()
-
-    assert cities
-    assert all(isinstance(city, CityCandidate) for city in cities)
 
 
 def test_duckdb_climate_repository_loads_monthly_climate_rows(tmp_path: Path) -> None:
