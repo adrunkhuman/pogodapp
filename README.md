@@ -91,6 +91,20 @@ uv run python scripts/build_climate_db.py --resolution 10m
 
 Supported resolutions: `10m`, `5m`, `2.5m`, `30s`.
 
+## Docker
+```bash
+docker build -t pogodapp .
+docker run -p 8000:8000 pogodapp
+```
+
+The image excludes generated DuckDB data. Mount persistent data when running with a real climate database:
+
+```bash
+docker run -p 8000:8000 -v pogodapp-data:/app/data pogodapp
+```
+
+Set `POGODAPP_BUILD_CLIMATE_DB_IF_MISSING=true` to bootstrap `/app/data/climate.duckdb` on startup.
+
 ## Config
 - `POGODAPP_DATA_DIR`: base directory for runtime data. Default: `data`
 - `POGODAPP_CLIMATE_DB`: DuckDB path. Default: `{POGODAPP_DATA_DIR}/climate.duckdb`
