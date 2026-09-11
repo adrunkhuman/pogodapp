@@ -1,126 +1,37 @@
 # Pogodapp
 
-Find climates you like.
+Pick the climate you like and see where it shows up. Pogodapp scores every land cell of WorldClim 2.1 long-term climate normals against a few preferences — typical daytime temperature, heat and cold tolerance, dryness, sunshine — then shows a world heatmap and ranks nearby cities per continent.
 
-Pogodapp is a small FastAPI app that scores long-term climate normals against a few preferences, then shows matching cities and a world heatmap.
+![Pogodapp single-screen app showing preference sliders, a world climate heatmap, and continent-grouped city rankings with scores and flags.](docs/assets/app.png)
 
-## What it does
-- Single-page app: controls, map, and ranked results stay on one screen.
-- Scores land cells from WorldClim climate normals.
-- Ranks cities near good-scoring cells.
-- Lets you hover the map to inspect one cell with `/probe`.
+## How it works
 
-## Stack
-- FastAPI
-- DuckDB
-- NumPy
-- Jinja2 for first render
-- HTMX for form submission
-- MapLibre GL for the map
-- Pillow for PNG heatmaps
+A single FastAPI process serves the page, the API, and the map assets. The page renders once through Jinja2; after that, HTMX submits the preference sliders as a plain form. `POST /score` returns raw JSON with ranked cities plus a `heatmap_url`, and `htmx:afterRequest` hands the response to a render-only MapLibre script that draws the heatmap PNG and city markers. `GET /probe` returns a score breakdown for whichever cell you hover.
+
+Scoring is temperature-first: a preferred daytime temperature is softened by how much summer heat and winter cold you tolerate. Dryness and sunshine only gain weight when you push their sliders away from neutral. Scores are normalized per request, so the best available match is `1.0`, and results are spread across regions so one area doesn't flood the list.
+
+## Implementation
+
+| Part | Responsibility |
+| --- | --- |
+| [Backend](backend/) | FastAPI routes, scoring, DuckDB access, heatmap rendering. |
+| [Frontend](frontend/) | Jinja2 shell, HTMX form flow, render-only MapLibre map. |
+| [Scripts](scripts/) | Building `data/climate.duckdb` from WorldClim GeoTIFFs. |
 
 ## Routes
-- `GET /` renders the app shell.
-- `POST /score` accepts standard form fields and returns JSON with ranked cities plus a `heatmap_url`.
-- `GET /heatmap` returns the rendered PNG for the current preferences, or `204` when nothing matches.
-- `GET /probe` returns a score breakdown for one map point.
-- `GET /health` is a basic health check.
 
-Input fields for scoring:
-- `preferred_day_temperature`
-- `summer_heat_limit`
-- `winter_cold_limit`
-- `dryness_preference`
-- `sunshine_preference`
+| Route | Purpose | Rate limit |
+| --- | --- | --- |
+| `GET /` | Renders the app shell. | — |
+| `POST /score` | Ranked cities plus a `heatmap_url` for the current preferences. | 30/minute |
+| `GET /heatmap` | Rendered heatmap PNG, or `204` when nothing matches. | 30/minute |
+| `GET /probe` | Score breakdown for one map point. | 120/minute |
+| `GET /health` | Basic health check. | — |
 
-Temperature rules:
-- `preferred_day_temperature`: `-5..35`
-- `summer_heat_limit`: `-5..42`
-- `winter_cold_limit`: `-15..35`
-- `preferred_day_temperature <= summer_heat_limit`
-- `preferred_day_temperature >= winter_cold_limit`
-
-Rate limits:
-- `/score`: `30/minute`
-- `/heatmap`: `30/minute`
-- `/probe`: `120/minute`
-
-## Scoring
-- Temperature is the main signal.
-- Dryness and sunshine matter more when the user moves those sliders away from neutral.
-- Scores are normalized per request, so the best available match is `1.0`.
-- City results are spread out so one region does not flood the list.
+Input fields and their ranges are listed in [Development](docs/development.md#scoring-inputs).
 
 ## Data
-- Source: WorldClim 2.1 monthly normals.
-- Default runtime dataset: native `5m` resolution.
-- Main database: `data/climate.duckdb`.
-- `climate.duckdb` is generated, not committed to the repo.
-- If the database is missing, the app falls back to a small in-repo stub dataset by default.
-- Set `POGODAPP_BUILD_CLIMATE_DB_IF_MISSING=true` to generate and validate `climate.duckdb` during app launch.
-- Production deployments should use persistent `data/` storage so startup generation is a one-time bootstrap.
-- Older databases from before the `tmin_*` and `tmax_*` schema change are not compatible. Rebuild them.
 
-## Run locally
-```bash
-uv sync
-uv run pogodapp
-```
+The runtime dataset is native WorldClim `5m` climate normals stored in `data/climate.duckdb`, generated at build time and never committed. When the database is missing, the app falls back to a small in-repo stub dataset; set `POGODAPP_BUILD_CLIMATE_DB_IF_MISSING=true` to build and validate a real database on startup instead. Production should keep generated data on persistent `data/` storage so bootstrap happens once.
 
-Default local URL: `http://127.0.0.1:8000`
-
-Useful variants:
-
-```bash
-POGODAPP_CLIMATE_DB=data/climate-5m.duckdb uv run pogodapp
-uv run pogodapp --port 9000
-uv run pogodapp --host 0.0.0.0
-uv run pogodapp --no-reload
-```
-
-## Build climate data
-```bash
-uv run python scripts/build_climate_db.py
-```
-
-Optional resolution override:
-
-```bash
-uv run python scripts/build_climate_db.py --resolution 10m
-```
-
-Supported resolutions: `10m`, `5m`, `2.5m`, `30s`.
-
-## Docker
-```bash
-docker build -t pogodapp .
-docker run -p 8000:8000 pogodapp
-```
-
-The image excludes generated DuckDB data. Mount persistent data when running with a real climate database:
-
-```bash
-docker run -p 8000:8000 -v pogodapp-data:/app/data pogodapp
-```
-
-Set `POGODAPP_BUILD_CLIMATE_DB_IF_MISSING=true` to bootstrap `/app/data/climate.duckdb` on startup.
-
-## Config
-- `POGODAPP_DATA_DIR`: base directory for runtime data. Default: `data`
-- `POGODAPP_CLIMATE_DB`: DuckDB path. Default: `{POGODAPP_DATA_DIR}/climate.duckdb`
-- `POGODAPP_CLIMATE_CACHE_DIR`: download cache directory. Default: `{POGODAPP_DATA_DIR}/worldclim`
-- `POGODAPP_BUILD_CLIMATE_DB_IF_MISSING`: build the database on startup when missing. Default: disabled, using stub data instead
-- `POGODAPP_CLIMATE_RESOLUTION`: bootstrap resolution. Default: `5m`
-- `POGODAPP_HOST`: bind host override
-- `PORT`: bind port. Default: `8000`
-- `POGODAPP_RELOAD`: toggles reload mode
-- `LOG_LEVEL`: log level override. Default: `INFO`
-- `LOG_FORMAT`: `json` or `plain`. Default: `json`
-
-## Development
-```bash
-uv run ruff check .
-uv run ruff format --check .
-uv run ty check
-uv run pytest
-```
+[Development](docs/development.md) covers local setup, configuration, Docker, and checks.
